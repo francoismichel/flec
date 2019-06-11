@@ -14,7 +14,8 @@ protoop_arg_t parse_source_fpid_frame(picoquic_cnx_t *cnx)
     uint8_t* bytes_protected = (uint8_t *) get_cnx(cnx, AK_CNX_INPUT, 0);
     const uint8_t* bytes_max = (uint8_t *) get_cnx(cnx, AK_CNX_INPUT, 1);
 
-
+    bpf_state *state = get_bpf_state(cnx);
+    if (!state) return 0;
     if (get_bpf_state(cnx)->is_in_skip_frame) {
         set_cnx(cnx, AK_CNX_OUTPUT, 0, (protoop_arg_t) NULL);
         set_cnx(cnx, AK_CNX_OUTPUT, 1, false);

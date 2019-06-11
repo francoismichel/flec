@@ -53,10 +53,15 @@ protoop_arg_t schedule_frames_on_path(picoquic_cnx_t *cnx)
             my_free(cnx, state->current_sfpid_frame);
             state->current_sfpid_frame = NULL;
         } else {
+            source_fpid_t current_sfpid = state->current_sfpid_frame->source_fpid;
             int err = protect_packet(cnx, &state->current_sfpid_frame->source_fpid, payload_with_pn, symbol_length);
             if (err){
                 PROTOOP_PRINTF(cnx, "ERROR WHILE PROTECTING\n");
                 return (protoop_arg_t) err;
+            }
+            if (current_sfpid.raw != state->current_sfpid_frame->source_fpid.raw) {
+                // if the protect_packet function changed the sfpid, then we rewrite it now (some schemes only know the fpid after it has been protected)
+                my_memcpy(state->written_sfpid_frame+1, &state->current_sfpid_frame->source_fpid.raw, sizeof(source_fpid_t));
             }
         }
 

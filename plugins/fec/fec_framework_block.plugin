@@ -4,3 +4,4 @@ get_source_fpid replace framework_protoops/block_get_source_fpid.o
 fec_protect_source_symbol replace framework_protoops/block_protect_source_symbol.o
 receive_source_symbol replace framework_protoops/block_receive_source_symbol.o
 receive_repair_symbol replace framework_protoops/block_receive_repair_symbol.o
+stream_bytes_max replace protoops/stream_bytes_max.o

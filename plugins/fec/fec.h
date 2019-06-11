@@ -15,6 +15,7 @@
 
 #define SOURCE_FPID_TYPE 0x29
 #define FEC_TYPE 0x2a
+#define FEC_SOURCE_SYMBOL_OVERHEAD (1 + sizeof(uint64_t))
 #define RECOVERED_TYPE 0x2b
 
 protoop_id_t PROTOOP_ID_FEC_GENERATE_REPAIR_SYMBOLS = { .id = "fec_generate_repair_symbols" };

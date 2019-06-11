@@ -6,3 +6,4 @@ receive_source_symbol replace framework_protoops/window_receive_source_symbol.o
 receive_repair_symbol replace framework_protoops/window_receive_repair_symbol.o
 notify_frame param 0x29 pre framework_protoops/window_pre_notify_sfpid_frame.o
 write_frame param 0x29 post framework_protoops/window_post_write_sfpid_frame.o
+stream_bytes_max replace protoops/stream_bytes_max.o

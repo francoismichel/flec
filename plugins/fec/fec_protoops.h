@@ -28,6 +28,7 @@ typedef struct {
     fec_scheme_t scheme_receiver;
     fec_redundancy_controller_t controller;
     source_fpid_frame_t *current_sfpid_frame;    // this variable is not-null only between prepare_packet_ready and finalize_and_protect_packet
+    int sfpid_frame_position_in_current_packet_payload;
     bool is_in_skip_frame;    // set to true if we are currently in skip_frame
     bool current_packet_contains_fec_frame;    // set to true if the current packet contains a FEC Frame (FEC and FPID frames are mutually exclusive)
     bool current_packet_contains_fpid_frame;    // set to true if the current packet contains a FPID Frame
