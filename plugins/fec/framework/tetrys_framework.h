@@ -5,7 +5,7 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 
-#include "../bpf.h"
+#include "../fec_protoops.h"
 #include "picoquic.h"
 #include "../../helpers.h"
 #include "memory.h"

@@ -2,7 +2,7 @@
 #include "../../helpers.h"
 #include "memory.h"
 #include "memcpy.h"
-#include "../bpf.h"
+#include "../fec_protoops.h"
 #include "tetrys_framework.h"
 
 #define INITIAL_SYMBOL_ID 1
