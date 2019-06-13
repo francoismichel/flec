@@ -1,6 +1,6 @@
 
 #include <picoquic.h>
-#include <picoquic_internal.h>
+#include <picoquic.h>
 #include "../../helpers.h"
 #include "../framework/block_framework_sender.h"
 

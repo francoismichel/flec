@@ -1,6 +1,7 @@
 #ifndef PICOQUIC_TETRYS_FRAMEWORK_H
 #define PICOQUIC_TETRYS_FRAMEWORK_H
 
+#include <errno.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 
