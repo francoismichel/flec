@@ -8,17 +8,34 @@
 #define INITIAL_SYMBOL_ID 1
 #define MAX_QUEUED_REPAIR_SYMBOLS 6
 #define RECEIVE_BUFFER_MAX_LENGTH 30
+#define NUMBER_OF_SYMBOLS_TO_FLUSH 5
 
 #define MIN(a, b) ((a < b) ? a : b)
 
 typedef uint32_t fec_block_number;
 
 
+typedef struct {
+    tetrys_fec_framework_t common_fec_framework;
+    bool source_symbol_added_since_flush;
+} tetrys_fec_framework_sender_t;
+
 static __attribute__((always_inline)) void sfpid_has_landed(tetrys_fec_framework_t *wff, source_fpid_t sfpid) {
 }
 
 static __attribute__((always_inline)) void sfpid_takes_off(tetrys_fec_framework_t *wff, source_fpid_t sfpid) {
 
+}
+
+static __attribute__((always_inline)) tetrys_fec_framework_sender_t *tetrys_create_framework_sender(picoquic_cnx_t *cnx) {
+    tetrys_fec_framework_sender_t *ff = my_malloc(cnx, sizeof(tetrys_fec_framework_sender_t));
+    if (!ff) return NULL;
+    if (tetrys_init_framework(cnx, &ff->common_fec_framework) != 0) {
+        my_free(cnx, ff);
+        return NULL;
+    }
+    ff->source_symbol_added_since_flush = false;
+    return ff;
 }
 
 static __attribute__((always_inline)) int reserve_fec_frames(picoquic_cnx_t *cnx, tetrys_fec_framework_t *wff, size_t size_max) {
@@ -65,11 +82,12 @@ static __attribute__((always_inline)) source_fpid_t get_source_fpid(tetrys_fec_f
     return (source_fpid_t) 0u;
 }
 
-static __attribute__((always_inline)) int protect_source_symbol(picoquic_cnx_t *cnx, tetrys_fec_framework_t *ff, source_symbol_t *ss) {
+static __attribute__((always_inline)) int protect_source_symbol(picoquic_cnx_t *cnx, tetrys_fec_framework_sender_t *ffs, source_symbol_t *ss) {
     if (ss->data_length + 1 > SERIALIZATION_BUFFER_SIZE) {
         PROTOOP_PRINTF(cnx, "ERROR DATA LENGTH, %d > %d\n", ss->data_length + 1, SERIALIZATION_BUFFER_SIZE);
         return -1;
     }
+    tetrys_fec_framework_t *ff = &ffs->common_fec_framework;
     ff->buffer[0] = TYPE_PAYLOAD_TO_PROTECT;
     my_memcpy(ff->buffer+1, ss->data, ss->data_length);
     if (send(ff->unix_sock_fd, ff->buffer, 1+ss->data_length, 0) != 1+ss->data_length) {
@@ -92,11 +110,24 @@ static __attribute__((always_inline)) int protect_source_symbol(picoquic_cnx_t *
         PROTOOP_PRINTF(cnx, "ERROR SIZE\n");
         return -1;
     }
-
+    ffs->source_symbol_added_since_flush = true;
     return 0;
 }
 
-static __attribute__((always_inline)) int flush_fec_window(picoquic_cnx_t *cnx, tetrys_fec_framework_t *wff) {
-    // TODO
+static __attribute__((always_inline)) int flush_tetrys(picoquic_cnx_t *cnx, tetrys_fec_framework_sender_t *ffs) {
+    tetrys_fec_framework_t *ff = &ffs->common_fec_framework;
+    ff->buffer[0] = TYPE_MESSAGE;
+    encode_u32(TETRYS_MESSAGE_GENERATE_REPAIR_PACKET, &ff->buffer[1]);
+    if (ffs->source_symbol_added_since_flush) {
+        for (int i = 0 ; i < NUMBER_OF_SYMBOLS_TO_FLUSH ; i++) {
+            if (send(ff->unix_sock_fd, ff->buffer, 1+sizeof(tetrys_message_t), 0) != 1+sizeof(tetrys_message_t)) {
+                PROTOOP_PRINTF(cnx, "ERROR SEND MESSAGE, ERRNO = %d\\n\", get_errno()\n");
+                return -1;
+            }
+        }
+    }
+
+    ffs->source_symbol_added_since_flush = false;
+    update_tetrys_state(cnx, ff);
     return 0;
 }

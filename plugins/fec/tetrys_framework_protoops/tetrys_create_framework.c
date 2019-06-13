@@ -4,9 +4,9 @@
 
 
 protoop_arg_t create_framework(picoquic_cnx_t *cnx) {
-    tetrys_fec_framework_t *ff = tetrys_create_framework(cnx);
+    // the framework_sender and framework_receiver share the same structures. Only the sender will see the additional boolean in its structure
+    tetrys_fec_framework_sender_t *ff = tetrys_create_framework_sender(cnx);
     if (!ff) {
-        my_free(cnx, ff);
         set_cnx(cnx, AK_CNX_OUTPUT, 0, (protoop_arg_t) NULL);
         set_cnx(cnx, AK_CNX_OUTPUT, 1, (protoop_arg_t) NULL);
         return PICOQUIC_ERROR_MEMORY;

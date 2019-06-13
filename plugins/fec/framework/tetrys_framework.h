@@ -17,7 +17,15 @@
 #define TYPE_REPAIR_SYMBOL 1
 #define TYPE_RECOVERED_SOURCE_SYMBOL 2
 #define TYPE_PAYLOAD_TO_PROTECT 3
+#define TYPE_MESSAGE 4
 #define TYPE_NEW_CONNECTION 0xFF
+
+typedef uint32_t tetrys_message_t;
+#define TETRYS_MESSAGE_SET_CODE_RATE                0x0     // encoder side
+#define TETRYS_MESSAGE_SET_ACKNOWLEDGE_FREQUENCY    0x1     // decoder side
+#define TETRYS_MESSAGE_SET_ACKNOWLEDGE_INTERVAL     0x2     // encoder side
+#define TETRYS_MESSAGE_GENERATE_REPAIR_PACKET       0x4     // encoder side
+
 
 typedef struct {
     uint8_t *symbol;
@@ -61,42 +69,46 @@ typedef struct {
 } tetrys_fec_framework_t;
 
 
-static __attribute__((always_inline)) tetrys_fec_framework_t *tetrys_create_framework(picoquic_cnx_t *cnx) {
-    tetrys_fec_framework_t *ff = my_malloc(cnx, sizeof(tetrys_fec_framework_t));
+static __attribute__((always_inline)) int tetrys_init_framework(picoquic_cnx_t *cnx, tetrys_fec_framework_t *ff) {
     if (ff) {
         my_memset(ff, 0, sizeof(tetrys_fec_framework_t));
         if((ff->unix_sock_fd = socket(AF_UNIX, SOCK_DGRAM, 0)) < 0) {
             my_free(cnx, ff);
             PROTOOP_PRINTF(cnx, "SOCKET FAIL\n");
-            return NULL;
+            return -1;
         }
         ff->buffer = my_malloc(cnx, SERIALIZATION_BUFFER_SIZE);
         if (!ff->buffer) {
             my_free(cnx, ff);
             PROTOOP_PRINTF(cnx, "BUFFER FAIL\n");
-            return NULL;
+            return -1;
         }
         my_memset(ff->buffer, 0, SERIALIZATION_BUFFER_SIZE);
         ff->local_addr.sun_family = AF_UNIX;
         ff->local_addr.sun_path[0] = '\0'; // we want an abstract domain unix socket
         // the socket addr is depending on the CID so that we could use tetrys with several different connections
         picoquic_path_t *path = (picoquic_path_t *) get_cnx(cnx, AK_CNX_PATH, 0);
-        if (!path) return NULL;
+        if (!path) return -1;
         picoquic_connection_id_t *cnxid = (picoquic_connection_id_t *) get_path(path, AK_PATH_LOCAL_CID, 0);
-        if (!cnxid) return NULL;
+        if (!cnxid) return -1;
         uint8_t *cnxid_buf = (uint8_t *) get_cnxid(cnxid, AK_CNXID_ID);
         uint8_t cnxid_len = (uint8_t) get_cnxid(cnxid, AK_CNXID_LEN);
         ff->local_addr.sun_path[1] = cnxid_len;
         my_memcpy(&ff->local_addr.sun_path[2], cnxid_buf, cnxid_len);
-        if (bind(ff->unix_sock_fd,(struct sockaddr *)&ff->local_addr, sizeof(ff->local_addr)) < 0)  {
+        for (int i = 0 ; i < sizeof(ff->local_addr) ; i++) {
+            PROTOOP_PRINTF(cnx, "%d -> %hhx\n", i, ff->local_addr.sun_path[i]);
+        }
+        if (bind(ff->unix_sock_fd,(struct sockaddr *)&ff->local_addr, sizeof(struct sockaddr_un)) < 0)  {
             my_free(cnx, ff);
-            return NULL;
+            return -1;
         }
         ff->peer_addr.sun_family = AF_UNIX;
-        strncpy(ff->peer_addr.sun_path, UNIX_SOCKET_SERVER_PATH, sizeof(ff->peer_addr));
-        if (connect(ff->unix_sock_fd,(struct sockaddr *)&ff->peer_addr, sizeof(ff->peer_addr)) < 0)  {
+        ff->peer_addr.sun_path[0] = '\0';
+        strncpy(&ff->peer_addr.sun_path[1], UNIX_SOCKET_SERVER_PATH, sizeof(ff->peer_addr));
+        if (connect(ff->unix_sock_fd,(struct sockaddr *)&ff->peer_addr, sizeof(struct sockaddr_un)) < 0)  {
             my_free(cnx, ff);
-            return NULL;
+            PROTOOP_PRINTF(cnx, "CONNECT FAILED: %d, size = %d\n", get_errno(), sizeof(struct sockaddr_un));
+            return -1;
         }
         uint8_t type = TYPE_NEW_CONNECTION;
         send(ff->unix_sock_fd, &type, 1, 0);    // don't send the \0
@@ -104,6 +116,16 @@ static __attribute__((always_inline)) tetrys_fec_framework_t *tetrys_create_fram
         if ((size = recv(ff->unix_sock_fd, ff->buffer, SERIALIZATION_BUFFER_SIZE, 0)) != strlen("connexion") || strncmp("connexion", (char *) ff->buffer, strlen("connexion")) != 0) {
             PROTOOP_PRINTF(cnx, "error when connecting, returned size %d\n", size);
         }
+    }
+    return 0;
+}
+
+static __attribute__((always_inline)) tetrys_fec_framework_t *tetrys_create_framework(picoquic_cnx_t *cnx) {
+    tetrys_fec_framework_t *ff = my_malloc(cnx, sizeof(tetrys_fec_framework_t));
+    if (!ff) return NULL;
+    if (tetrys_init_framework(cnx, ff) != 0) {
+        my_free(cnx, ff);
+        return NULL;
     }
     return ff;
 }
