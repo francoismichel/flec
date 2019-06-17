@@ -24,9 +24,6 @@ protoop_arg_t schedule_frames_on_path(picoquic_cnx_t *cnx)
     picoquic_packet_t *retransmit_p = (picoquic_packet_t *) get_cnx(cnx, AK_CNX_INPUT, 3);
     picoquic_path_t *retransmit_path = (picoquic_path_t *) get_cnx(cnx, AK_CNX_INPUT, 4);
     bpf_state *state = get_bpf_state(cnx);
-    if (state->current_sfpid_frame) {
-        my_free(cnx, state->current_sfpid_frame);
-    }
     state->current_sfpid_frame = NULL;
     state->current_packet_contains_fpid_frame = false;
     state->current_packet_contains_fec_frame = false;

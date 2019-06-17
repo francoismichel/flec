@@ -27,10 +27,10 @@ typedef uint32_t tetrys_message_t;
 #define TETRYS_MESSAGE_SET_ACKNOWLEDGE_INTERVAL     0x2     // encoder side
 #define TETRYS_MESSAGE_GENERATE_REPAIR_PACKET       0x4     // encoder side
 
-
 typedef struct {
     uint8_t *symbol;
     int size;
+    source_fpid_t highest_sent_id_when_enqueued;
 } tetrys_symbol_slot_t;
 
 typedef struct {
@@ -38,27 +38,6 @@ typedef struct {
     int start;
     int size;
 } tetrys_symbol_buffer_t;
-
-static __attribute__((always_inline)) bool buffer_enqueue_symbol_payload(picoquic_cnx_t *cnx, tetrys_symbol_buffer_t *buffer, uint8_t *payload, int size) {
-    if (buffer->size == MAX_BUFFERED_SYMBOLS || size > SERIALIZATION_BUFFER_SIZE) return false;
-    int idx = ((uint32_t) (buffer->start + buffer->size)) % MAX_BUFFERED_SYMBOLS;
-    if (!buffer->slots[idx].symbol) buffer->slots[idx].symbol = my_malloc(cnx, SERIALIZATION_BUFFER_SIZE);
-    if (!buffer->slots[idx].symbol) return false;
-    my_memcpy(buffer->slots[idx].symbol, payload, size);
-    buffer->slots[idx].size = size;
-    buffer->size++;
-    return true;
-}
-
-static __attribute__((always_inline)) int buffer_dequeue_symbol_payload(picoquic_cnx_t *cnx, tetrys_symbol_buffer_t *buffer, uint8_t *dest, int dest_size) {
-    if (buffer->size == 0) return -1;
-    int idx = buffer->start;
-    if (buffer->slots[idx].size > dest_size) return -1;
-    my_memcpy(dest, buffer->slots[idx].symbol, buffer->slots[idx].size);
-    buffer->start = (uint32_t) (buffer->start + 1) % MAX_BUFFERED_SYMBOLS;
-    buffer->size--;
-    return buffer->slots[idx].size;
-}
 
 typedef struct {
     int unix_sock_fd;
@@ -69,6 +48,66 @@ typedef struct {
     tetrys_symbol_buffer_t buffered_recovered_symbols;
 } tetrys_fec_framework_t;
 
+typedef struct {
+    tetrys_fec_framework_t common_fec_framework;
+    source_fpid_t last_sent_id;
+    source_fpid_t last_landed_id;
+    bool source_symbol_added_since_flush;
+} tetrys_fec_framework_sender_t;
+
+static __attribute__((always_inline)) bool buffer_enqueue_symbol_payload(picoquic_cnx_t *cnx, bpf_state *state, tetrys_symbol_buffer_t *buffer, uint8_t *payload, int size) {
+    if (buffer->size == MAX_BUFFERED_SYMBOLS || size > SERIALIZATION_BUFFER_SIZE) return false;
+    int idx = ((uint32_t) (buffer->start + buffer->size)) % MAX_BUFFERED_SYMBOLS;
+    if (!buffer->slots[idx].symbol) buffer->slots[idx].symbol = my_malloc(cnx, SERIALIZATION_BUFFER_SIZE);
+    if (!buffer->slots[idx].symbol) return false;
+    my_memcpy(buffer->slots[idx].symbol, payload, size);
+    buffer->slots[idx].size = size;
+    buffer->slots[idx].highest_sent_id_when_enqueued = ((tetrys_fec_framework_sender_t *)state->framework_sender)->last_sent_id;
+    buffer->size++;
+    return true;
+}
+
+static __attribute__((always_inline)) void buffer_dequeue_symbol_payload_without_copy(picoquic_cnx_t *cnx, tetrys_symbol_buffer_t *buffer) {
+    if (buffer->size == 0) return;
+    buffer->start = (uint32_t) (buffer->start + 1) % MAX_BUFFERED_SYMBOLS;
+    buffer->size--;
+}
+
+
+static __attribute__((always_inline)) int buffer_dequeue_symbol_payload(picoquic_cnx_t *cnx, tetrys_symbol_buffer_t *buffer, uint8_t *dest, int dest_size) {
+    if (buffer->size == 0) return -1;
+    int idx = buffer->start;
+    int size = buffer->slots[idx].size;
+    if (size > dest_size) return -1;
+    my_memcpy(dest, buffer->slots[idx].symbol, buffer->slots[idx].size);
+    buffer_dequeue_symbol_payload_without_copy(cnx, buffer);
+    return size;
+}
+
+static __attribute__((always_inline)) bool sent_after(tetrys_fec_framework_sender_t *ff, source_fpid_t candidate, source_fpid_t cmp) {
+    // FIXME: handle window wrap-around
+    return candidate.raw > cmp.raw;
+}
+
+static __attribute__((always_inline)) void buffer_remove_old_symbol_payload(picoquic_cnx_t *cnx, tetrys_fec_framework_sender_t *ff, tetrys_symbol_buffer_t *buffer, source_fpid_t after) {
+    while (buffer->size > 0) {
+        int idx = buffer->start;
+        if (!sent_after(ff, buffer->slots[idx].highest_sent_id_when_enqueued,
+                        after)) {    // check if the symbols protected by this repair symbol are still in flight
+            // discard the symbol without copying it
+            buffer_dequeue_symbol_payload_without_copy(cnx, buffer);
+        } else {
+            return;
+        }
+    }
+}
+
+// decodes the next symbol payload that has been sent after last_id. The other symbols will be removed from the buffer
+static __attribute__((always_inline)) int buffer_dequeue_symbol_payload_skip_old_ones(picoquic_cnx_t *cnx, tetrys_fec_framework_sender_t *ff, tetrys_symbol_buffer_t *buffer, uint8_t *dest, int dest_size) {
+    buffer_remove_old_symbol_payload(cnx, ff, buffer, ff->last_landed_id);
+    if (buffer->size == 0) return 0;
+    return buffer_dequeue_symbol_payload(cnx, buffer, dest, dest_size);
+}
 
 static __attribute__((always_inline)) int tetrys_init_framework(picoquic_cnx_t *cnx, tetrys_fec_framework_t *ff) {
     if (ff) {
@@ -169,7 +208,7 @@ static __attribute__((always_inline)) int tetrys_serialize_repair_symbol(picoqui
     return -1;
 }
 
-static __attribute__((always_inline)) int tetrys_handle_message(picoquic_cnx_t *cnx, tetrys_fec_framework_t *ff, uint8_t *message, ssize_t size) {
+static __attribute__((always_inline)) int tetrys_handle_message(picoquic_cnx_t *cnx, bpf_state *state, tetrys_fec_framework_t *ff, uint8_t *message, ssize_t size) {
     tetrys_symbol_buffer_t *buf = NULL;
     switch (message[0]) {
         case TYPE_REPAIR_SYMBOL:
@@ -180,7 +219,7 @@ static __attribute__((always_inline)) int tetrys_handle_message(picoquic_cnx_t *
             break;
     }
     if (!buf) return -1;
-    buffer_enqueue_symbol_payload(cnx, buf, message + 1, size-1);    // enqueue the symbol, without the type byte
+    buffer_enqueue_symbol_payload(cnx, state, buf, message + 1, size-1);    // enqueue the symbol, without the type byte
     if (size == -1) {
         int err = get_errno();
         if (err != EAGAIN && err != EWOULDBLOCK) return -1;
@@ -191,8 +230,10 @@ static __attribute__((always_inline)) int tetrys_handle_message(picoquic_cnx_t *
 
 static __attribute__((always_inline)) int update_tetrys_state(picoquic_cnx_t *cnx, tetrys_fec_framework_t *ff) {
     int size;
+    bpf_state *state = get_bpf_state(cnx);
+    if (!state) return -1;
     while ((size = recv(ff->unix_sock_fd, ff->buffer, SERIALIZATION_BUFFER_SIZE, MSG_DONTWAIT)) > 0) {
-        int err = tetrys_handle_message(cnx, ff, ff->buffer, size);
+        int err = tetrys_handle_message(cnx, state, ff, ff->buffer, size);
         if (err) return err;
     }
     if (size == -1) {

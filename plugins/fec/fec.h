@@ -142,10 +142,12 @@ static __attribute__((always_inline)) uint64_t decode_un(uint8_t *bytes, int n) 
 }
 
 static __attribute__((always_inline)) void encode_un(uint64_t to_encode, uint8_t *bytes, int n) {
+    uint8_t buffer[n];
     int i;
     for (i = 0; i < n ; i++) {
-        bytes[i] = (uint8_t) (to_encode >> 8*(n-i-1));
+        buffer[i] = (uint8_t) (to_encode >> 8*(n-i-1));
     }
+    my_memcpy(bytes, buffer, n);
 }
 
 static __attribute__((always_inline)) uint16_t decode_u16(uint8_t *bytes) {

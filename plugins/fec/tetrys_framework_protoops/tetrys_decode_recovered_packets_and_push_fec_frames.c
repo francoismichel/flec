@@ -20,7 +20,8 @@ static __attribute__((always_inline)) bool is_mtu_probe(picoquic_packet_t *p, pi
 protoop_arg_t schedule_frames_on_path(picoquic_cnx_t *cnx)
 {
     bpf_state *state = get_bpf_state(cnx);
-    tetrys_fec_framework_t *tetrys = state->framework_sender;
+    tetrys_fec_framework_sender_t *tetrys_sender = state->framework_sender;
+    tetrys_fec_framework_t *tetrys = &tetrys_sender->common_fec_framework;
     update_tetrys_state(cnx, tetrys);
     ssize_t size;
     if (tetrys->buffered_recovered_symbols.size > 0) {
@@ -95,6 +96,9 @@ protoop_arg_t schedule_frames_on_path(picoquic_cnx_t *cnx)
             }
         }
     }
-    reserve_fec_frames(cnx, tetrys, PICOQUIC_MAX_PACKET_SIZE);
+    bool should_send_rs = (bool) run_noparam(cnx, "should_send_repair_symbols", 0, NULL, NULL);
+    if (should_send_rs) {
+        reserve_fec_frames(cnx, tetrys_sender, PICOQUIC_MAX_PACKET_SIZE);
+    }
     return 0;
 }

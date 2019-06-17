@@ -96,9 +96,5 @@ protoop_arg_t finalize_and_protect_packet(picoquic_cnx_t *cnx) {
         if (err)
             return (protoop_arg_t) err;
     }
-    if (state->current_sfpid_frame) {
-        my_free(cnx, state->current_sfpid_frame);
-        state->current_sfpid_frame = NULL;
-    }
     return 0;
 }

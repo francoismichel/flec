@@ -50,7 +50,6 @@ protoop_arg_t schedule_frames_on_path(picoquic_cnx_t *cnx)
         if (symbol_length <= 1 + sizeof(uint64_t) + 1 + sizeof(source_fpid_frame_t)) {
             // this symbol does not need to be protected: undo
             my_memset(state->written_sfpid_frame, 0, 1 + sizeof(source_fpid_frame_t));
-            my_free(cnx, state->current_sfpid_frame);
             state->current_sfpid_frame = NULL;
         } else {
             source_fpid_t current_sfpid = state->current_sfpid_frame->source_fpid;
@@ -61,17 +60,14 @@ protoop_arg_t schedule_frames_on_path(picoquic_cnx_t *cnx)
             }
             if (current_sfpid.raw != state->current_sfpid_frame->source_fpid.raw) {
                 // if the protect_packet function changed the sfpid, then we rewrite it now (some schemes only know the fpid after it has been protected)
-                my_memcpy(state->written_sfpid_frame+1, &state->current_sfpid_frame->source_fpid.raw, sizeof(source_fpid_t));
+                encode_u32(state->current_sfpid_frame->source_fpid.raw, state->written_sfpid_frame+1);
             }
         }
 
         my_free(cnx, payload_with_pn);
     }
-    if (state->current_sfpid_frame) {
-        my_free(cnx, state->current_sfpid_frame);
-        state->current_sfpid_frame = NULL;
+    state->current_sfpid_frame = NULL;
 
-    }
 
     return 0;
 }

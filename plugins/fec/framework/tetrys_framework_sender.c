@@ -14,16 +14,13 @@
 
 typedef uint32_t fec_block_number;
 
-
-typedef struct {
-    tetrys_fec_framework_t common_fec_framework;
-    bool source_symbol_added_since_flush;
-} tetrys_fec_framework_sender_t;
-
-static __attribute__((always_inline)) void sfpid_has_landed(tetrys_fec_framework_t *wff, source_fpid_t sfpid) {
+static __attribute__((always_inline)) void sfpid_has_landed(tetrys_fec_framework_sender_t *wff, source_fpid_t sfpid) {
+    // if reordering is present, we might reduce this value instead of increasing it but at least we handle the case where the window wraps around
+    wff->last_landed_id = sfpid;
 }
 
-static __attribute__((always_inline)) void sfpid_takes_off(tetrys_fec_framework_t *wff, source_fpid_t sfpid) {
+static __attribute__((always_inline)) void sfpid_takes_off(tetrys_fec_framework_sender_t *wff, source_fpid_t sfpid) {
+    wff->last_sent_id = sfpid;
 
 }
 
@@ -35,41 +32,45 @@ static __attribute__((always_inline)) tetrys_fec_framework_sender_t *tetrys_crea
         return NULL;
     }
     ff->source_symbol_added_since_flush = false;
+    ff->last_landed_id.raw = 0;
+    ff->last_sent_id.raw = 0;
     return ff;
 }
 
-static __attribute__((always_inline)) int reserve_fec_frames(picoquic_cnx_t *cnx, tetrys_fec_framework_t *wff, size_t size_max) {
+static __attribute__((always_inline)) int reserve_fec_frames(picoquic_cnx_t *cnx, tetrys_fec_framework_sender_t *ff, size_t size_max) {
     if (size_max <= sizeof(fec_frame_header_t))
         return -1;
     int size;
-    while ((size = buffer_dequeue_symbol_payload(cnx, &wff->buffered_repair_symbols, wff->buffer, SERIALIZATION_BUFFER_SIZE)) > 0) {
-        fec_frame_t *ff = my_malloc(cnx, sizeof(fec_frame_t));
-        if (!ff)
+    tetrys_fec_framework_t *wff = (tetrys_fec_framework_t *) ff;
+    while ((size = buffer_dequeue_symbol_payload_skip_old_ones(cnx, ff, &wff->buffered_repair_symbols, wff->buffer, SERIALIZATION_BUFFER_SIZE)) > 0) {
+
+        fec_frame_t *fecframe = my_malloc(cnx, sizeof(fec_frame_t));
+        if (!fecframe)
             return PICOQUIC_ERROR_MEMORY;
-        my_memset(ff, 0, sizeof(fec_frame_t));
+        my_memset(fecframe, 0, sizeof(fec_frame_t));
         uint8_t *bytes = my_malloc(cnx, (unsigned int) (size_max - (1 + sizeof(fec_frame_header_t))));
         if (!bytes)
             return PICOQUIC_ERROR_MEMORY;
-        ff->header.repair_fec_payload_id.source_fpid.raw = decode_u32(wff->buffer);
-        ff->header.data_length = size - sizeof(source_fpid_t) - sizeof(uint16_t);  // we remove the 6 bytes of metadata in the symbol: they are present in the frame header, except the payload length without the block
+        fecframe->header.repair_fec_payload_id.source_fpid.raw = decode_u32(wff->buffer);
+        fecframe->header.data_length = size - sizeof(source_fpid_t) - sizeof(uint16_t);  // we remove the 6 bytes of metadata in the symbol: they are present in the frame header, except the payload length without the block
         // copy the data length
         my_memcpy(bytes, wff->buffer + sizeof(source_fpid_t), sizeof(uint16_t));
-        my_memcpy(bytes+sizeof(uint16_t), wff->buffer + sizeof(source_fpid_t) + 4, ff->header.data_length - sizeof(uint16_t));
-        ff->data = bytes;
+        my_memcpy(bytes+sizeof(uint16_t), wff->buffer + sizeof(source_fpid_t) + 4, fecframe->header.data_length - sizeof(uint16_t));
+        fecframe->data = bytes;
         reserve_frame_slot_t *slot = (reserve_frame_slot_t *) my_malloc(cnx, sizeof(reserve_frame_slot_t));
         if (!slot)
             return PICOQUIC_ERROR_MEMORY;
         my_memset(slot, 0, sizeof(reserve_frame_slot_t));
         slot->frame_type = FEC_TYPE;
-        slot->nb_bytes = 1 + sizeof(fec_frame_header_t) + ff->header.data_length;
-        slot->frame_ctx = ff;
+        slot->nb_bytes = 1 + sizeof(fec_frame_header_t) + fecframe->header.data_length;
+        slot->frame_ctx = fecframe;
         slot->is_congestion_controlled = true;
         PROTOOP_PRINTF(cnx, "RESERVE FEC FRAMES, SIZE = %ld\n", size);
         size_t reserved_size = reserve_frames(cnx, 1, slot);
         if (reserved_size < slot->nb_bytes) {
             PROTOOP_PRINTF(cnx, "Unable to reserve frame slot\n");
-            my_free(cnx, ff->data);
-            my_free(cnx, ff);
+            my_free(cnx, fecframe->data);
+            my_free(cnx, fecframe);
             my_free(cnx, slot);
             return 1;
         }
@@ -95,8 +96,10 @@ static __attribute__((always_inline)) int protect_source_symbol(picoquic_cnx_t *
         return -1;
     }
     int size;
+    bpf_state *state = get_bpf_state(cnx);
+    if (!state) return -1;
     while ((size = recv(ff->unix_sock_fd, ff->buffer, SERIALIZATION_BUFFER_SIZE, 0)) >= 0 && ff->buffer[0] != TYPE_SOURCE_SYMBOL) {
-        tetrys_handle_message(cnx, ff, ff->buffer, size);
+        tetrys_handle_message(cnx, state, ff, ff->buffer, size);
     }
     if (size < 0) {
         PROTOOP_PRINTF(cnx, "ERROR RECV, ERRNO = %d\n", get_errno());
@@ -119,6 +122,8 @@ static __attribute__((always_inline)) int flush_tetrys(picoquic_cnx_t *cnx, tetr
     ff->buffer[0] = TYPE_MESSAGE;
     encode_u32(TETRYS_MESSAGE_GENERATE_REPAIR_PACKET, &ff->buffer[1]);
     if (ffs->source_symbol_added_since_flush) {
+        // we flush, so remove the previously queued symbols and flush the new ones
+        buffer_remove_old_symbol_payload(cnx, ffs, &ffs->common_fec_framework.buffered_repair_symbols, ffs->last_sent_id);
         for (int i = 0 ; i < NUMBER_OF_SYMBOLS_TO_FLUSH ; i++) {
             if (send(ff->unix_sock_fd, ff->buffer, 1+sizeof(tetrys_message_t), 0) != 1+sizeof(tetrys_message_t)) {
                 PROTOOP_PRINTF(cnx, "ERROR SEND MESSAGE, ERRNO = %d\\n\", get_errno()\n");
@@ -129,5 +134,6 @@ static __attribute__((always_inline)) int flush_tetrys(picoquic_cnx_t *cnx, tetr
 
     ffs->source_symbol_added_since_flush = false;
     update_tetrys_state(cnx, ff);
+    reserve_fec_frames(cnx, ffs, PICOQUIC_MAX_PACKET_SIZE);
     return 0;
 }

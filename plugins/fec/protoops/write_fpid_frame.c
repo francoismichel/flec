@@ -26,9 +26,6 @@ protoop_arg_t write_fpid_frame(picoquic_cnx_t *cnx) {
         return PICOQUIC_ERROR_MEMORY;
     size_t consumed = 0;
     helper_write_source_fpid_frame(cnx, f, fpid_buffer, bytes_max - bytes, &consumed);
-    if (state->current_sfpid_frame) {
-        my_free(cnx, state->current_sfpid_frame);
-    }
     state->current_sfpid_frame = f;
     state->current_packet_contains_fpid_frame = true;
     my_memcpy(bytes, fpid_buffer, consumed);
