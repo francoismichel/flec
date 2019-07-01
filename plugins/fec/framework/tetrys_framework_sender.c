@@ -42,8 +42,8 @@ static __attribute__((always_inline)) int reserve_fec_frames(picoquic_cnx_t *cnx
         return -1;
     int size;
     tetrys_fec_framework_t *wff = (tetrys_fec_framework_t *) ff;
+    update_tetrys_state(cnx, wff);
     while ((size = buffer_dequeue_symbol_payload_skip_old_ones(cnx, ff, &wff->buffered_repair_symbols, wff->buffer, SERIALIZATION_BUFFER_SIZE)) > 0) {
-
         fec_frame_t *fecframe = my_malloc(cnx, sizeof(fec_frame_t));
         if (!fecframe)
             return PICOQUIC_ERROR_MEMORY;

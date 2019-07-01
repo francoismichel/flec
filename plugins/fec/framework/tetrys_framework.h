@@ -92,7 +92,7 @@ static __attribute__((always_inline)) bool sent_after(tetrys_fec_framework_sende
 static __attribute__((always_inline)) void buffer_remove_old_symbol_payload(picoquic_cnx_t *cnx, tetrys_fec_framework_sender_t *ff, tetrys_symbol_buffer_t *buffer, source_fpid_t after) {
     while (buffer->size > 0) {
         int idx = buffer->start;
-        if (!sent_after(ff, buffer->slots[idx].highest_sent_id_when_enqueued,
+        if (after.raw != 0 && !sent_after(ff, buffer->slots[idx].highest_sent_id_when_enqueued,
                         after)) {    // check if the symbols protected by this repair symbol are still in flight
             // discard the symbol without copying it
             buffer_dequeue_symbol_payload_without_copy(cnx, buffer);
