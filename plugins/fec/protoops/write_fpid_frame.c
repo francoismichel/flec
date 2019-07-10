@@ -13,7 +13,6 @@ protoop_arg_t write_fpid_frame(picoquic_cnx_t *cnx) {
     if (state->current_packet_contains_fec_frame || state->current_packet_contains_fpid_frame || state->cancel_sfpid_in_current_packet) {
         // no FPID frame in a packet containing a FEC Frame
         // FIXME: we loose a symbol number in the fec block...
-        my_free(cnx, f);
         set_cnx(cnx, AK_CNX_OUTPUT, 0, (protoop_arg_t) 0);
         set_cnx(cnx, AK_CNX_OUTPUT, 1, (protoop_arg_t) 0);
         state->sfpid_reserved = false;
