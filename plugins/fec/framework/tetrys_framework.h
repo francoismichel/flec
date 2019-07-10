@@ -11,6 +11,8 @@
 #include "memory.h"
 #include "memcpy.h"
 
+#define TETRYS_ACK_FRAME_TYPE 0x3c
+
 #define UNIX_SOCKET_SERVER_PATH "/tmp/tetrys_server_sock"
 #define MAX_BUFFERED_SYMBOLS 50
 #define SERIALIZATION_BUFFER_SIZE 2000
@@ -19,6 +21,7 @@
 #define TYPE_RECOVERED_SOURCE_SYMBOL 2
 #define TYPE_PAYLOAD_TO_PROTECT 3
 #define TYPE_MESSAGE 4
+#define TYPE_ACK 5
 #define TYPE_NEW_CONNECTION 0xFF
 
 typedef uint32_t tetrys_message_t;
@@ -54,6 +57,49 @@ typedef struct {
     source_fpid_t last_landed_id;
     bool source_symbol_added_since_flush;
 } tetrys_fec_framework_sender_t;
+
+
+typedef struct __attribute__((__packed__)) {
+    uint16_t length;
+} tetrys_ack_frame_header_t;
+
+typedef struct __attribute__((__packed__)) {
+    tetrys_ack_frame_header_t header;
+    uint8_t *data;
+} tetrys_ack_frame_t;
+
+static __attribute__((always_inline)) int parse_tetrys_ack_frame_header(tetrys_ack_frame_header_t *header, uint8_t *bytes, const uint8_t *bytes_max) {
+    if (bytes + sizeof(tetrys_ack_frame_header_t) > bytes_max) {
+        return -1;
+    }
+    uint8_t bytes_header[2];
+    my_memcpy(bytes_header, bytes, 2);
+    header->length = decode_u16(bytes_header);
+    return 0;
+}
+static __attribute__((always_inline)) size_t write_tetrys_ack_frame_header(picoquic_cnx_t *cnx, tetrys_ack_frame_header_t *header, uint8_t *buffer) {
+    size_t consumed = 0;
+    uint8_t type_byte = TETRYS_ACK_FRAME_TYPE;
+    my_memcpy(buffer, &type_byte, sizeof(type_byte));
+    consumed++;
+    encode_u16(header->length, buffer + consumed);
+    consumed += sizeof(tetrys_ack_frame_header_t);
+    return consumed;
+}
+
+
+// returns true if the symbol has been successfully processed
+// returns false otherwise: the symbol can be destroyed
+//FIXME: we pass the state in the parameters because the call to get_bpf_state leads to an error when loading the code
+static __attribute__((always_inline)) bool tetrys_receive_ack(picoquic_cnx_t *cnx, tetrys_fec_framework_t *ff, tetrys_ack_frame_t *ack_frame){
+    ff->buffer[0] = TYPE_ACK;
+    my_memcpy(ff->buffer+1, ack_frame->data, ack_frame->header.length);
+    if (send(ff->unix_sock_fd, ff->buffer, 1 + ack_frame->header.length, 0) != 1 + ack_frame->header.length) {
+        PROTOOP_PRINTF(cnx, "SERIALIZATION ERROR\n");
+        return false;
+    }
+    return true;
+}
 
 static __attribute__((always_inline)) bool buffer_enqueue_symbol_payload(picoquic_cnx_t *cnx, bpf_state *state, tetrys_symbol_buffer_t *buffer, uint8_t *payload, int size) {
     if (buffer->size == MAX_BUFFERED_SYMBOLS || size > SERIALIZATION_BUFFER_SIZE) return false;
@@ -210,6 +256,7 @@ static __attribute__((always_inline)) int tetrys_serialize_repair_symbol(picoqui
 
 static __attribute__((always_inline)) int tetrys_handle_message(picoquic_cnx_t *cnx, bpf_state *state, tetrys_fec_framework_t *ff, uint8_t *message, ssize_t size) {
     tetrys_symbol_buffer_t *buf = NULL;
+    PROTOOP_PRINTF(cnx, "HANDLE MESSAGE TYPE 0x%x\n", message[0]);
     switch (message[0]) {
         case TYPE_REPAIR_SYMBOL:
             buf = &ff->buffered_repair_symbols;
@@ -217,6 +264,34 @@ static __attribute__((always_inline)) int tetrys_handle_message(picoquic_cnx_t *
         case TYPE_RECOVERED_SOURCE_SYMBOL:
             buf = &ff->buffered_recovered_symbols;
             break;
+        case TYPE_ACK:;
+            if (size > 0xFFFF)
+                return -1;
+            reserve_frame_slot_t *slot = (reserve_frame_slot_t *) my_malloc(cnx, sizeof(reserve_frame_slot_t));
+            if (!slot)
+                return PICOQUIC_ERROR_MEMORY;
+            my_memset(slot, 0, sizeof(reserve_frame_slot_t));
+            tetrys_ack_frame_t *frame = my_malloc(cnx, sizeof(tetrys_ack_frame_t));
+            if (!frame) {
+                my_free(cnx, slot);
+                return PICOQUIC_ERROR_MEMORY;
+            }
+            my_memset(frame, 0, sizeof(tetrys_ack_frame_t));
+            uint8_t *frame_data = my_malloc(cnx, size);
+            if (!frame_data){
+                my_free(cnx, slot);
+                my_free(cnx, frame);
+                return PICOQUIC_ERROR_MEMORY;
+            }
+            my_memset(frame_data, 0, size);
+            frame->header.length = size;
+            frame->data = frame_data;
+            slot->frame_type = TETRYS_ACK_FRAME_TYPE;
+            slot->nb_bytes = 1 + sizeof(tetrys_ack_frame_header_t) + size;
+            slot->frame_ctx = frame;
+            slot->is_congestion_controlled = true;
+            reserve_frames(cnx, 1, slot);
+            return 0;
     }
     if (!buf) return -1;
     buffer_enqueue_symbol_payload(cnx, state, buf, message + 1, size-1);    // enqueue the symbol, without the type byte
