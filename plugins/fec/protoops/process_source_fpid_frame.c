@@ -18,12 +18,15 @@ protoop_arg_t process_source_fpid_frame(picoquic_cnx_t *cnx)
     }
     uint8_t *payload = state->current_symbol;
     if (payload){
-        source_symbol_t *ss = malloc_source_symbol_with_data(cnx, frame->source_fpid, payload, state->current_symbol_length);
+        source_symbol_t *ss = malloc_source_symbol_with_allocated_data(cnx, frame->source_fpid, payload, state->current_symbol_length);
         int ret = receive_source_symbol_helper(cnx, ss);
         if (ret != 1) {
+            my_free(cnx, state->current_symbol);
             free_source_symbol(cnx, ss);
             if (ret != 0) return (protoop_arg_t) ret;
         }
+        state->current_symbol = NULL;
+        state->current_symbol_length = 0;
     } else {
         PROTOOP_PRINTF(cnx, "NO PACKET PAYLOAD TO PROTECT\n");
     }

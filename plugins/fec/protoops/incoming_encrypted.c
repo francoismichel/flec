@@ -26,7 +26,7 @@ protoop_arg_t incoming_encrypted(picoquic_cnx_t *cnx)
     args[1] = (protoop_arg_t) bytes;
     args[2] = get_ph(ph, AK_PH_PAYLOAD_LENGTH);
     args[3] = get_ph(ph, AK_PH_SEQUENCE_NUMBER);
-    uint32_t symbol_length = (uint32_t) run_noparam(cnx, "packet_payload_to_source_symbol", 4, args, NULL);
+    uint32_t symbol_length = (uint32_t) run_noparam_with_pid(cnx, "packet_payload_to_source_symbol", 4, args, NULL, &state->packet_to_source_symbol_id);
 
     PROTOOP_PRINTF(cnx, "INCOMING, pn = 0x%x, data[9] = 0x%x, PAYLOAD LENGTH = %d, offset = %d\n", bytes[8], bytes[9], (uint16_t) get_ph(ph, AK_PH_PAYLOAD_LENGTH), (uint16_t) get_ph(ph, AK_PH_OFFSET));
     state->current_symbol = bytes;

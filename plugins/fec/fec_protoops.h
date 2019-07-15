@@ -39,6 +39,12 @@ typedef struct {
     uint8_t *written_sfpid_frame;            // set by write_sfpid_frame to the address of the sfpid frame written in the packet, used to undo a packet protection
     fec_block_t *fec_blocks[MAX_FEC_BLOCKS]; // ring buffer
     recovered_packets_buffer_t recovered_packets;
+    protoop_id_t    protect_id;
+    protoop_id_t    packet_to_source_symbol_id;
+    protoop_id_t    get_redundancy_parameters_id;
+    protoop_id_t    should_send_recovered_id;
+    protoop_id_t    receive_source_symbol_id;
+    protoop_id_t    get_source_fpid_id;
 } bpf_state;
 
 static __attribute__((always_inline)) bpf_state *initialize_bpf_state(picoquic_cnx_t *cnx)
@@ -108,9 +114,11 @@ static __attribute__((always_inline)) void remove_and_free_fec_block_at(picoquic
 }
 
 static __attribute__((always_inline)) int get_redundancy_parameters(picoquic_cnx_t *cnx, fec_redundancy_controller_t controller, bool flush, uint8_t *n, uint8_t *k){
+    bpf_state *state = get_bpf_state(cnx);
+    if (!state) return -1;
     protoop_arg_t out[2];
     protoop_arg_t args[2] = {(protoop_arg_t) controller, flush};
-    int ret = (int) run_noparam(cnx, "get_redundancy_parameters", 2, args, out);
+    int ret = (int) run_noparam_with_pid(cnx, "get_redundancy_parameters", 2, args, out, &state->get_redundancy_parameters_id);
     if (ret) {
         PROTOOP_PRINTF(cnx, "ERROR WHEN GETTING REDUNDANCY PARAMETERS\n");
         return -1;
@@ -189,7 +197,7 @@ static __attribute__((always_inline)) void maybe_notify_recovered_packets_to_cc(
 static __attribute__((always_inline)) int protect_packet(picoquic_cnx_t *cnx, source_fpid_t *source_fpid, uint8_t *data, uint16_t length){
     bpf_state *state = get_bpf_state(cnx);
 
-    source_symbol_t *ss = malloc_source_symbol_with_data(cnx, *source_fpid, data, length);
+    source_symbol_t *ss = malloc_source_symbol_with_allocated_data(cnx, *source_fpid, data, length);
     if (!ss)
         return PICOQUIC_ERROR_MEMORY;
     PROTOOP_PRINTF(cnx, "PROTECT PACKET OF SIZE %u\n", (unsigned long) length);
@@ -199,7 +207,7 @@ static __attribute__((always_inline)) int protect_packet(picoquic_cnx_t *cnx, so
     params[0] = (protoop_arg_t) state->framework_sender;
     params[1] = (protoop_arg_t) ss;
 
-    int ret = (int) run_noparam(cnx, "fec_protect_source_symbol", 2, params, NULL);
+    int ret = (int) run_noparam_with_pid(cnx, "fec_protect_source_symbol", 2, params, NULL, &state->protect_id);
     // write the source fpid
     source_fpid->raw = ss->source_fec_payload_id.raw;
     if (ret) {
@@ -211,7 +219,9 @@ static __attribute__((always_inline)) int protect_packet(picoquic_cnx_t *cnx, so
 }
 
 static __attribute__((always_inline)) bool should_send_recovered_frames(picoquic_cnx_t *cnx, recovered_packets_t *rp) {
-    return (bool) run_noparam(cnx, "should_send_recovered_frames", 1, (protoop_arg_t *) &rp, NULL);
+    bpf_state *state = get_bpf_state(cnx);
+    if (!state) return false;
+    return (bool) run_noparam_with_pid(cnx, "should_send_recovered_frames", 1, (protoop_arg_t *) &rp, NULL, &state->should_send_recovered_id);
 }
 
 #define MAX_RECOVERED_IN_ONE_ROW 5
@@ -362,7 +372,7 @@ static __attribute__((always_inline)) int set_source_fpid(picoquic_cnx_t *cnx, s
     if (!state) {
         return PICOQUIC_ERROR_MEMORY;
     }
-    sfpid->raw = (uint32_t) run_noparam(cnx, "get_source_fpid", 1, (protoop_arg_t *) &state->framework_sender, NULL);
+    sfpid->raw = (uint32_t) run_noparam_with_pid(cnx, "get_source_fpid", 1, (protoop_arg_t *) &state->framework_sender, NULL, &state->get_source_fpid_id);
     PROTOOP_PRINTF(cnx, "SFPID HAS BEEN SET TO %u\n", sfpid->raw);
     return 0;
 }
@@ -377,7 +387,7 @@ static __attribute__((always_inline)) int receive_source_symbol_helper(picoquic_
     protoop_arg_t  inputs[2];
     inputs[0] = (protoop_arg_t) ss;
     inputs[1] = true;
-    return (int) run_noparam(cnx, "receive_source_symbol", 2, inputs, NULL);
+    return (int) run_noparam_with_pid(cnx, "receive_source_symbol", 2, inputs, NULL, &state->receive_source_symbol_id);
 }
 
 #endif

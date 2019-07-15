@@ -12,7 +12,8 @@ protoop_arg_t incoming_encrypted(picoquic_cnx_t *cnx)
 {
     bpf_state *state = get_bpf_state(cnx);
     state->current_symbol_length = 0;
-    my_free(cnx, state->current_symbol);
+    if (state->current_symbol)
+        my_free(cnx, state->current_symbol);
     state->current_symbol = NULL;
     return 0;
 }

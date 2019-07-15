@@ -44,18 +44,20 @@ protoop_arg_t schedule_frames_on_path(picoquic_cnx_t *cnx)
         args[1] = (protoop_arg_t) payload_with_pn;
         args[2] = length - header_length;
         args[3] = get_pkt(packet, AK_PKT_SEQUENCE_NUMBER);
-        uint32_t symbol_length = (uint32_t) run_noparam(cnx, "packet_payload_to_source_symbol", 4, args, NULL);
+        uint32_t symbol_length = (uint32_t) run_noparam_with_pid(cnx, "packet_payload_to_source_symbol", 4, args, NULL, &state->packet_to_source_symbol_id);
 
 
         if (symbol_length <= 1 + sizeof(uint64_t) + 1 + sizeof(source_fpid_frame_t)) {
             // this symbol does not need to be protected: undo
             my_memset(state->written_sfpid_frame, 0, 1 + sizeof(source_fpid_frame_t));
             state->current_sfpid_frame = NULL;
+            my_free(cnx, payload_with_pn);
         } else {
             source_fpid_t current_sfpid = state->current_sfpid_frame->source_fpid;
             int err = protect_packet(cnx, &state->current_sfpid_frame->source_fpid, payload_with_pn, symbol_length);
             if (err){
                 PROTOOP_PRINTF(cnx, "ERROR WHILE PROTECTING\n");
+                my_free(cnx, payload_with_pn);
                 return (protoop_arg_t) err;
             }
             if (current_sfpid.raw != state->current_sfpid_frame->source_fpid.raw) {
@@ -64,7 +66,6 @@ protoop_arg_t schedule_frames_on_path(picoquic_cnx_t *cnx)
             }
         }
 
-        my_free(cnx, payload_with_pn);
     }
     state->current_sfpid_frame = NULL;
 

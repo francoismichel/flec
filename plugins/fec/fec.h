@@ -215,6 +215,19 @@ static __attribute__((always_inline)) source_symbol_t *malloc_source_symbol(pico
 }
 
 // assumes that size is safe
+static __attribute__((always_inline)) source_symbol_t *malloc_source_symbol_with_allocated_data(picoquic_cnx_t *cnx, source_fpid_t source_fpid,
+                                                              uint8_t *data, uint16_t size) {
+    source_symbol_t *s = my_malloc(cnx, sizeof(source_symbol_t));
+    if (!s)
+        return NULL;
+    s->source_fec_payload_id = source_fpid;
+    s->data_length = size;
+    s->data = data;
+    my_memcpy(s->data, data, size);
+    return s;
+}
+
+// assumes that size is safe
 static __attribute__((always_inline)) source_symbol_t *malloc_source_symbol_with_data(picoquic_cnx_t *cnx, source_fpid_t source_fpid,
                                                               uint8_t *data, uint16_t size) {
     source_symbol_t *s = malloc_source_symbol(cnx, source_fpid, size);
