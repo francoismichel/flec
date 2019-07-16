@@ -342,16 +342,6 @@ static __attribute__((always_inline)) void symbol_received(picoquic_cnx_t *cnx, 
     // TODO
 }
 
-static __attribute__((always_inline)) void slot_acked(picoquic_cnx_t *cnx, causal_redundancy_controller_t *controller, uint64_t slot, rlnc_window_t *current_window) {
-    add_elem_to_buffer(controller->acked_slots, slot);
-}
-
-// either acked or recovered
-static __attribute__((always_inline)) void slot_nacked(picoquic_cnx_t *cnx, causal_redundancy_controller_t *controller, uint64_t slot, rlnc_window_t *current_window) {
-    // remove all the acked slots in the window
-    add_elem_to_buffer(controller->nacked_slots, slot);
-    // TODO
-}
 
 static __attribute__((always_inline)) void sent_packet(causal_redundancy_controller_t *controller, causal_packet_type_t type, uint64_t slot, rlnc_window_t *window) {
     add_elem_to_history(controller->slots_history, slot, *window);
@@ -438,5 +428,20 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, causal_
         }
         controller->flush_dof_mode = window_size(current_window) > 2*controller->k;
     }
-    // TODO
+}
+
+static __attribute__((always_inline)) void slot_acked(picoquic_cnx_t *cnx, causal_redundancy_controller_t *controller, uint64_t slot, rlnc_window_t *current_window) {
+    add_elem_to_buffer(controller->acked_slots, slot);
+    run_algo(cnx, controller, ack_feedback, current_window);
+}
+
+static __attribute__((always_inline)) void free_slot_without_feedback(picoquic_cnx_t *cnx, causal_redundancy_controller_t *controller, rlnc_window_t *current_window) {
+    run_algo(cnx, controller, ack_feedback, current_window);
+}
+
+// either acked or recovered
+static __attribute__((always_inline)) void slot_nacked(picoquic_cnx_t *cnx, causal_redundancy_controller_t *controller, uint64_t slot, rlnc_window_t *current_window) {
+    // remove all the acked slots in the window
+    add_elem_to_buffer(controller->nacked_slots, slot);
+    run_algo(cnx, controller, nack_feedback, current_window);
 }
