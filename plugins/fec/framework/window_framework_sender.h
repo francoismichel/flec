@@ -1,6 +1,7 @@
 #include "../fec.h"
 #include "../../helpers.h"
 #include "../fec_protoops.h"
+#include "../causal_redundancy_controller_protoops/causal_redundancy_controller.h"
 
 #define INITIAL_SYMBOL_ID 1
 #define MAX_QUEUED_REPAIR_SYMBOLS 6
@@ -16,10 +17,15 @@ typedef struct {
     uint8_t nrs;
 } queue_item;
 
+typedef struct window_slot {
+    source_symbol_t *symbol;
+    bool received;
+} window_slot_t;
+
 typedef struct {
     fec_scheme_t fec_scheme;
-    fec_redundancy_controller_t controller;
-    source_symbol_t *fec_window[RECEIVE_BUFFER_MAX_LENGTH];
+    causal_redundancy_controller_t *controller;
+    window_slot_t fec_window[RECEIVE_BUFFER_MAX_LENGTH];
     queue_item repair_symbols_queue[MAX_QUEUED_REPAIR_SYMBOLS];
     uint32_t max_id;
     uint32_t min_id;
@@ -31,8 +37,12 @@ typedef struct {
     int repair_symbols_queue_length;
     int queue_byte_offset;  // current byte offset in the current repair symbol
     int queue_piece_offset; // current piece number of the current repair symbol
+    int64_t current_slot;
 } window_fec_framework_t;
 
+static __attribute__((always_inline)) bool is_fec_window_empty(window_fec_framework_t *wff) {
+    return wff->window_length == 0;
+}
 
 static __attribute__((always_inline)) window_fec_framework_t *create_framework_sender(picoquic_cnx_t *cnx, fec_redundancy_controller_t controller, fec_scheme_t fs) {
     window_fec_framework_t *wff = (window_fec_framework_t *) my_malloc(cnx, sizeof(window_fec_framework_t));
@@ -44,17 +54,6 @@ static __attribute__((always_inline)) window_fec_framework_t *create_framework_s
     wff->fec_scheme = fs;
     return wff;
 }
-
-static __attribute__((always_inline)) void sfpid_has_landed(window_fec_framework_t *wff, source_fpid_t sfpid) {
-    wff->smallest_in_transit = MAX(wff->smallest_in_transit, sfpid.raw);
-    wff->highest_in_transit = MAX(wff->highest_in_transit, sfpid.raw);
-}
-
-static __attribute__((always_inline)) void sfpid_takes_off(window_fec_framework_t *wff, source_fpid_t sfpid) {
-    wff->highest_in_transit = MAX(wff->highest_in_transit, sfpid.raw);
-    wff->smallest_in_transit = MIN(wff->smallest_in_transit, sfpid.raw);
-}
-
 static __attribute__((always_inline)) bool ready_to_send(picoquic_cnx_t *cnx, window_fec_framework_t *wff) {
     uint8_t k = 0;
     get_redundancy_parameters(cnx, wff->controller, false, NULL, &k);
@@ -182,18 +181,92 @@ static __attribute__((always_inline)) int reserve_fec_frames(picoquic_cnx_t *cnx
     return 0;
 }
 
-static __attribute__((always_inline)) void remove_source_symbol_from_window(picoquic_cnx_t *cnx, window_fec_framework_t *wff, source_symbol_t *ss){
+static __attribute__((always_inline)) bool _remove_source_symbol_from_window(picoquic_cnx_t *cnx, window_fec_framework_t *wff, source_symbol_t *ss){
+
+    int idx = (int) (ss->source_fec_payload_id.raw % RECEIVE_BUFFER_MAX_LENGTH);
+    // wrong symbol ?
+    if (!wff->fec_window[idx].symbol || wff->fec_window[idx].symbol->source_fec_payload_id.raw != ss->source_fec_payload_id.raw)
+        return false;
+    if (wff->fec_window[idx].symbol->source_fec_payload_id.raw == wff->min_id) wff->min_id++;
+    free_source_symbol(cnx, wff->fec_window[idx].symbol);
+    wff->fec_window[idx].symbol = NULL;
+    wff->fec_window[idx].received = false;
+    // one less symbol
+    wff->window_length--;
+    return true;
+}
+
+static __attribute__((always_inline)) bool remove_source_symbol_from_window(picoquic_cnx_t *cnx, window_fec_framework_t *wff, source_symbol_t *ss){
+    if (ss) {
+        if (ss->source_fec_payload_id.raw != wff->smallest_in_transit || is_fec_window_empty(wff)) {
+            return false;
+        }
+
+        int idx = (int) (ss->source_fec_payload_id.raw % RECEIVE_BUFFER_MAX_LENGTH);
+
+        if (!_remove_source_symbol_from_window(cnx, wff, ss))
+            return false;
+        wff->smallest_in_transit++;
+
+        while(!is_fec_window_empty(wff) && wff->fec_window[wff->smallest_in_transit % RECEIVE_BUFFER_MAX_LENGTH].received) {
+
+            if (!_remove_source_symbol_from_window(cnx, wff, wff->fec_window[wff->smallest_in_transit % RECEIVE_BUFFER_MAX_LENGTH].symbol))
+                return false;
+            wff->smallest_in_transit++;
+        }
+
+        if (is_fec_window_empty(wff)) {
+            wff->smallest_in_transit = wff->highest_in_transit = INITIAL_SYMBOL_ID-1;
+        }
+        return true;
+    }
+    return false;
+}
+
+static __attribute__((always_inline)) bool add_source_symbol_to_window(picoquic_cnx_t *cnx, window_fec_framework_t *wff, source_symbol_t *ss){
     if (ss) {
         int idx = (int) (ss->source_fec_payload_id.raw % RECEIVE_BUFFER_MAX_LENGTH);
-        if (wff->fec_window[idx] && wff->fec_window[idx]->source_fec_payload_id.raw == ss->source_fec_payload_id.raw) {
-            if (wff->fec_window[idx]->source_fec_payload_id.raw == wff->min_id) wff->min_id++;
-            free_source_symbol(cnx, wff->fec_window[idx]);
-            wff->fec_window[idx] = NULL;
-            // one less symbol
-            wff->window_length--;
+        if (wff->fec_window[idx].symbol || ss->source_fec_payload_id.raw <= wff->highest_in_transit) {
+            // we cannot add a symbol if another one is already there
+            return false;
+        }
+        wff->fec_window[idx].symbol = ss;
+        wff->fec_window[idx].received = false;
+        if (wff->window_length == 0) {
+            wff->min_id = wff->max_id = ss->source_fec_payload_id.raw;
+            wff->highest_in_transit = ss->source_fec_payload_id.raw;
+            wff->smallest_in_transit = ss->source_fec_payload_id.raw;
+        }
+        // one more symbol
+        wff->window_length++;
+        wff->highest_in_transit = ss->source_fec_payload_id.raw;
+        return true;
+    }
+    return false;
+
+}
+
+static __attribute__((always_inline)) int sfpid_has_landed(picoquic_cnx_t *cnx, window_fec_framework_t *wff, source_fpid_t sfpid, bool received) {
+    // remove all the needed symbols from the window
+    if (received) {
+        uint32_t idx = sfpid.raw % RECEIVE_BUFFER_MAX_LENGTH;
+        if (wff->fec_window[idx].symbol->source_fec_payload_id.raw == sfpid.raw) {
+            wff->fec_window[idx].received = true;
+            // if it is the first symbol of the window, let's prune the window
+            if (!is_fec_window_empty(wff) && sfpid.raw == wff->smallest_in_transit) {
+                if (!remove_source_symbol_from_window(cnx, wff, wff->fec_window[idx].symbol))
+                    return -1;
+            }
         }
     }
+    return 0;
 }
+
+static __attribute__((always_inline)) void sfpid_takes_off(window_fec_framework_t *wff, source_fpid_t sfpid) {
+    wff->highest_in_transit = MAX(wff->highest_in_transit, sfpid.raw);
+    wff->smallest_in_transit = MIN(wff->smallest_in_transit, sfpid.raw);
+}
+
 
 
 static __attribute__((always_inline)) void remove_source_symbols_from_block_and_window(picoquic_cnx_t *cnx, window_fec_framework_t *wff, fec_block_t *fb){
@@ -266,17 +339,50 @@ static __attribute__((always_inline)) source_fpid_t get_source_fpid(window_fec_f
     return s;
 }
 
+static __attribute__((always_inline)) int select_all_inflight_source_symbols(picoquic_cnx_t *cnx, window_fec_framework_t *wff, fec_block_t *fb)
+{
+    fb->current_source_symbols = 0;
+    for (int i = MAX(wff->smallest_in_transit, wff->highest_in_transit - MIN(RECEIVE_BUFFER_MAX_LENGTH, wff->highest_in_transit)) ; i <= wff->highest_in_transit ; i++) {
+        source_symbol_t *ss = wff->fec_window[((uint32_t) i) % RECEIVE_BUFFER_MAX_LENGTH].symbol;
+        if (!ss || ss->source_fec_payload_id.raw != i)
+            return -1;
+        fb->source_symbols[fb->current_source_symbols++] = ss;
+    }
+    fb->total_source_symbols = fb->current_source_symbols;
+    fb->total_repair_symbols = 1;
+
+    return 0;
+}
+
+static __attribute__((always_inline)) repair_symbol_t *get_one_coded_symbol(picoquic_cnx_t *cnx, window_fec_framework_t *wff){
+    protoop_arg_t args[3];
+    fec_block_t *fb = malloc_fec_block(cnx, 0);
+    if (!fb)
+        return NULL;
+
+    if (select_all_inflight_source_symbols(cnx, wff, fb)) {
+        my_free(cnx, fb);
+        return NULL;
+    }
+
+    args[0] = (protoop_arg_t) fb;
+    args[1] = (protoop_arg_t) wff->fec_scheme;
+    args[2] = (protoop_arg_t) wff->current_slot;
+
+    run_noparam(cnx, "rlc_gf256_get_one_coded_symbol", 3, args, NULL);
+    if (fb->total_repair_symbols != 1)
+        return NULL;
+    repair_symbol_t *rs = fb->repair_symbols[0];
+    my_free(cnx, fb);
+    return rs;
+}
+
 static __attribute__((always_inline)) int protect_source_symbol(picoquic_cnx_t *cnx, window_fec_framework_t *wff, source_symbol_t *ss){
     ss->source_fec_payload_id.raw = ++wff->max_id;
-    int idx = (int) (ss->source_fec_payload_id.raw % RECEIVE_BUFFER_MAX_LENGTH);
-    remove_source_symbol_from_window(cnx, wff, wff->fec_window[idx]);
-    wff->fec_window[idx] = ss;
-    if (wff->window_length == 0) {
-        wff->min_id = wff->max_id = ss->source_fec_payload_id.raw;
+    if (!add_source_symbol_to_window(cnx, wff, ss)) {
+        return -1;
     }
-    // one more symbol
-    wff->window_length++;
-
+    wff->highest_in_transit = ss->source_fec_payload_id.raw;
 
     if (ready_to_send(cnx, wff)) {
         generate_and_queue_repair_symbols(cnx, wff, false);
@@ -291,3 +397,19 @@ static __attribute__((always_inline)) int flush_fec_window(picoquic_cnx_t *cnx, 
     }
     return 0;
 }
+
+
+static __attribute__((always_inline)) uint64_t window_sent_symbol(picoquic_cnx_t *cnx, window_fec_framework_t *wff, causal_packet_type_t type, rlnc_window_t *window) {
+    sent_packet(wff->controller, type, wff->current_slot, window);
+    return wff->current_slot++;
+}
+
+
+static __attribute__((always_inline)) causal_packet_type_t window_what_to_send(picoquic_cnx_t *cnx, window_fec_framework_t *wff) {
+    causal_packet_type_t type;
+    if (!dequeue_elem_from_buffer(wff->controller->what_to_send, (buffer_elem_t *) &type)) {
+        return nothing;
+    }
+    return type;
+}
+

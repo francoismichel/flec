@@ -11,6 +11,7 @@ typedef enum causal_packet_type {
     new_rlnc_packet,
     fec_packet,
     fb_fec_packet,
+    nothing,
 } causal_packet_type_t;
 
 typedef enum causal_feedback {
@@ -75,7 +76,7 @@ static __attribute__((always_inline)) void add_elem_to_buffer(buffer_t *buffer, 
 }
 
 
-static __attribute__((always_inline)) bool remove_elem_in_buffer(buffer_t *buffer, buffer_elem_t slot) {
+static __attribute__((always_inline)) bool remove_elem_from_buffer(buffer_t *buffer, buffer_elem_t slot) {
     if (buffer->current_size == 0) return false;
     if (buffer->elems[buffer->start] == slot) {
         buffer->start = (buffer->start + 1) % buffer->max_size;
@@ -83,6 +84,14 @@ static __attribute__((always_inline)) bool remove_elem_in_buffer(buffer_t *buffe
         return true;
     }
     return false;
+}
+
+static __attribute__((always_inline)) bool dequeue_elem_from_buffer(buffer_t *buffer, buffer_elem_t *elem) {
+    if (buffer->current_size == 0) return false;
+    *elem = buffer->elems[buffer->start];
+    buffer->start = (buffer->start + 1) % buffer->max_size;
+    buffer->current_size--;
+    return true;
 }
 
 static __attribute__((always_inline)) bool is_elem_in_buffer(buffer_t *buffer, buffer_elem_t slot) {
@@ -439,7 +448,6 @@ static __attribute__((always_inline)) void free_slot_without_feedback(picoquic_c
     run_algo(cnx, controller, ack_feedback, current_window);
 }
 
-// either acked or recovered
 static __attribute__((always_inline)) void slot_nacked(picoquic_cnx_t *cnx, causal_redundancy_controller_t *controller, uint64_t slot, rlnc_window_t *current_window) {
     // remove all the acked slots in the window
     add_elem_to_buffer(controller->nacked_slots, slot);
