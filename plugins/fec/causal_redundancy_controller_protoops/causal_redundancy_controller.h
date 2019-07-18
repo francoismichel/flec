@@ -45,7 +45,7 @@ typedef struct {
 } slots_history_t;
 
 static __attribute__((always_inline)) buffer_t *create_buffer(picoquic_cnx_t *cnx, int max_size) {
-    if (max_size > MAX_SLOTS || max_size) return NULL;
+    if (max_size > MAX_SLOTS || !max_size) return NULL;
     buffer_elem_t *elems = my_malloc(cnx, max_size*sizeof(buffer_elem_t));
     if (!elems) return NULL;
     my_memset(elems, 0, max_size*sizeof(buffer_elem_t));
@@ -149,7 +149,7 @@ static __attribute__((always_inline)) bool remove_symbol_from_window(rlnc_window
 
 
 static __attribute__((always_inline)) slots_history_t *create_history(picoquic_cnx_t *cnx, int max_size) {
-    if (max_size > MAX_SLOTS || max_size) return NULL;
+    if (max_size > MAX_SLOTS || !max_size) return NULL;
     history_entry_t *windows = my_malloc(cnx, max_size*sizeof(history_entry_t));
     if (!windows) return NULL;
     my_memset(windows, 0, max_size*sizeof(buffer_elem_t));
@@ -222,7 +222,7 @@ typedef struct {
     buffer_t *what_to_send;
     slots_history_t *slots_history;
     int64_t ad, md, n_lost_slots;
-    uint64_t threshold_times_granularity;
+    int64_t threshold_times_granularity;
     int64_t d_times_granularity;
     source_fpid_t latest_symbol_protected_by_fec;
     uint32_t k, m;
@@ -230,9 +230,13 @@ typedef struct {
     bool flush_dof_mode;
 } causal_redundancy_controller_t;
 
-static __attribute__((always_inline)) causal_redundancy_controller_t *create_causal_redundancy_controller(picoquic_cnx_t *cnx) {
+static __attribute__((always_inline)) causal_redundancy_controller_t *create_causal_redundancy_controller(picoquic_cnx_t *cnx, uint32_t threshold_times_granularity, uint32_t m, uint32_t k) {
     causal_redundancy_controller_t *controller = my_malloc(cnx, sizeof(causal_redundancy_controller_t));
     if (!controller) return NULL;
+    memset(controller, 0, sizeof(causal_redundancy_controller_t));
+    controller->k = k;
+    controller->threshold_times_granularity = threshold_times_granularity;
+    controller->m = m;
     controller->acked_slots = create_buffer(cnx, 100);
     if (!controller->acked_slots) {
         my_free(cnx, controller);
@@ -295,12 +299,12 @@ static __attribute__((always_inline)) void sent_window(causal_redundancy_control
     add_elem_to_history(controller->slots_history, slot, window);
 }
 
-static __attribute__((always_inline)) uint64_t r_times_granularity(causal_redundancy_controller_t *controller) {
+static __attribute__((always_inline)) int64_t r_times_granularity(causal_redundancy_controller_t *controller) {
     return GRANULARITY - (controller->n_lost_slots*GRANULARITY / controller->n_received_feedbacks);
 }
 
 static __attribute__((always_inline)) bool EW(causal_redundancy_controller_t *controller, rlnc_window_t *current_window) {
-    return (current_window->end-1) - controller->latest_symbol_protected_by_fec.raw >= controller->k;
+    return !is_window_empty(current_window) && (current_window->end-1) % controller->k == 0 && ((int64_t) current_window->end - (int64_t) current_window->start >= controller->k) && (current_window->end-1) - controller->latest_symbol_protected_by_fec.raw >= controller->k;
 }
 
 static __attribute__((always_inline)) bool threshold_exceeded(causal_redundancy_controller_t *controller) {
@@ -328,7 +332,7 @@ static __attribute__((always_inline)) uint32_t compute_ad(causal_redundancy_cont
 
 static __attribute__((always_inline)) uint32_t compute_md(causal_redundancy_controller_t *controller, rlnc_window_t *current_window) {
     uint32_t md = 0;
-    for (int i = 0 ; i < controller->nacked_slots->max_size ; i++) {
+    for (int i = 0 ; i < controller->nacked_slots->current_size ; i++) {
         uint64_t slot = controller->nacked_slots->elems[controller->nacked_slots->start + i];
         rlnc_window_t *sent_window = get_window_sent_at_slot(controller->slots_history, slot);
         // see equation
@@ -339,6 +343,14 @@ static __attribute__((always_inline)) uint32_t compute_md(causal_redundancy_cont
             md++;
     }
     return md;
+}
+
+static __attribute__((always_inline)) causal_packet_type_t what_to_send(picoquic_cnx_t *cnx, causal_redundancy_controller_t *controller) {
+    if (is_buffer_empty(controller->what_to_send))
+        return nothing;
+    buffer_elem_t type;
+    dequeue_elem_from_buffer(controller->what_to_send, &type);
+    return type;
 }
 
 // either acked or recovered
@@ -371,9 +383,13 @@ static __attribute__((always_inline)) void sent_packet(causal_redundancy_control
 
 // either acked or recovered
 static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, causal_redundancy_controller_t *controller, causal_feedback_t feedback, rlnc_window_t *current_window) {
-    if (feedback != no_feedback)   controller->n_received_feedbacks++;
-    controller->d_times_granularity = controller->ad != 0 ? (controller->md*GRANULARITY)/(controller->ad) : -1;
+    if (feedback != no_feedback)    controller->n_received_feedbacks++;
+    if (feedback == nack_feedback)  {
+        controller->n_lost_slots++;
+    }
+    controller->md = compute_md(controller, current_window);
     controller->ad = compute_ad(controller, current_window);
+    controller->d_times_granularity = controller->ad != 0 ? (controller->md*GRANULARITY)/(controller->ad) : -1;
     if (is_buffer_empty(controller->what_to_send)) {
         if (controller->flush_dof_mode) {
             add_elem_to_buffer(controller->what_to_send, fec_packet);
@@ -393,7 +409,6 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, causal_
                     }
                     break;
                 case nack_feedback:
-                    controller->md = compute_md(controller, current_window);
                     if (controller->d_times_granularity == -1 || threshold_exceeded(controller)) {
                         if (!EW(controller, current_window)) {
                             // TODO: first check if new data are available to send ?
@@ -445,7 +460,7 @@ static __attribute__((always_inline)) void slot_acked(picoquic_cnx_t *cnx, causa
 }
 
 static __attribute__((always_inline)) void free_slot_without_feedback(picoquic_cnx_t *cnx, causal_redundancy_controller_t *controller, rlnc_window_t *current_window) {
-    run_algo(cnx, controller, ack_feedback, current_window);
+    run_algo(cnx, controller, no_feedback, current_window);
 }
 
 static __attribute__((always_inline)) void slot_nacked(picoquic_cnx_t *cnx, causal_redundancy_controller_t *controller, uint64_t slot, rlnc_window_t *current_window) {
