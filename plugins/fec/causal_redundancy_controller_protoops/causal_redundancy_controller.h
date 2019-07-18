@@ -308,22 +308,34 @@ static __attribute__((always_inline)) bool EW(causal_redundancy_controller_t *co
 }
 
 static __attribute__((always_inline)) bool threshold_exceeded(causal_redundancy_controller_t *controller) {
+    int64_t diff = (r_times_granularity(controller) - controller->d_times_granularity) - controller->threshold_times_granularity;
+    diff = diff > 0 ? diff : -diff;
+    // handling precision errors
+    if (diff < 2){
+        return false;
+    }
     return r_times_granularity(controller) - controller->d_times_granularity > controller->threshold_times_granularity;
 }
 
 static __attribute__((always_inline)) bool threshold_strictly_greater(causal_redundancy_controller_t *controller) {
+    int64_t diff = (r_times_granularity(controller) - controller->d_times_granularity) - controller->threshold_times_granularity;
+    diff = diff > 0 ? diff : -diff;
+    // handling precision errors
+    if (diff < 2){
+        return false;
+    }
     return r_times_granularity(controller) - controller->d_times_granularity < controller->threshold_times_granularity;
 }
 
 static __attribute__((always_inline)) uint32_t compute_ad(causal_redundancy_controller_t *controller, rlnc_window_t *current_window) {
     uint32_t ad = 0;
-    for (int i = 0 ; i < controller->fec_slots->max_size ; i++) {
-        uint64_t slot = controller->fec_slots->elems[controller->fec_slots->start + i];
+    for (int i = 0 ; i < controller->fec_slots->current_size ; i++) {
+        uint64_t slot = controller->fec_slots->elems[(controller->fec_slots->start + i)  % controller->fec_slots->max_size];
         rlnc_window_t *sent_window = get_window_sent_at_slot(controller->slots_history, slot);
         if (sent_window && window_intersects(sent_window, current_window)) ad++;
     }
-    for (int i = 0 ; i < controller->fb_fec_slots->max_size ; i++) {
-        uint64_t slot = controller->fb_fec_slots->elems[controller->fb_fec_slots->start + i];
+    for (int i = 0 ; i < controller->fb_fec_slots->current_size ; i++) {
+        uint64_t slot = controller->fb_fec_slots->elems[(controller->fb_fec_slots->start + i) % controller->fb_fec_slots->max_size];
         rlnc_window_t *sent_window = get_window_sent_at_slot(controller->slots_history, slot);
         if (sent_window && window_intersects(sent_window, current_window)) ad++;
     }
@@ -333,7 +345,7 @@ static __attribute__((always_inline)) uint32_t compute_ad(causal_redundancy_cont
 static __attribute__((always_inline)) uint32_t compute_md(causal_redundancy_controller_t *controller, rlnc_window_t *current_window) {
     uint32_t md = 0;
     for (int i = 0 ; i < controller->nacked_slots->current_size ; i++) {
-        uint64_t slot = controller->nacked_slots->elems[controller->nacked_slots->start + i];
+        uint64_t slot = controller->nacked_slots->elems[(controller->nacked_slots->start + i) % controller->nacked_slots->max_size];
         rlnc_window_t *sent_window = get_window_sent_at_slot(controller->slots_history, slot);
         // see equation
         if (sent_window
@@ -389,7 +401,8 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, causal_
     }
     controller->md = compute_md(controller, current_window);
     controller->ad = compute_ad(controller, current_window);
-    controller->d_times_granularity = controller->ad != 0 ? (controller->md*GRANULARITY)/(controller->ad) : -1;
+    controller->d_times_granularity = controller->ad != 0 ? (controller->md*GRANULARITY)/(controller->ad) : 0;
+    bool added_new_packet = false;
     if (is_buffer_empty(controller->what_to_send)) {
         if (controller->flush_dof_mode) {
             add_elem_to_buffer(controller->what_to_send, fec_packet);
@@ -405,13 +418,16 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, causal_
                         controller->ad += controller->m;
                     } else {
                         // TODO: first check if new data are available to send ?
+                        added_new_packet = true;
                         add_elem_to_buffer(controller->what_to_send, new_rlnc_packet);
                     }
                     break;
                 case nack_feedback:
+                    printf("d = %ld\n", controller->d_times_granularity);
                     if (controller->d_times_granularity == -1 || threshold_exceeded(controller)) {
                         if (!EW(controller, current_window)) {
                             // TODO: first check if new data are available to send ?
+                            added_new_packet = true;
                             add_elem_to_buffer(controller->what_to_send, new_rlnc_packet);
                         } else {
                             for (int i = 0; i < controller->m; i++) {
@@ -441,6 +457,7 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, causal_
                             add_elem_to_buffer(controller->what_to_send, fb_fec_packet);
                             controller->ad++;
                         } else {
+                            added_new_packet = true;
                             // TODO: first check if new data are available to send ?
                             add_elem_to_buffer(controller->what_to_send, new_rlnc_packet);
                         }
@@ -450,7 +467,9 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, causal_
                     break;
             }
         }
-        controller->flush_dof_mode = window_size(current_window) > 2*controller->k;
+        // we must take the newly added packet into account
+        int to_add = added_new_packet ? 1 : 0;
+        controller->flush_dof_mode = window_size(current_window) + to_add > 2*controller->k;
     }
 }
 
