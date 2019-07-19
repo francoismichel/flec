@@ -67,9 +67,9 @@ static __attribute__((always_inline)) void destroy_buffer(picoquic_cnx_t *cnx, b
 
 
 static __attribute__((always_inline)) void add_elem_to_buffer(buffer_t *buffer, buffer_elem_t slot) {
-    buffer->elems[(buffer->start + buffer->current_size) % buffer->max_size] = slot;
+    buffer->elems[((uint64_t)(buffer->start + buffer->current_size)) % ((uint64_t)buffer->max_size)] = slot;
     if (buffer->current_size == buffer->max_size) {
-        buffer->start = (buffer->start + 1) % buffer->max_size;
+        buffer->start = ((uint64_t)(buffer->start + 1)) % ((uint64_t)buffer->max_size);
     } else {
         buffer->current_size++;
     }
@@ -79,7 +79,7 @@ static __attribute__((always_inline)) void add_elem_to_buffer(buffer_t *buffer, 
 static __attribute__((always_inline)) bool remove_elem_from_buffer(buffer_t *buffer, buffer_elem_t slot) {
     if (buffer->current_size == 0) return false;
     if (buffer->elems[buffer->start] == slot) {
-        buffer->start = (buffer->start + 1) % buffer->max_size;
+        buffer->start = ((uint64_t)(buffer->start + 1)) % ((uint64_t)buffer->max_size);
         buffer->current_size--;
         return true;
     }
@@ -89,14 +89,14 @@ static __attribute__((always_inline)) bool remove_elem_from_buffer(buffer_t *buf
 static __attribute__((always_inline)) bool dequeue_elem_from_buffer(buffer_t *buffer, buffer_elem_t *elem) {
     if (buffer->current_size == 0) return false;
     *elem = buffer->elems[buffer->start];
-    buffer->start = (buffer->start + 1) % buffer->max_size;
+    buffer->start = ((uint64_t)(buffer->start + 1)) % ((uint64_t)buffer->max_size);
     buffer->current_size--;
     return true;
 }
 
 static __attribute__((always_inline)) bool is_elem_in_buffer(buffer_t *buffer, buffer_elem_t slot) {
     for (int i = 0 ; i < buffer->current_size ; i++) {
-        if (buffer->elems[(buffer->start + i) % buffer->max_size] == slot)
+        if (buffer->elems[((uint64_t)(buffer->start + i)) % ((uint64_t)buffer->max_size)] == slot)
             return true;
     }
     return false;
@@ -171,13 +171,13 @@ static __attribute__((always_inline)) void destroy_history(picoquic_cnx_t *cnx, 
 
 
 static __attribute__((always_inline)) void add_elem_to_history(slots_history_t *history, int64_t slot, rlnc_window_t window) {
-    history->sent_windows[slot % history->max_size].slot = slot;
-    history->sent_windows[slot % history->max_size].window = window;
+    history->sent_windows[((uint64_t)slot) % ((uint64_t)history->max_size)].slot = slot;
+    history->sent_windows[((uint64_t)slot) % ((uint64_t)history->max_size)].window = window;
 }
 
 
 static __attribute__((always_inline)) bool remove_elem_from_history(slots_history_t *history, int64_t slot) {
-    history_entry_t *entry = &history->sent_windows[slot % history->max_size];
+    history_entry_t *entry = &history->sent_windows[((uint64_t)slot) % ((uint64_t)history->max_size)];
     if (entry->slot == slot) {
         entry->slot = -1;
         entry->window.start = 0;
@@ -188,13 +188,13 @@ static __attribute__((always_inline)) bool remove_elem_from_history(slots_histor
 }
 
 static __attribute__((always_inline)) bool is_slot_in_history(slots_history_t *history, int64_t slot) {
-    return history->sent_windows[slot % history->max_size].slot == slot;
+    return history->sent_windows[((uint64_t)slot) % ((uint64_t)history->max_size)].slot == slot;
 }
 
 // returns NULL if the slot is not in the history
 static __attribute__((always_inline)) rlnc_window_t *get_window_sent_at_slot(slots_history_t *history, int64_t slot) {
     if (!is_slot_in_history(history, slot)) return NULL;
-    return &history->sent_windows[slot % history->max_size].window;
+    return &history->sent_windows[((uint64_t)slot) % ((uint64_t)history->max_size)].window;
 }
 
 static __attribute__((always_inline)) bool is_symbol_protected_in_history(slots_history_t *history, source_fpid_t id) {
@@ -300,11 +300,11 @@ static __attribute__((always_inline)) void sent_window(causal_redundancy_control
 }
 
 static __attribute__((always_inline)) int64_t r_times_granularity(causal_redundancy_controller_t *controller) {
-    return GRANULARITY - (controller->n_lost_slots*GRANULARITY / controller->n_received_feedbacks);
+    return GRANULARITY - ((uint64_t)(controller->n_lost_slots*GRANULARITY) / ((uint64_t)controller->n_received_feedbacks));
 }
 
 static __attribute__((always_inline)) bool EW(causal_redundancy_controller_t *controller, rlnc_window_t *current_window) {
-    return !is_window_empty(current_window) && (current_window->end-1) % controller->k == 0 && ((int64_t) current_window->end - (int64_t) current_window->start >= controller->k) && (current_window->end-1) - controller->latest_symbol_protected_by_fec.raw >= controller->k;
+    return !is_window_empty(current_window) && ((uint64_t)(current_window->end-1)) % ((uint64_t)controller->k) == 0 && ((int64_t) current_window->end - (int64_t) current_window->start >= controller->k) && (current_window->end-1) - controller->latest_symbol_protected_by_fec.raw >= controller->k;
 }
 
 static __attribute__((always_inline)) bool threshold_exceeded(causal_redundancy_controller_t *controller) {
@@ -330,12 +330,12 @@ static __attribute__((always_inline)) bool threshold_strictly_greater(causal_red
 static __attribute__((always_inline)) uint32_t compute_ad(causal_redundancy_controller_t *controller, rlnc_window_t *current_window) {
     uint32_t ad = 0;
     for (int i = 0 ; i < controller->fec_slots->current_size ; i++) {
-        uint64_t slot = controller->fec_slots->elems[(controller->fec_slots->start + i)  % controller->fec_slots->max_size];
+        uint64_t slot = controller->fec_slots->elems[((uint64_t)(controller->fec_slots->start + i))  % ((uint64_t)controller->fec_slots->max_size)];
         rlnc_window_t *sent_window = get_window_sent_at_slot(controller->slots_history, slot);
         if (sent_window && window_intersects(sent_window, current_window)) ad++;
     }
     for (int i = 0 ; i < controller->fb_fec_slots->current_size ; i++) {
-        uint64_t slot = controller->fb_fec_slots->elems[(controller->fb_fec_slots->start + i) % controller->fb_fec_slots->max_size];
+        uint64_t slot = controller->fb_fec_slots->elems[((uint64_t)(controller->fb_fec_slots->start + i)) % ((uint64_t)controller->fb_fec_slots->max_size)];
         rlnc_window_t *sent_window = get_window_sent_at_slot(controller->slots_history, slot);
         if (sent_window && window_intersects(sent_window, current_window)) ad++;
     }
@@ -345,7 +345,7 @@ static __attribute__((always_inline)) uint32_t compute_ad(causal_redundancy_cont
 static __attribute__((always_inline)) uint32_t compute_md(causal_redundancy_controller_t *controller, rlnc_window_t *current_window) {
     uint32_t md = 0;
     for (int i = 0 ; i < controller->nacked_slots->current_size ; i++) {
-        uint64_t slot = controller->nacked_slots->elems[(controller->nacked_slots->start + i) % controller->nacked_slots->max_size];
+        uint64_t slot = controller->nacked_slots->elems[((uint64_t)(controller->nacked_slots->start + i)) % ((uint64_t)controller->nacked_slots->max_size)];
         rlnc_window_t *sent_window = get_window_sent_at_slot(controller->slots_history, slot);
         // see equation
         if (sent_window
@@ -379,7 +379,7 @@ static __attribute__((always_inline)) void symbol_received(picoquic_cnx_t *cnx, 
 static __attribute__((always_inline)) void sent_packet(causal_redundancy_controller_t *controller, causal_packet_type_t type, uint64_t slot, rlnc_window_t *window) {
     add_elem_to_history(controller->slots_history, slot, *window);
     if (!EW(controller, window)) {
-        controller->latest_symbol_protected_by_fec.raw = ((window->end-1)/controller->k)*controller->k;
+        controller->latest_symbol_protected_by_fec.raw = (((uint64_t) (window->end-1))/((uint64_t)controller->k))*controller->k;
     }
     switch(type) {
         case fec_packet:
@@ -401,7 +401,7 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, causal_
     }
     controller->md = compute_md(controller, current_window);
     controller->ad = compute_ad(controller, current_window);
-    controller->d_times_granularity = controller->ad != 0 ? (controller->md*GRANULARITY)/(controller->ad) : 0;
+    controller->d_times_granularity = controller->ad != 0 ? (((uint64_t) controller->md*GRANULARITY))/((uint64_t) (controller->ad)) : 0;
     bool added_new_packet = false;
     if (is_buffer_empty(controller->what_to_send)) {
         if (controller->flush_dof_mode) {
