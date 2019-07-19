@@ -10,7 +10,7 @@ protoop_arg_t window_select_symbols_to_protect(picoquic_cnx_t *cnx)
     uint32_t min_start_index = (wff->max_id > RECEIVE_BUFFER_MAX_LENGTH-1) ? (wff->max_id - (RECEIVE_BUFFER_MAX_LENGTH-1)) : 0;
     uint32_t start_index = MAX(wff->highest_sent_id + 1, min_start_index);
     for (int i = start_index ; i <= wff->max_id ; i++) {
-        fb->source_symbols[i-start_index] = wff->fec_window[((uint32_t) i) % RECEIVE_BUFFER_MAX_LENGTH];
+        fb->source_symbols[i-start_index] = wff->fec_window[((uint32_t) i) % RECEIVE_BUFFER_MAX_LENGTH].symbol;
         fb->current_source_symbols++;
     }
     fb->total_source_symbols = fb->current_source_symbols;

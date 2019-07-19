@@ -50,6 +50,8 @@ static __attribute__((always_inline)) window_fec_framework_t *create_framework_s
         return NULL;
     my_memset(wff, 0, sizeof(window_fec_framework_t));
     wff->highest_sent_id = INITIAL_SYMBOL_ID-1;
+    wff->highest_in_transit = INITIAL_SYMBOL_ID-1;
+    wff->smallest_in_transit = INITIAL_SYMBOL_ID-1;
     wff->controller = controller;
     wff->fec_scheme = fs;
     return wff;
@@ -181,6 +183,42 @@ static __attribute__((always_inline)) int reserve_fec_frames(picoquic_cnx_t *cnx
     return 0;
 }
 
+static __attribute__((always_inline)) int reserve_fec_frame_for_repair_symbol(picoquic_cnx_t *cnx, window_fec_framework_t *wff, size_t size_max, repair_symbol_t *rs, uint8_t nss) {
+    // FIXME: bourrin
+    fec_frame_t *ff = my_malloc(cnx, sizeof(fec_frame_t));
+    if (!ff)
+        return PICOQUIC_ERROR_MEMORY;
+    if (!rs->data_length || rs->data_length > size_max)
+        return PICOQUIC_ERROR_FRAME_BUFFER_TOO_SMALL;
+    ff->data = rs->data;
+    ff->header.data_length = rs->data_length;
+    ff->header.offset = rs->symbol_number;
+    ff->header.repair_fec_payload_id = rs->repair_fec_payload_id;
+    ff->header.nss = nss;
+    ff->header.nrs = 0;
+    reserve_frame_slot_t *slot = (reserve_frame_slot_t *) my_malloc(cnx, sizeof(reserve_frame_slot_t));
+    if (!slot)
+        return PICOQUIC_ERROR_MEMORY;
+    my_memset(slot, 0, sizeof(reserve_frame_slot_t));
+    slot->frame_type = FEC_TYPE;
+    slot->nb_bytes = 1 + sizeof(fec_frame_header_t) + rs->data_length;
+    slot->frame_ctx = ff;
+    slot->is_congestion_controlled = true;
+    PROTOOP_PRINTF(cnx, "RESERVE FEC FRAMES\n");
+    size_t reserved_size = reserve_frames(cnx, 1, slot);
+    PROTOOP_PRINTF(cnx, "RESERVING REPAIR FRAME\n");
+    if (reserved_size < slot->nb_bytes) {
+        PROTOOP_PRINTF(cnx, "Unable to reserve frame slot\n");
+        my_free(cnx, ff->data);
+        my_free(cnx, ff);
+        my_free(cnx, slot);
+        return 1;
+    }
+    return 0;
+}
+
+
+
 static __attribute__((always_inline)) bool _remove_source_symbol_from_window(picoquic_cnx_t *cnx, window_fec_framework_t *wff, source_symbol_t *ss){
 
     int idx = (int) (ss->source_fec_payload_id.raw % RECEIVE_BUFFER_MAX_LENGTH);
@@ -202,7 +240,6 @@ static __attribute__((always_inline)) bool remove_source_symbol_from_window(pico
             return false;
         }
 
-        int idx = (int) (ss->source_fec_payload_id.raw % RECEIVE_BUFFER_MAX_LENGTH);
 
         if (!_remove_source_symbol_from_window(cnx, wff, ss))
             return false;
@@ -225,8 +262,10 @@ static __attribute__((always_inline)) bool remove_source_symbol_from_window(pico
 
 static __attribute__((always_inline)) bool add_source_symbol_to_window(picoquic_cnx_t *cnx, window_fec_framework_t *wff, source_symbol_t *ss){
     if (ss) {
+        PROTOOP_PRINTF(cnx, "SOURCE SYMBOL ADDED\n");
         int idx = (int) (ss->source_fec_payload_id.raw % RECEIVE_BUFFER_MAX_LENGTH);
         if (wff->fec_window[idx].symbol || ss->source_fec_payload_id.raw <= wff->highest_in_transit) {
+            PROTOOP_PRINTF(cnx, "ANOTHER SYMBOL IS THERE: %p, RAW = %u, HIGHEST IN TRANSIT = %u\n", (protoop_arg_t) wff->fec_window[idx].symbol, ss->source_fec_payload_id.raw, wff->highest_in_transit);
             // we cannot add a symbol if another one is already there
             return false;
         }
@@ -242,14 +281,15 @@ static __attribute__((always_inline)) bool add_source_symbol_to_window(picoquic_
         wff->highest_in_transit = ss->source_fec_payload_id.raw;
         return true;
     }
+    PROTOOP_PRINTF(cnx, "SS = NULL\n");
     return false;
 
 }
 
 static __attribute__((always_inline)) int sfpid_has_landed(picoquic_cnx_t *cnx, window_fec_framework_t *wff, source_fpid_t sfpid, bool received) {
     // remove all the needed symbols from the window
-    if (received) {
-        uint32_t idx = sfpid.raw % RECEIVE_BUFFER_MAX_LENGTH;
+    uint32_t idx = sfpid.raw % RECEIVE_BUFFER_MAX_LENGTH;
+    if (received && wff->fec_window[idx].symbol) {
         if (wff->fec_window[idx].symbol->source_fec_payload_id.raw == sfpid.raw) {
             wff->fec_window[idx].received = true;
             // if it is the first symbol of the window, let's prune the window
@@ -354,7 +394,7 @@ static __attribute__((always_inline)) int select_all_inflight_source_symbols(pic
     return 0;
 }
 
-static __attribute__((always_inline)) repair_symbol_t *get_one_coded_symbol(picoquic_cnx_t *cnx, window_fec_framework_t *wff){
+static __attribute__((always_inline)) repair_symbol_t *get_one_coded_symbol(picoquic_cnx_t *cnx, window_fec_framework_t *wff, uint8_t *nss){
     protoop_arg_t args[3];
     fec_block_t *fb = malloc_fec_block(cnx, 0);
     if (!fb)
@@ -364,6 +404,8 @@ static __attribute__((always_inline)) repair_symbol_t *get_one_coded_symbol(pico
         my_free(cnx, fb);
         return NULL;
     }
+    if (wff->window_length == 0)
+        return NULL;
 
     args[0] = (protoop_arg_t) fb;
     args[1] = (protoop_arg_t) wff->fec_scheme;
@@ -373,6 +415,7 @@ static __attribute__((always_inline)) repair_symbol_t *get_one_coded_symbol(pico
     if (fb->total_repair_symbols != 1)
         return NULL;
     repair_symbol_t *rs = fb->repair_symbols[0];
+    *nss = fb->total_source_symbols;
     my_free(cnx, fb);
     return rs;
 }
@@ -380,21 +423,15 @@ static __attribute__((always_inline)) repair_symbol_t *get_one_coded_symbol(pico
 static __attribute__((always_inline)) int protect_source_symbol(picoquic_cnx_t *cnx, window_fec_framework_t *wff, source_symbol_t *ss){
     ss->source_fec_payload_id.raw = ++wff->max_id;
     if (!add_source_symbol_to_window(cnx, wff, ss)) {
+        PROTOOP_PRINTF(cnx, "COULDN't ADD\n");
         return -1;
     }
     wff->highest_in_transit = ss->source_fec_payload_id.raw;
 
-    if (ready_to_send(cnx, wff)) {
-        generate_and_queue_repair_symbols(cnx, wff, false);
-    }
     return 0;
 }
 
 static __attribute__((always_inline)) int flush_fec_window(picoquic_cnx_t *cnx, window_fec_framework_t *wff) {
-    if (wff->max_id - wff->highest_sent_id >= 1) {
-        PROTOOP_PRINTF(cnx, "FLUSH FEC WINDOW\n");
-        generate_and_queue_repair_symbols(cnx, wff, true);
-    }
     return 0;
 }
 
@@ -406,10 +443,30 @@ static __attribute__((always_inline)) uint64_t window_sent_symbol(picoquic_cnx_t
 
 
 static __attribute__((always_inline)) causal_packet_type_t window_what_to_send(picoquic_cnx_t *cnx, window_fec_framework_t *wff) {
-    causal_packet_type_t type;
-    if (!dequeue_elem_from_buffer(wff->controller->what_to_send, (buffer_elem_t *) &type)) {
-        return nothing;
-    }
-    return type;
+    causal_packet_type_t what = what_to_send(cnx, wff->controller);
+    if (what == nothing)
+        return new_rlnc_packet;
+    return what;
 }
 
+
+static __attribute__((always_inline)) void window_slot_acked(picoquic_cnx_t *cnx, window_fec_framework_t *wff, uint64_t slot) {
+    rlnc_window_t window;
+    window.start = wff->smallest_in_transit;
+    window.end = wff->highest_in_transit;
+    slot_acked(cnx, wff->controller, slot, &window);
+}
+
+static __attribute__((always_inline)) void window_free_slot_without_feedback(picoquic_cnx_t *cnx, window_fec_framework_t *wff) {
+    rlnc_window_t window;
+    window.start = wff->smallest_in_transit;
+    window.end = wff->highest_in_transit;
+    free_slot_without_feedback(cnx, wff->controller, &window);
+}
+
+static __attribute__((always_inline)) void window_slot_nacked(picoquic_cnx_t *cnx, window_fec_framework_t *wff, uint64_t slot) {
+    rlnc_window_t window;
+    window.start = wff->smallest_in_transit;
+    window.end = wff->highest_in_transit;
+    slot_nacked(cnx, wff->controller, slot, &window);
+}

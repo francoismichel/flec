@@ -403,6 +403,7 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, causal_
     controller->ad = compute_ad(controller, current_window);
     controller->d_times_granularity = controller->ad != 0 ? (((uint64_t) controller->md*GRANULARITY))/((uint64_t) (controller->ad)) : 0;
     bool added_new_packet = false;
+    int i;
     if (is_buffer_empty(controller->what_to_send)) {
         if (controller->flush_dof_mode) {
             add_elem_to_buffer(controller->what_to_send, fec_packet);
@@ -412,7 +413,7 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, causal_
             switch (feedback) {
                 case no_feedback:
                     if (EW(controller, current_window)) {
-                        for (int i = 0; i < controller->m; i++) {
+                        for (i = 0; i < controller->m; i++) {
                             add_elem_to_buffer(controller->what_to_send, fec_packet);
                         }
                         controller->ad += controller->m;
@@ -423,14 +424,13 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, causal_
                     }
                     break;
                 case nack_feedback:
-                    printf("d = %ld\n", controller->d_times_granularity);
                     if (controller->d_times_granularity == -1 || threshold_exceeded(controller)) {
                         if (!EW(controller, current_window)) {
                             // TODO: first check if new data are available to send ?
                             added_new_packet = true;
                             add_elem_to_buffer(controller->what_to_send, new_rlnc_packet);
                         } else {
-                            for (int i = 0; i < controller->m; i++) {
+                            for (i = 0; i < controller->m; i++) {
                                 add_elem_to_buffer(controller->what_to_send, fec_packet);
                             }
                             controller->ad += controller->m;
@@ -439,7 +439,7 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, causal_
                         add_elem_to_buffer(controller->what_to_send, fb_fec_packet);
                         controller->ad++;
                         if (EW(controller, current_window)) {
-                            for (int i = 0; i < controller->m; i++) {
+                            for (i = 0; i < controller->m; i++) {
                                 add_elem_to_buffer(controller->what_to_send, fec_packet);
                             }
                             controller->ad += controller->m;
@@ -448,7 +448,7 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, causal_
                     break;
                 case ack_feedback:
                     if (EW(controller, current_window)) {
-                        for (int i = 0; i < controller->m; i++) {
+                        for (i = 0; i < controller->m; i++) {
                             add_elem_to_buffer(controller->what_to_send, fec_packet);
                         }
                         controller->ad += controller->m;

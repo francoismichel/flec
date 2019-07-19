@@ -223,7 +223,6 @@ static __attribute__((always_inline)) source_symbol_t *malloc_source_symbol_with
     s->source_fec_payload_id = source_fpid;
     s->data_length = size;
     s->data = data;
-    my_memcpy(s->data, data, size);
     return s;
 }
 
@@ -306,9 +305,10 @@ static __attribute__((always_inline)) void free_fec_block(picoquic_cnx_t *cnx, f
 
 
 static __attribute__((always_inline)) bool add_repair_symbol_to_fec_block(repair_symbol_t *rs, fec_block_t *fb){
-    if (!fb->repair_symbols[rs->symbol_number]) {
-        fb->repair_symbols[rs->symbol_number] = rs;
-        fb->current_repair_symbols++;
+    if (!fb->repair_symbols[fb->current_repair_symbols]) {
+//        fb->repair_symbols[rs->symbol_number] = rs;
+        // as we work in a rateless manner, we don't care about the repair symbol position
+        fb->repair_symbols[fb->current_repair_symbols++] = rs;
         return true;
     }
     return false;

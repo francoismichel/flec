@@ -10,6 +10,7 @@
  */
 protoop_arg_t incoming_encrypted(picoquic_cnx_t *cnx)
 {
+    PROTOOP_PRINTF(cnx, "INCOMING ENCRYPTED\n");
     uint8_t* bytes_protected = (uint8_t *) get_cnx(cnx, AK_CNX_INPUT, 0); //cnx->protoop_inputv[0];
     picoquic_packet_header* ph = (picoquic_packet_header *) get_cnx(cnx, AK_CNX_INPUT, 1); //cnx->protoop_inputv[1];
     bpf_state *state = get_bpf_state(cnx);

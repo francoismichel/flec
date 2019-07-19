@@ -72,11 +72,12 @@ static __attribute__((always_inline)) int window_receive_repair_symbol(picoquic_
     if (!fb)
         fb = malloc_fec_block(cnx, source_symbol_id);
     fb->total_source_symbols = nss;
-    fb->total_repair_symbols = nrs;
     add_fec_block_at(state, fb, source_symbol_id);
     if (!add_repair_symbol_to_fec_block(rs, fb)) {
         return false;
     }
+    // as we work in a rateless manner, there is no total number of repair symbols
+    fb->total_repair_symbols = fb->current_repair_symbols;
     populate_fec_block(cnx, state->framework_receiver, fb);
     PROTOOP_PRINTF(cnx, "RECEIVED RS: CURRENT_SS = %u, CURRENT_RS = %u, TOTAL_SS = %u\n", fb->current_source_symbols, fb->current_repair_symbols, fb->total_source_symbols);
     window_fec_framework_receiver_t *wff = state->framework_receiver;

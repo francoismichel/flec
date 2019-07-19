@@ -57,14 +57,14 @@ static __attribute__((always_inline)) bpf_state *initialize_bpf_state(picoquic_c
     // create_fec_schemes creates the receiver (0) and sender (1) FEC Schemes. If an error happens, ret != 0 and both schemes are freed by the protoop
     int ret = (int) run_noparam(cnx, "create_fec_schemes", 0, NULL, schemes);
     if (ret) {
-        PROTOOP_PRINTF(cnx, "ERROR WHEN CREATING FEC SCHEMES\n");
+//        PROTOOP_PRINTF(cnx, "ERROR WHEN CREATING FEC SCHEMES\n");
         my_free(cnx, state);
         return NULL;
     }
     // create_redundancy_controller creates the redundancy controller
     ret = (int) run_noparam(cnx, "create_redundancy_controller", 0, NULL, (protoop_arg_t *) &state->controller);
     if (ret) {
-        PROTOOP_PRINTF(cnx, "ERROR WHEN CREATING REDUNDANCY CONTROLLER\n");
+//        PROTOOP_PRINTF(cnx, "ERROR WHEN CREATING REDUNDANCY CONTROLLER\n");
         my_free(cnx, state);
         return NULL;
     }
@@ -78,7 +78,7 @@ static __attribute__((always_inline)) bpf_state *initialize_bpf_state(picoquic_c
     ret = (int) run_noparam(cnx, "create_fec_framework", 3, args, frameworks);
     if (ret) {
         my_free(cnx, state);
-        PROTOOP_PRINTF(cnx, "ERROR WHEN CREATING FRAMEWORKS\n");
+//        PROTOOP_PRINTF(cnx, "ERROR WHEN CREATING FRAMEWORKS\n");
         return NULL;
     }
     state->framework_receiver = (fec_framework_t) frameworks[0];
@@ -195,9 +195,12 @@ static __attribute__((always_inline)) void maybe_notify_recovered_packets_to_cc(
 
 // protects the packet and writes the source_fpid
 static __attribute__((always_inline)) int protect_packet(picoquic_cnx_t *cnx, source_fpid_t *source_fpid, uint8_t *data, uint16_t length){
+    PROTOOP_PRINTF(cnx, "IN PROTECT_PACKET\n");
     bpf_state *state = get_bpf_state(cnx);
+    PROTOOP_PRINTF(cnx, "AFTER GET STATE, data = %p, sfpid = %u\n", (protoop_arg_t) data, (*source_fpid).raw);
 
     source_symbol_t *ss = malloc_source_symbol_with_allocated_data(cnx, *source_fpid, data, length);
+    PROTOOP_PRINTF(cnx, "AFTER MALLOC SYMBOL\n");
     if (!ss)
         return PICOQUIC_ERROR_MEMORY;
     PROTOOP_PRINTF(cnx, "PROTECT PACKET OF SIZE %u\n", (unsigned long) length);

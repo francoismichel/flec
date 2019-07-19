@@ -10,7 +10,7 @@ protoop_arg_t window_select_symbols_to_protect(picoquic_cnx_t *cnx)
     fb->current_source_symbols = 0;
     PROTOOP_PRINTF(cnx, "SELECT, SMALLEST = %u, HIGHEST = %u\n", wff->smallest_in_transit, wff->highest_in_transit);
     for (int i = MAX(wff->smallest_in_transit, wff->highest_in_transit - MIN(RECEIVE_BUFFER_MAX_LENGTH, wff->highest_in_transit)) ; i <= wff->highest_in_transit ; i++) {
-        source_symbol_t *ss = wff->fec_window[((uint32_t) i) % RECEIVE_BUFFER_MAX_LENGTH];
+        source_symbol_t *ss = wff->fec_window[((uint32_t) i) % RECEIVE_BUFFER_MAX_LENGTH].symbol;
         if (ss && ss->source_fec_payload_id.raw == i) {
             fb->source_symbols[fb->current_source_symbols++] = ss;
         }
