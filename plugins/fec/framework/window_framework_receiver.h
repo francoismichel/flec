@@ -1,7 +1,7 @@
 
 #include "../../helpers.h"
+#include "window_receive_buffers.h"
 
-#define RECEIVE_BUFFER_MAX_LENGTH 30
 
 #define MIN(a, b) ((a < b) ? a : b)
 
@@ -11,81 +11,103 @@
 
 typedef struct {
     uint32_t highest_removed;
+    uint32_t highest_contiguous_received;
     fec_scheme_t fs;
-    source_symbol_t *fec_window[RECEIVE_BUFFER_MAX_LENGTH];
+    received_source_symbols_buffer_t *received_source_symbols;
+    received_repair_symbols_buffer_t *received_repair_symbols;
+
+    repair_symbol_t **rs_recovery_buffer;
+    source_symbol_t **ss_recovery_buffer;
+    fec_block_t fec_block_buffer;
 } window_fec_framework_receiver_t;
-
-static __attribute__((always_inline)) fec_block_t *get_fec_block(bpf_state *state, uint32_t fbn){
-    return state->fec_blocks[fbn % MAX_FEC_BLOCKS];
-}
-
-static __attribute__((always_inline)) void add_fec_block_at(bpf_state *state, fec_block_t *fb, uint32_t where) {
-    state->fec_blocks[where % MAX_FEC_BLOCKS] = fb;
-}
 
 static __attribute__((always_inline)) window_fec_framework_receiver_t *create_framework_receiver(picoquic_cnx_t *cnx, fec_scheme_t fs) {
     window_fec_framework_receiver_t *wff = my_malloc(cnx, sizeof(window_fec_framework_receiver_t));
-    if (wff) {
-        my_memset(wff, 0, sizeof(window_fec_framework_receiver_t));
-        wff->fs = fs;
+    if (!wff)
+        return NULL;
+    my_memset(wff, 0, sizeof(window_fec_framework_receiver_t));
+    wff->fs = fs;
+    wff->received_source_symbols = new_source_symbols_buffer(cnx, RECEIVE_BUFFER_MAX_LENGTH);
+    if (!wff->received_source_symbols) {
+        my_free(cnx, wff);
+        return NULL;
+    }
+    wff->received_repair_symbols = new_repair_symbols_buffer(cnx, RECEIVE_BUFFER_MAX_LENGTH);
+    if (!wff->received_repair_symbols) {
+        release_source_symbols_buffer(cnx, wff->received_source_symbols);
+        my_free(cnx, wff);
+        return NULL;
+    }
+    wff->ss_recovery_buffer = my_malloc(cnx, RECEIVE_BUFFER_MAX_LENGTH*sizeof(source_symbol_t *));
+    if (!wff->ss_recovery_buffer) {
+        release_source_symbols_buffer(cnx, wff->received_source_symbols);
+        release_repair_symbols_buffer(cnx, wff->received_repair_symbols);
+        my_free(cnx, wff);
+        return NULL;
+    }
+    wff->rs_recovery_buffer = my_malloc(cnx, RECEIVE_BUFFER_MAX_LENGTH*sizeof(repair_symbol_t *));
+    if (!wff->rs_recovery_buffer) {
+        release_source_symbols_buffer(cnx, wff->received_source_symbols);
+        release_repair_symbols_buffer(cnx, wff->received_repair_symbols);
+        my_free(cnx, wff->ss_recovery_buffer);
+        my_free(cnx, wff);
+        return NULL;
     }
     return wff;
 }
 
-static __attribute__((always_inline)) void populate_fec_block(picoquic_cnx_t *cnx, window_fec_framework_receiver_t *wff, fec_block_t *fb) {
-    uint8_t n = 0;
-    for (uint32_t i = fb->fec_block_number ; i < fb->fec_block_number + fb->total_source_symbols; i++) {
-        if (wff->fec_window[i % RECEIVE_BUFFER_MAX_LENGTH] && wff->fec_window[i % RECEIVE_BUFFER_MAX_LENGTH]->source_fec_payload_id.raw == i) {
-            n++;
-            fb->source_symbols[i-fb->fec_block_number] = wff->fec_window[i % RECEIVE_BUFFER_MAX_LENGTH];
-        }
-    }
-    fb->current_source_symbols = n;
+// returns true if it has changed
+static __attribute__((always_inline)) bool update_highest_contiguous_received(picoquic_cnx_t *cnx, window_fec_framework_receiver_t *wff) {
+    if (wff->received_source_symbols->size > 0 && ((int64_t) get_last_source_symbol_id(cnx, wff->received_source_symbols).raw) - (int64_t) wff->received_source_symbols->max_size > wff->highest_contiguous_received)
+        wff->highest_contiguous_received = get_last_source_symbol_id(cnx, wff->received_source_symbols).raw - wff->received_source_symbols->max_size;
+
+    if (wff->highest_contiguous_received > 0 && wff->received_source_symbols->size > 0 && wff->highest_contiguous_received < get_first_source_symbol_id(cnx, wff->received_source_symbols).raw)
+        return false;
+
+    uint32_t old_val = wff->highest_contiguous_received;
+    while(buffer_contains_source_symbol(cnx, wff->received_source_symbols, wff->highest_contiguous_received + 1))
+        wff->highest_contiguous_received++;
+    return old_val != wff->highest_contiguous_received;
 }
 
-static __attribute__((always_inline)) void remove_and_free_repair_symbols(picoquic_cnx_t *cnx, fec_block_t *fb){
-    for(int i = 0 ; i < fb->total_repair_symbols; i++){
-        repair_symbol_t *rs = fb->repair_symbols[i];
-        if (rs) {
-            free_repair_symbol(cnx, rs);
-            fb->repair_symbols[i] = NULL;
-        }
-    }
-    fb->current_repair_symbols = 0;
+static __attribute__((always_inline)) void populate_fec_block(picoquic_cnx_t *cnx, window_fec_framework_receiver_t *wff, fec_block_t *fb) {
+    uint32_t smallest_protected = 0;
+    uint32_t highest_protected = 0;
+    fb->current_repair_symbols = get_repair_symbols(cnx, wff->received_repair_symbols, fb->repair_symbols, sizeof(fb->repair_symbols)/sizeof(repair_symbol_t *), &smallest_protected, &highest_protected);
+    // as we work in a rateless manner, there is no total number of repair symbols, so we set it equal to the current number
+    fb->total_repair_symbols = fb->current_repair_symbols;
+    fb->current_source_symbols = get_source_symbols_between_bounds(cnx, wff->received_source_symbols, fb->source_symbols, sizeof(fb->source_symbols)/sizeof(source_symbol_t *), smallest_protected, highest_protected);
+    fb->total_source_symbols = (highest_protected - smallest_protected) + 1;
+    fb->fec_block_number = smallest_protected;
+}
 
+
+static __attribute__((always_inline)) void try_to_recover(picoquic_cnx_t *cnx, bpf_state *state, window_fec_framework_receiver_t *wff) {
+    if (update_highest_contiguous_received(cnx, wff))
+        remove_and_free_unused_repair_symbols(cnx, wff->received_repair_symbols, wff->highest_contiguous_received + 1);
+    populate_fec_block(cnx, wff, &wff->fec_block_buffer);
+    PROTOOP_PRINTF(cnx, "TOTAL SS = %d, CURRENT RS = %d, CURRENT SS = %d\n", wff->fec_block_buffer.total_source_symbols, wff->fec_block_buffer.current_repair_symbols, wff->fec_block_buffer.current_source_symbols);
+    if (wff->fec_block_buffer.total_source_symbols == 0 || wff->fec_block_buffer.current_repair_symbols == 0 ||
+        wff->fec_block_buffer.current_source_symbols == wff->fec_block_buffer.total_source_symbols)
+        return;
+    // we here assume that the first protected symbol is encoded in the fec block number
+    uint32_t smallest_protected_id = wff->fec_block_buffer.fec_block_number;
+    if (smallest_protected_id > wff->highest_removed && wff->fec_block_buffer.current_source_symbols + wff->fec_block_buffer.current_repair_symbols >= wff->fec_block_buffer.total_source_symbols) {
+        recover_block(cnx, state, &wff->fec_block_buffer);
+        // we don't free anything, it will be freed when new symbols are received
+    }
 }
 
 // returns true if the symbol has been successfully processed
 // returns false otherwise: the symbol can be destroyed
-static __attribute__((always_inline)) int window_receive_repair_symbol(picoquic_cnx_t *cnx, repair_symbol_t *rs, uint8_t nss, uint8_t nrs){
-    bpf_state *state = get_bpf_state(cnx);
-    uint32_t source_symbol_id = rs->repair_fec_payload_id.fec_scheme_specific;
-    fec_block_t *fb = get_fec_block(state, source_symbol_id);
-    // there exists an older FEC block
-    // FIXME: we currently decide to allow only one FEC Block per source_symbol_id
-    if (fb && (fb->fec_block_number != source_symbol_id || fb->total_source_symbols != nss)) {
-        remove_and_free_repair_symbols(cnx, fb);    // we don't remove the source symbols: they can be used for something else
-        my_free(cnx, fb);
-        state->fec_blocks[source_symbol_id % MAX_FEC_BLOCKS] = NULL;
-        fb = NULL;
-    }
-    if (!fb)
-        fb = malloc_fec_block(cnx, source_symbol_id);
-    fb->total_source_symbols = nss;
-    add_fec_block_at(state, fb, source_symbol_id);
-    if (!add_repair_symbol_to_fec_block(rs, fb)) {
+static __attribute__((always_inline)) int window_receive_repair_symbol(picoquic_cnx_t *cnx, bpf_state *state, window_fec_framework_receiver_t *wff, repair_symbol_t *rs, uint8_t nss, uint8_t nrs){
+    PROTOOP_PRINTF(cnx, "RECEIVE REPAIR SYMBOL, FSS = %u, NSS = %d\n", rs->repair_fec_payload_id.fec_scheme_specific, rs->nss);
+    if (rs->repair_fec_payload_id.source_fpid.raw + rs->nss - 1 <= wff->highest_contiguous_received)
         return false;
-    }
-    // as we work in a rateless manner, there is no total number of repair symbols
-    fb->total_repair_symbols = fb->current_repair_symbols;
-    populate_fec_block(cnx, state->framework_receiver, fb);
-    PROTOOP_PRINTF(cnx, "RECEIVED RS: CURRENT_SS = %u, CURRENT_RS = %u, TOTAL_SS = %u\n", fb->current_source_symbols, fb->current_repair_symbols, fb->total_source_symbols);
-    window_fec_framework_receiver_t *wff = state->framework_receiver;
-    if (fb->fec_block_number > wff->highest_removed && fb->current_source_symbols + fb->current_repair_symbols >= fb->total_source_symbols) {
-        recover_block(cnx, state, fb);
-        // we don't free anything, it will be freed when new symbols are received
-    }
-    fb->current_source_symbols = 0; // "depopulate" the block
+    repair_symbol_t *removed = add_repair_symbol(cnx, wff->received_repair_symbols, rs, nss);
+    if (removed)
+        free_repair_symbol(cnx, removed);
+    try_to_recover(cnx, state, wff);
     return true;
 }
 
@@ -112,25 +134,16 @@ static __attribute__((always_inline)) void try_to_recover_from_symbol(picoquic_c
 
 // returns true if the symbol has been successfully processed
 // returns false otherwise: the symbol can be destroyed
-//FIXME: we pass the state in the parameters because the call to get_bpf_state leads to an error when loading the code
 static __attribute__((always_inline)) bool window_receive_source_symbol(picoquic_cnx_t *cnx, bpf_state *state, window_fec_framework_receiver_t *wff, source_symbol_t *ss, bool recover){
-    int idx = ss->source_fec_payload_id.raw % RECEIVE_BUFFER_MAX_LENGTH;
-    if (wff->fec_window[idx]) {
-        // the same symbol is already present: nothing to do
-        if (wff->fec_window[idx]->source_fec_payload_id.raw == ss->source_fec_payload_id.raw)
-            return false;
-        wff->highest_removed = MAX(wff->fec_window[idx]->source_fec_payload_id.raw, wff->highest_removed);
-        // another symbol is present: remove it
-        free_source_symbol(cnx, wff->fec_window[idx]);
-        wff->fec_window[idx] = NULL;
+    source_symbol_t *removed = add_source_symbol(cnx, wff->received_source_symbols, ss);
+    if (removed) {
+        wff->highest_removed = MAX(removed->source_fec_payload_id.raw, wff->highest_removed);
+        free_source_symbol(cnx, removed);
     }
-
-    wff->fec_window[idx] = ss;
-    PROTOOP_PRINTF(cnx, "RECEIVED SYMBOL %u\n", ss->source_fec_payload_id.raw);
     // let's find all the blocks protecting this symbol to see if we can recover the remaining
     // we don't recover symbols if we already are in recovery mode
     if (!state->in_recovery && recover) {
-        try_to_recover_from_symbol(cnx, state, wff, ss);
+        try_to_recover(cnx, state, wff);
     } else {
         PROTOOP_PRINTF(cnx, "RECEIVED SYMBOL %u BUT DIDN'T TRY TO RECOVER\n", ss->source_fec_payload_id.raw);
     }

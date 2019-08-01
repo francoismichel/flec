@@ -1,3 +1,5 @@
+#ifndef CAUSAL_REDUNDANCY_CONTROLLER_H
+#define CAUSAL_REDUNDANCY_CONTROLLER_H
 #include "picoquic.h"
 #include "../fec.h"
 
@@ -487,3 +489,4 @@ static __attribute__((always_inline)) void slot_nacked(picoquic_cnx_t *cnx, caus
     add_elem_to_buffer(controller->nacked_slots, slot);
     run_algo(cnx, controller, nack_feedback, current_window);
 }
+#endif

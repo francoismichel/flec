@@ -1,5 +1,6 @@
 #include <picoquic.h>
 #include "../fec_protoops.h"
+#include "../framework/window_framework_sender.h"
 
 protoop_arg_t write_fpid_frame(picoquic_cnx_t *cnx) {
     uint8_t* bytes = (uint8_t *) get_cnx(cnx, AK_CNX_INPUT, 0);
@@ -32,6 +33,8 @@ protoop_arg_t write_fpid_frame(picoquic_cnx_t *cnx) {
     PROTOOP_PRINTF(cnx, "WRITE SFPID FRAME block %u, symbol number %u, consumed = %u\n", f->source_fpid.fec_block_number, f->source_fpid.symbol_number, consumed);
     my_free(cnx, fpid_buffer);
     state->written_sfpid_frame = bytes;
+    rlnc_window_t window = get_current_rlnc_window(cnx, state->framework_sender);
+    window_sent_symbol(cnx, state->framework_sender, new_rlnc_packet, &window);
     set_cnx(cnx, AK_CNX_OUTPUT, 0, (protoop_arg_t) consumed);
     set_cnx(cnx, AK_CNX_OUTPUT, 1, (protoop_arg_t) 0);
     return 0;

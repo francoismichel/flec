@@ -99,6 +99,7 @@ typedef struct {
         };
     };
     uint16_t data_length : 15;
+    uint16_t nss;
     uint8_t *data;
 } repair_symbol_t;
 

@@ -9,6 +9,6 @@ protoop_arg_t framework_notify_sfpid_frame(picoquic_cnx_t *cnx)
     bpf_state *state = get_bpf_state(cnx);
     if (!state)
         return PICOQUIC_ERROR_MEMORY;
-    sfpid_has_landed(cnx, state->framework_sender, ((source_fpid_frame_t *)rfs->frame_ctx)->source_fpid, received);
+    sfpid_has_landed(cnx, state->framework_sender, ((source_fpid_frame_t *)rfs->frame_ctx)->source_fpid, received && !state->current_packet_is_lost);
     return 0;
 }

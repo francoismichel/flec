@@ -5,6 +5,7 @@
 #include "../helpers.h"
 #include "fec.h"
 #define MAX_RECOVERED_PACKETS_IN_BUFFER 50
+#define RECEIVE_BUFFER_MAX_LENGTH 100
 #define MIN(a, b) ((a < b) ? a : b)
 
 typedef void * fec_framework_t;
@@ -45,6 +46,9 @@ typedef struct {
     protoop_id_t    should_send_recovered_id;
     protoop_id_t    receive_source_symbol_id;
     protoop_id_t    get_source_fpid_id;
+
+    // FIXME: horrible ACK to work around the fact that in dequeue_retransmit_packet, "should_free" is equivalent to "received", so we add the "received" signal using this...
+    bool current_packet_is_lost;
 } bpf_state;
 
 static __attribute__((always_inline)) bpf_state *initialize_bpf_state(picoquic_cnx_t *cnx)
@@ -345,6 +349,7 @@ static __attribute__((always_inline)) int process_fec_frame_helper(picoquic_cnx_
     if (!rs) {
         return PICOQUIC_ERROR_MEMORY;
     }
+    rs->nss = frame->header.nss;
     bpf_state *state = get_bpf_state(cnx);
     if (!state) {
         free_repair_symbol(cnx, rs);

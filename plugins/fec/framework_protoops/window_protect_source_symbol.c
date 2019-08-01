@@ -9,4 +9,5 @@ protoop_arg_t fec_protect_source_symbol(picoquic_cnx_t *cnx)
     protoop_arg_t retval = (protoop_arg_t) protect_source_symbol(cnx, wff, ss);
     if (retval == 0)
         sfpid_takes_off(wff, ss->source_fec_payload_id);
+    return retval;
 }

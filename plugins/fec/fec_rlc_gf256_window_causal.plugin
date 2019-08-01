@@ -7,5 +7,5 @@ retransmit_needed replace protoops/disable_retransmissions.o
 process_ack_range replace protoops/process_ack_range.o
 fec_core.plugin include
 fec_framework_window.plugin include
-fec_scheme_rlc_gf256.plugin include
+fec_scheme_rlc_gf256_causal.plugin include
 fec_causal_redundancy_controller.plugin include

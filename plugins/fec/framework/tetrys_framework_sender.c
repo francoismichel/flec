@@ -7,7 +7,6 @@
 
 #define INITIAL_SYMBOL_ID 1
 #define MAX_QUEUED_REPAIR_SYMBOLS 6
-#define RECEIVE_BUFFER_MAX_LENGTH 30
 #define NUMBER_OF_SYMBOLS_TO_FLUSH 5
 
 #define MIN(a, b) ((a < b) ? a : b)

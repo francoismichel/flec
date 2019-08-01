@@ -5,7 +5,7 @@
 
 #define INITIAL_SYMBOL_ID 1
 #define MAX_QUEUED_REPAIR_SYMBOLS 6
-#define RECEIVE_BUFFER_MAX_LENGTH 30
+#define MAX_SLOT_VALUE 0x7FFFFF
 
 #define MIN(a, b) ((a < b) ? a : b)
 
@@ -294,8 +294,9 @@ static __attribute__((always_inline)) int sfpid_has_landed(picoquic_cnx_t *cnx, 
             wff->fec_window[idx].received = true;
             // if it is the first symbol of the window, let's prune the window
             if (!is_fec_window_empty(wff) && sfpid.raw == wff->smallest_in_transit) {
-                if (!remove_source_symbol_from_window(cnx, wff, wff->fec_window[idx].symbol))
+                if (!remove_source_symbol_from_window(cnx, wff, wff->fec_window[idx].symbol)) {
                     return -1;
+                }
             }
         }
     }
@@ -352,8 +353,8 @@ static __attribute__((always_inline)) int generate_and_queue_repair_symbols(pico
                 for_each_repair_symbol(fb, repair_symbol_t *rs) {
                         rs->fec_block_number = 0;
                         rs->symbol_number = i++;
-                        rs->fec_scheme_specific = fb->source_symbols[0]->source_fec_payload_id.raw;
-                    }
+                }
+
                 queue_repair_symbols(cnx, wff, fb->repair_symbols, fb->total_repair_symbols, fb);
                 uint32_t last_id = fb->source_symbols[fb->total_source_symbols-1]->source_fec_payload_id.raw;
                 // we don't free the source symbols: they can still be used afterwards
@@ -394,7 +395,7 @@ static __attribute__((always_inline)) int select_all_inflight_source_symbols(pic
     return 0;
 }
 
-static __attribute__((always_inline)) repair_symbol_t *get_one_coded_symbol(picoquic_cnx_t *cnx, window_fec_framework_t *wff, uint8_t *nss){
+static __attribute__((always_inline)) repair_symbol_t *get_one_coded_symbol(picoquic_cnx_t *cnx, window_fec_framework_t *wff, uint8_t *nss, causal_packet_type_t type){
     protoop_arg_t args[3];
     fec_block_t *fb = malloc_fec_block(cnx, 0);
     if (!fb)
@@ -415,6 +416,12 @@ static __attribute__((always_inline)) repair_symbol_t *get_one_coded_symbol(pico
     if (fb->total_repair_symbols != 1)
         return NULL;
     repair_symbol_t *rs = fb->repair_symbols[0];
+    if (!rs)
+        return NULL;
+    rs->fec_scheme_specific = wff->current_slot;
+    if (type == fb_fec_packet)
+        rs->fec_scheme_specific |= (1UL << 31U);
+    rs->repair_fec_payload_id.source_fpid.raw = fb->source_symbols[0]->source_fec_payload_id.raw;
     *nss = fb->total_source_symbols;
     my_free(cnx, fb);
     return rs;
@@ -441,32 +448,36 @@ static __attribute__((always_inline)) uint64_t window_sent_symbol(picoquic_cnx_t
     return wff->current_slot++;
 }
 
-
-static __attribute__((always_inline)) causal_packet_type_t window_what_to_send(picoquic_cnx_t *cnx, window_fec_framework_t *wff) {
-    causal_packet_type_t what = what_to_send(cnx, wff->controller);
-    if (what == nothing)
-        return new_rlnc_packet;
-    return what;
+static __attribute__((always_inline)) rlnc_window_t get_current_rlnc_window(picoquic_cnx_t *cnx, window_fec_framework_t *wff) {
+    rlnc_window_t window;
+    window.start = wff->smallest_in_transit;
+    window.end = wff->highest_in_transit;
+    return window;
 }
 
 
 static __attribute__((always_inline)) void window_slot_acked(picoquic_cnx_t *cnx, window_fec_framework_t *wff, uint64_t slot) {
-    rlnc_window_t window;
-    window.start = wff->smallest_in_transit;
-    window.end = wff->highest_in_transit;
+    rlnc_window_t window = get_current_rlnc_window(cnx, wff);
     slot_acked(cnx, wff->controller, slot, &window);
 }
 
 static __attribute__((always_inline)) void window_free_slot_without_feedback(picoquic_cnx_t *cnx, window_fec_framework_t *wff) {
-    rlnc_window_t window;
-    window.start = wff->smallest_in_transit;
-    window.end = wff->highest_in_transit;
+    rlnc_window_t window = get_current_rlnc_window(cnx, wff);
     free_slot_without_feedback(cnx, wff->controller, &window);
 }
 
 static __attribute__((always_inline)) void window_slot_nacked(picoquic_cnx_t *cnx, window_fec_framework_t *wff, uint64_t slot) {
-    rlnc_window_t window;
-    window.start = wff->smallest_in_transit;
-    window.end = wff->highest_in_transit;
+    rlnc_window_t window = get_current_rlnc_window(cnx, wff);
     slot_nacked(cnx, wff->controller, slot, &window);
+}
+
+static __attribute__((always_inline)) causal_packet_type_t window_what_to_send(picoquic_cnx_t *cnx, window_fec_framework_t *wff) {
+    causal_packet_type_t what = what_to_send(cnx, wff->controller);
+    if (what == nothing) {
+        window_free_slot_without_feedback(cnx, wff);
+        what = what_to_send(cnx, wff->controller);
+        if (what == nothing)
+            return new_rlnc_packet;
+    }
+    return what;
 }

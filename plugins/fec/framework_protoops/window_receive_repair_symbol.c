@@ -9,5 +9,5 @@ protoop_arg_t receive_repair_symbol(picoquic_cnx_t *cnx)
         return PICOQUIC_ERROR_MEMORY;
     uint8_t nss = (uint8_t) get_cnx(cnx, AK_CNX_INPUT, 2);
     uint8_t nrs = (uint8_t) get_cnx(cnx, AK_CNX_INPUT, 3);
-    return (protoop_arg_t) window_receive_repair_symbol(cnx, (repair_symbol_t *) get_cnx(cnx, AK_CNX_INPUT, 1), nss, nrs);
+    return (protoop_arg_t) window_receive_repair_symbol(cnx, state, state->framework_receiver, (repair_symbol_t *) get_cnx(cnx, AK_CNX_INPUT, 1), nss, nrs);
 }

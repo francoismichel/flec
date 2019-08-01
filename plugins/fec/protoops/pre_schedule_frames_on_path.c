@@ -32,11 +32,16 @@ protoop_arg_t schedule_frames_on_path(picoquic_cnx_t *cnx)
     state->cancel_sfpid_in_current_packet = false;
     state->has_ready_stream = (void *) run_noparam(cnx, "find_ready_stream", 0, NULL, NULL) != NULL;
 
+    if (((window_fec_framework_t *) state->framework_sender)->current_slot > MAX_SLOT_VALUE){
+        PROTOOP_PRINTF(cnx, "MAXIMUM NUMBER OF SLOTS EXCEEDED\n");
+        return -1;
+    }
 
     causal_packet_type_t what_to_send = window_what_to_send(cnx, state->framework_sender);
+    PROTOOP_PRINTF(cnx, "WHAT TO SEND = %d\n", what_to_send);
     switch(what_to_send) {
         case new_rlnc_packet:
-            if (!state->sfpid_reserved) {    // there is no frame currently reserved, so reserve one to protect this packet
+            if (!state->sfpid_reserved && state->has_ready_stream) {    // there is no frame currently reserved, so reserve one to protect this packet
                 // we need to reserve a new one
                 // reserve a new frame to  send a FEC-protected packet
                 reserve_frame_slot_t *slot = (reserve_frame_slot_t *) my_malloc(cnx, sizeof(reserve_frame_slot_t));
@@ -57,8 +62,9 @@ protoop_arg_t schedule_frames_on_path(picoquic_cnx_t *cnx)
                 source_fpid_t s;
 
                 protoop_arg_t ret = set_source_fpid(cnx, &s);
-                if (ret)
+                if (ret) {
                     return ret;
+                }
 
                 f->source_fpid.raw = s.raw;
 
@@ -77,10 +83,11 @@ protoop_arg_t schedule_frames_on_path(picoquic_cnx_t *cnx)
         case fec_packet:
         case fb_fec_packet:
             ;
-            if (is_window_empty(state->framework_sender))
+            PROTOOP_PRINTF(cnx, "TRY TO RESERVE FEC FRAME, WINDOW_EMPTY = %d, LENGTH = %d\n", is_fec_window_empty(state->framework_sender), ((window_fec_framework_t *) state->framework_sender)->window_length);
+            if (is_fec_window_empty(state->framework_sender))
                 break;
             uint8_t nss = 0;
-            repair_symbol_t *rs = get_one_coded_symbol(cnx, state->framework_sender, &nss);
+            repair_symbol_t *rs = get_one_coded_symbol(cnx, state->framework_sender, &nss, what_to_send);
             if (!rs)
                 return PICOQUIC_ERROR_MEMORY;
             reserve_fec_frame_for_repair_symbol(cnx, state->framework_sender, PICOQUIC_MAX_PACKET_SIZE, rs, nss);
