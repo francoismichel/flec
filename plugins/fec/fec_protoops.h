@@ -282,12 +282,17 @@ static __attribute__((always_inline)) int recover_block(picoquic_cnx_t *cnx, bpf
                     state->in_recovery = true;
                     ret = picoquic_decode_frames_without_current_time(cnx, fb->source_symbols[i]->data + sizeof(uint64_t) + 1, (size_t) payload_length, 3, path);
 
+                    // we should free the recovered symbol: it has been correctly handled when decoding the packet
+                    my_free(cnx, fb->source_symbols[i]);
+                    if (state->current_symbol)
+                        // the symbol has not been consumed, so we must free its payload
+                        my_free(cnx, state->current_symbol);
+                    // otherwise, don't free the payload: it is used by the source symbol
+                    fb->source_symbols[i] = NULL;
                     state->current_symbol = tmp_current_packet;
                     state->current_symbol_length = tmp_current_packet_length;
                     state->in_recovery = false;
-                    // we should free the recovered symbol: it has been correctly handled when decoding the packet
-                    free_source_symbol(cnx, fb->source_symbols[i]);
-                    fb->source_symbols[i] = NULL;
+
 
                     if (!ret) {
                         PROTOOP_PRINTF(cnx, "DECODED ! \n");
