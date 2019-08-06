@@ -79,7 +79,9 @@ protoop_arg_t schedule_frames_on_path(picoquic_cnx_t *cnx)
                 }
                 state->sfpid_reserved = true;
             }   // else, an SFPID frame is already reserved, so we keep the frame that is currently reserved
-            break;
+            // if we did not have data to send, then fallthrough and send a repair symbol
+            if (state->has_ready_stream)
+                break;
         case fec_packet:
         case fb_fec_packet:
             ;
@@ -91,6 +93,7 @@ protoop_arg_t schedule_frames_on_path(picoquic_cnx_t *cnx)
             if (!rs)
                 return PICOQUIC_ERROR_MEMORY;
             reserve_fec_frame_for_repair_symbol(cnx, state->framework_sender, PICOQUIC_MAX_PACKET_SIZE, rs, nss);
+            my_free(cnx, rs);
             break;
         default:
             break;

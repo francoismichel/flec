@@ -160,15 +160,14 @@ protoop_arg_t retransmit_needed(picoquic_cnx_t *cnx)
                     /* If not pure ack, the packet will be placed in the "retransmitted" queue,
                     * in order to enable detection of spurious restransmissions */
                     // if the pc is the application, we want to free the packet: indeed, we disable the retransmissions
-                    // FIXME: horrible hack to store the slot without changing the structure (the slot will always be != 0 anyway)
 
-                    uint64_t slot = get_pkt(p, AK_PKT_IS_CONGESTION_CONTROLLED);
+                    uint64_t slot = get_pkt_metadata(cnx, p, 0);
                     state->current_packet_is_lost = true;
-                    helper_dequeue_retransmit_packet(cnx, p, (packet_is_pure_ack & do_not_detect_spurious) || pc == picoquic_packet_context_application);
+                    helper_dequeue_retransmit_packet(cnx, p, (packet_is_pure_ack & do_not_detect_spurious) || (pc == picoquic_packet_context_application && !get_pkt(p, AK_PKT_IS_MTU_PROBE)));
 
                     state->current_packet_is_lost = false;
                     /* If we have a good packet, return it */
-                    if (packet_is_pure_ack) {
+                    if (pc == picoquic_packet_context_application || packet_is_pure_ack) {
                         length = 0;
                     } else {
                         if (timer_based_retransmit != 0) {

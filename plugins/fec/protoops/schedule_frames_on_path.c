@@ -1,5 +1,7 @@
 #include "picoquic.h"
 #include "../fec_protoops.h"
+#include "../framework/window_framework_sender.h"
+
 #define MIN_BYTES_TO_RETRANSMIT_PROTECT 20
 
 static __attribute__((always_inline)) bool is_mtu_probe(picoquic_packet_t *p, picoquic_path_t *path) {
@@ -63,6 +65,9 @@ protoop_arg_t schedule_frames_on_path(picoquic_cnx_t *cnx)
                 // if the protect_packet function changed the sfpid, then we rewrite it now (some schemes only know the fpid after it has been protected)
                 encode_u32(state->current_sfpid_frame->source_fpid.raw, state->written_sfpid_frame+1);
             }
+            PROTOOP_PRINTF(cnx, "SET LAST CC CONTROLLED TO %lu\n", state->last_protected_slot);
+            set_pkt_metadata(cnx, packet, 0, state->last_protected_slot);
+            PROTOOP_PRINTF(cnx, "GET LAST CC CONTROLLED %lu\n", get_pkt_metadata(cnx, packet, 0));
         }
 
     }

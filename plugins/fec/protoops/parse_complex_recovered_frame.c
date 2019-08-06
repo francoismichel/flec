@@ -26,21 +26,27 @@ protoop_arg_t parse_recovered_frame(picoquic_cnx_t *cnx) {
     }
     bytes_protected += sizeof(uint8_t);  // skip the type byte
     uint8_t number_of_packets;
+    uint8_t number_of_sfpids;
     uint64_t first_recovered_packet;
     my_memcpy(&number_of_packets, bytes_protected, sizeof(uint8_t));
     bytes_protected += sizeof(uint8_t);
+
+    my_memcpy(&number_of_sfpids, bytes_protected, sizeof(uint8_t));
+    bytes_protected += sizeof(uint8_t);
+
     first_recovered_packet = decode_u64(bytes_protected);
     bytes_protected += sizeof(uint64_t);
-    uint8_t *size_and_packets = my_malloc(cnx, sizeof(uint8_t) + number_of_packets*sizeof(uint64_t)); // sadly, we must place everything in one single malloc, because skip_frame will free our output
+    uint8_t *size_and_packets = my_malloc(cnx, sizeof(uint8_t) + sizeof(uint8_t) + number_of_packets*sizeof(uint64_t) + number_of_sfpids*sizeof(source_fpid_t)); // sadly, we must place everything in one single malloc, because skip_frame will free our output
     my_memset(size_and_packets, 0, sizeof(uint8_t) + number_of_packets*sizeof(uint64_t));
     size_and_packets[0] = number_of_packets;
-    uint64_t *packets =(uint64_t *) (size_and_packets+1);
+    size_and_packets[1] = number_of_sfpids;
+    uint64_t *packets =(uint64_t *) (size_and_packets+2);
     packets[0] = first_recovered_packet;
     int currently_parsed_recovered_packets = 1;
     uint64_t last_recovered_packet = first_recovered_packet;
     PROTOOP_PRINTF(cnx, "PACKET %lx HAS BEEN RECOVERED BY THE PEER\n", last_recovered_packet);
     bool range_is_gap = false;
-    while(currently_parsed_recovered_packets < number_of_packets && bytes_protected < bytes_max) {
+    while(currently_parsed_recovered_packets < number_of_packets && bytes_protected < bytes_max - 1) {  // - 1 because there is the number of sfpid afterwards
         uint8_t range;
         my_memcpy(&range, bytes_protected, sizeof(uint8_t));
         bytes_protected += sizeof(uint8_t);
@@ -72,7 +78,8 @@ protoop_arg_t parse_recovered_frame(picoquic_cnx_t *cnx) {
             PROTOOP_PRINTF(cnx, "PACKET %lx HAS BEEN RECOVERED BY THE PEER\n", last_recovered_packet);
         }
     }
-    if (currently_parsed_recovered_packets != number_of_packets) {
+
+    if (currently_parsed_recovered_packets != number_of_packets || bytes_protected >= bytes_max) {
         // error
         my_free(cnx, size_and_packets);
         set_cnx(cnx, AK_CNX_OUTPUT, 0, (protoop_arg_t) NULL);
@@ -81,7 +88,31 @@ protoop_arg_t parse_recovered_frame(picoquic_cnx_t *cnx) {
         PROTOOP_PRINTF(cnx, "DID NOT PARSE THE CORRECT NUMBER OF RECOVERED PACKETS (%u < %u)\n", currently_parsed_recovered_packets, number_of_packets);
         return (protoop_arg_t) NULL;
     }
-    PROTOOP_PRINTF(cnx, "%u PACKETS HAVE BEEN RECOVERED\n", currently_parsed_recovered_packets);
+
+    PROTOOP_PRINTF(cnx, "PARSE THE RECOVERED SFPIDS: %d IN TOTAL\n", number_of_sfpids);
+    uint8_t currently_parsed_sfpids = 0;
+    source_fpid_t *sfpids = (source_fpid_t *) (packets + currently_parsed_recovered_packets);
+    while(currently_parsed_sfpids < number_of_sfpids && bytes_protected < bytes_max) {
+        sfpids[currently_parsed_sfpids++].raw = decode_u32(bytes_protected);
+        PROTOOP_PRINTF(cnx, "SFPID %u RECOVERED, INSERTED AT %p\n", sfpids[currently_parsed_recovered_packets-1].raw, (protoop_arg_t) &sfpids[currently_parsed_sfpids-1]);
+        bytes_protected += sizeof(source_fpid_t);
+    }
+
+
+
+    if (currently_parsed_sfpids != number_of_sfpids || bytes_protected >= bytes_max) {
+        // error
+        my_free(cnx, size_and_packets);
+        set_cnx(cnx, AK_CNX_OUTPUT, 0, (protoop_arg_t) NULL);
+        set_cnx(cnx, AK_CNX_OUTPUT, 1, (protoop_arg_t) 0);
+        set_cnx(cnx, AK_CNX_OUTPUT, 2, (protoop_arg_t) 0);
+        PROTOOP_PRINTF(cnx, "DID NOT PARSE THE CORRECT NUMBER OF RECOVERED SFPIDS (%u < %u)\n", currently_parsed_sfpids, number_of_sfpids);
+        return (protoop_arg_t) NULL;
+    }
+
+
+
+    PROTOOP_PRINTF(cnx, "%u PACKETS HAVE BEEN RECOVERED, %u SFPIDS\n", currently_parsed_recovered_packets, currently_parsed_sfpids);
     set_cnx(cnx, AK_CNX_OUTPUT, 0, (protoop_arg_t) size_and_packets);
     set_cnx(cnx, AK_CNX_OUTPUT, 1, (protoop_arg_t) true);
     set_cnx(cnx, AK_CNX_OUTPUT, 2, (protoop_arg_t) false);

@@ -8,6 +8,7 @@ protoop_arg_t notify_recovered_frame(picoquic_cnx_t *cnx)
     /* Commented out, can be used if needed */
     /* int received = (int) get_cnx(cnx, AK_CNX_INPUT, 1); */
     // the frame_ctx must be freed in the write_frame
+    PROTOOP_PRINTF(cnx, "NOTIFY RECOVERED FRAME\n");
     my_free(cnx, rfs);
     return 0;
 }

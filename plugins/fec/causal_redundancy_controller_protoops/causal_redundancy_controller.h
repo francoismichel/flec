@@ -406,6 +406,7 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, causal_
     controller->d_times_granularity = controller->ad != 0 ? (((uint64_t) controller->md*GRANULARITY))/((uint64_t) (controller->ad)) : 0;
     bool added_new_packet = false;
     int i;
+    PROTOOP_PRINTF(cnx, "RUN ALGO, FEEDBACK = %d, WINDOW = [%d,%d[\n", feedback, current_window->start, current_window->end);
     if (is_buffer_empty(controller->what_to_send)) {
         if (controller->flush_dof_mode) {
             add_elem_to_buffer(controller->what_to_send, fec_packet);
@@ -450,6 +451,7 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, causal_
                     break;
                 case ack_feedback:
                     if (EW(controller, current_window)) {
+                        PROTOOP_PRINTF(cnx, "EW ç\n");
                         for (i = 0; i < controller->m; i++) {
                             add_elem_to_buffer(controller->what_to_send, fec_packet);
                         }

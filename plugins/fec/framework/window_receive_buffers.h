@@ -166,28 +166,32 @@ static __attribute__((always_inline)) void release_repair_symbols_buffer(picoqui
 
 // returns the symbol that has been removed if the buffer was full
 static __attribute__((always_inline)) repair_symbol_t *add_repair_symbol(picoquic_cnx_t *cnx, received_repair_symbols_buffer_t *buffer, repair_symbol_t *rs, uint16_t nss) {
-    uint32_t idx = rs->fec_scheme_specific % buffer->max_size;
-    repair_symbol_t *retval = buffer->repair_symbols[idx];
-    buffer->repair_symbols[idx] = rs;
-    buffer->nss[idx] = nss;
+    uint32_t to_add_idx = rs->fec_scheme_specific % buffer->max_size;
+    repair_symbol_t *retval = buffer->repair_symbols[to_add_idx];
+    buffer->repair_symbols[to_add_idx] = rs;
+    buffer->nss[to_add_idx] = nss;
     if (!retval)
         buffer->size++;
 
 
     if (buffer->last < 0 || rs->fec_scheme_specific > buffer->repair_symbols[buffer->last]->fec_scheme_specific)
-        buffer->last = idx;
+        buffer->last = to_add_idx;
     // find the new first if needed
     if (buffer->first < 0 || rs->fec_scheme_specific < buffer->repair_symbols[buffer->first]->fec_scheme_specific)
-        buffer->first = idx;
-    else if (retval && idx == buffer->first && buffer->max_size > 1) {
-        uint32_t n_considered_symbols = buffer->max_size - 1;
-        if (buffer->first != -1 && buffer->last != -1 && buffer->first != buffer->last) {
-            n_considered_symbols = 1 + ((buffer->first <= buffer->last) ? (buffer->last - buffer->first) : (buffer->last + buffer->max_size - buffer->first));
-        }
-        for (uint32_t i = 0 ; i < n_considered_symbols - 1 ; i++) {
-            if (buffer->repair_symbols[(buffer->first + 1 + i) % buffer->max_size]) {
-                buffer->first = (buffer->first + 1 + i) % buffer->max_size;
-                break;
+        buffer->first = to_add_idx;
+    else if (retval && to_add_idx == buffer->first && buffer->max_size > 1) {
+        buffer->first = -1;
+        int64_t current_min = -1;
+        int n_considered = 0;
+        // find the new first
+        for (uint32_t i = 0; i < buffer->max_size && n_considered < buffer->size; i++) {
+            uint32_t idx = ((uint32_t) to_add_idx + 1 + i) % buffer->max_size;
+            if (buffer->repair_symbols[idx]) {
+                n_considered++;
+                if (current_min == -1 || buffer->repair_symbols[idx]->fec_scheme_specific < current_min) {
+                    buffer->first = idx;
+                    current_min = buffer->repair_symbols[idx]->fec_scheme_specific;
+                }
             }
         }
     }
@@ -196,6 +200,7 @@ static __attribute__((always_inline)) repair_symbol_t *add_repair_symbol(picoqui
 
 // returns a symbol that has been removed if the buffer was full
 static __attribute__((always_inline)) void remove_and_free_unused_repair_symbols(picoquic_cnx_t *cnx, received_repair_symbols_buffer_t *buffer, uint32_t remove_under) {
+    PROTOOP_PRINTF(cnx, "REMOVE AND FREE\n");
     int64_t last_removed = -1;
     uint32_t n_considered_symbols = 0;
     if (buffer->first != -1 && buffer->last != -1) {
@@ -205,9 +210,10 @@ static __attribute__((always_inline)) void remove_and_free_unused_repair_symbols
         uint32_t idx = ((uint32_t) buffer->first + i) % buffer->max_size;
         repair_symbol_t *rs = buffer->repair_symbols[idx];
         if (rs) {
-            uint32_t first_protected = rs->fec_scheme_specific & 0x7FFFFFFFU;
-            uint32_t last_protected = first_protected + buffer->nss[idx];
-            if (last_protected >= remove_under) {
+            uint32_t first_protected = rs->repair_fec_payload_id.source_fpid.raw;
+            uint32_t last_protected = first_protected + buffer->nss[idx] - 1;
+            if (last_protected < remove_under) {
+                PROTOOP_PRINTF(cnx, "REMOVE RS, IDs = %u\n", first_protected);
                 free_repair_symbol(cnx, buffer->repair_symbols[idx]);
                 buffer->repair_symbols[idx] = NULL;
                 buffer->size--;
@@ -217,14 +223,23 @@ static __attribute__((always_inline)) void remove_and_free_unused_repair_symbols
             }
         }
     }
+    PROTOOP_PRINTF(cnx, "LAST REMOVED = %u\n", last_removed);
     if (last_removed > -1) {
         buffer->first = -1;
+        int64_t current_min = -1;
+        int n_considered = 0;
+        PROTOOP_PRINTF(cnx, "MAX SIZE = %d, CURRENT SIZE = %d\n", buffer->max_size, buffer->size);
         // find the new first
-        for (uint32_t i = 0 ; i < buffer->max_size ; i++) {
+        for (uint32_t i = 0 ; i < buffer->max_size && n_considered < buffer->size ; i++) {
             uint32_t idx = ((uint32_t) last_removed + 1 + i) % buffer->max_size;
             if (buffer->repair_symbols[idx]) {
-                buffer->first = idx;
-                break;
+                n_considered++;
+                PROTOOP_PRINTF(cnx, "CONSIDER %u, current_min = %ld\n", buffer->repair_symbols[idx]->fec_scheme_specific, current_min);
+                if (current_min == -1 || buffer->repair_symbols[idx]->fec_scheme_specific < current_min) {
+                    buffer->first = idx;
+                    current_min = buffer->repair_symbols[idx]->fec_scheme_specific;
+                    PROTOOP_PRINTF(cnx, "NEW MIN = %u\n", current_min);
+                }
             }
         }
     }
@@ -244,6 +259,7 @@ static __attribute__((always_inline)) int get_repair_symbols(picoquic_cnx_t *cnx
     for (uint32_t i = 0 ; i < n_considered_symbols && added < max_elems ; i++) {
         uint32_t idx = (buffer->first + i) % buffer->max_size;
         if (buffer->repair_symbols[idx]) {
+            PROTOOP_PRINTF(cnx, "GET RS AT %d, IDs = [%u, %u], FSS = %u\n", idx, buffer->repair_symbols[idx]->repair_fec_payload_id.source_fpid.raw, buffer->repair_symbols[idx]->repair_fec_payload_id.source_fpid.raw + buffer->repair_symbols[idx]->nss - 1, buffer->repair_symbols[idx]->fec_scheme_specific);
             symbols[added++] = buffer->repair_symbols[idx];
             *highest_protected = MAX(*highest_protected, buffer->repair_symbols[idx]->repair_fec_payload_id.source_fpid.raw + buffer->repair_symbols[idx]->nss - 1);
         }

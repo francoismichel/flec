@@ -58,7 +58,18 @@ typedef struct __attribute__((__packed__)) {
 typedef struct {
     uint64_t *packets;
     uint8_t number_of_packets;
+    source_fpid_t *recovered_sfpids;
+    // with the new draft, there can be more than one sfpid per packet
+    uint8_t number_of_sfpids;
 } recovered_packets_t;
+
+
+static __attribute__((always_inline)) void free_rp(picoquic_cnx_t *cnx, recovered_packets_t *rp) {
+    my_free(cnx, rp->packets);
+    if (rp->recovered_sfpids)
+        my_free(cnx, rp->recovered_sfpids);
+    my_free(cnx, rp);
+}
 
 // TODO: maybe a bit complex structure but quite handy, think if we can/should simplify it
 typedef union {
@@ -134,10 +145,12 @@ typedef struct __attribute__((__packed__)) {
 
 static __attribute__((always_inline)) uint64_t decode_un(uint8_t *bytes, int n) {
     uint64_t retval = 0;
+    uint8_t buffer[n];
+    my_memcpy(buffer, bytes, n);
     int i;
     for (i = 0; i < n ; i++) {
         retval <<= 8;
-        retval += bytes[i];
+        retval += buffer[i];
     }
     return retval;
 }

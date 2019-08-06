@@ -287,6 +287,7 @@ static __attribute__((always_inline)) bool add_source_symbol_to_window(picoquic_
 }
 
 static __attribute__((always_inline)) int sfpid_has_landed(picoquic_cnx_t *cnx, window_fec_framework_t *wff, source_fpid_t sfpid, bool received) {
+    PROTOOP_PRINTF(cnx, "SYMBOL %d LANDED, RECEIVED = %d\n", sfpid.raw, received);
     // remove all the needed symbols from the window
     uint32_t idx = sfpid.raw % RECEIVE_BUFFER_MAX_LENGTH;
     if (received && wff->fec_window[idx].symbol) {
@@ -433,6 +434,7 @@ static __attribute__((always_inline)) int protect_source_symbol(picoquic_cnx_t *
         PROTOOP_PRINTF(cnx, "COULDN't ADD\n");
         return -1;
     }
+
     wff->highest_in_transit = ss->source_fec_payload_id.raw;
 
     return 0;
@@ -450,8 +452,12 @@ static __attribute__((always_inline)) uint64_t window_sent_symbol(picoquic_cnx_t
 
 static __attribute__((always_inline)) rlnc_window_t get_current_rlnc_window(picoquic_cnx_t *cnx, window_fec_framework_t *wff) {
     rlnc_window_t window;
-    window.start = wff->smallest_in_transit;
-    window.end = wff->highest_in_transit;
+    window.start = 0;
+    window.end = 0;
+    if (!is_fec_window_empty(wff)) {
+        window.start = wff->smallest_in_transit;
+        window.end = wff->highest_in_transit + 1;
+    }
     return window;
 }
 
@@ -479,5 +485,6 @@ static __attribute__((always_inline)) causal_packet_type_t window_what_to_send(p
         if (what == nothing)
             return new_rlnc_packet;
     }
-    return what;
+    // if the window is empty, we cannot send a FEC packet, so just send a new packet
+    return is_fec_window_empty(wff) ? new_rlnc_packet : what;
 }

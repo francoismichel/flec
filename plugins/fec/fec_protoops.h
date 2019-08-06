@@ -39,6 +39,7 @@ typedef struct {
     bool has_ready_stream;                   // set to true when there is a ready stream in the current packet loop
     uint8_t *written_sfpid_frame;            // set by write_sfpid_frame to the address of the sfpid frame written in the packet, used to undo a packet protection
     fec_block_t *fec_blocks[MAX_FEC_BLOCKS]; // ring buffer
+    uint64_t last_protected_slot;
     recovered_packets_buffer_t recovered_packets;
     protoop_id_t    protect_id;
     protoop_id_t    packet_to_source_symbol_id;
@@ -47,7 +48,7 @@ typedef struct {
     protoop_id_t    receive_source_symbol_id;
     protoop_id_t    get_source_fpid_id;
 
-    // FIXME: horrible ACK to work around the fact that in dequeue_retransmit_packet, "should_free" is equivalent to "received", so we add the "received" signal using this...
+    // FIXME: horrible hack to work around the fact that in dequeue_retransmit_packet, "should_free" is equivalent to "received", so we add the "received" signal using this...
     bool current_packet_is_lost;
 } bpf_state;
 
@@ -255,11 +256,20 @@ static __attribute__((always_inline)) int recover_block(picoquic_cnx_t *cnx, bpf
     if (n_to_recover > 0) {
         recovered_packets_t *rp = my_malloc(cnx, sizeof(recovered_packets_t));
         if(rp) {    // if rp is null, this is not a big deal, just don't send the recovered frame
+            my_memset(rp, 0, sizeof(recovered_packets_t));
             rp->packets = my_malloc(cnx, n_to_recover*sizeof(uint64_t));
             rp->number_of_packets = 0;
             if (!rp->packets) {
                 my_free(cnx, rp);
                 rp = NULL;
+            } else {
+                rp->recovered_sfpids = my_malloc(cnx, n_to_recover*sizeof(uint64_t));
+                rp->number_of_sfpids = 0;
+                if (!rp->recovered_sfpids) {
+                    my_free(cnx, rp->packets);
+                    my_free(cnx, rp);
+                    rp = NULL;
+                }
             }
         }
         ret = (int) run_noparam(cnx, "fec_recover", 2, args, outs);
@@ -286,15 +296,6 @@ static __attribute__((always_inline)) int recover_block(picoquic_cnx_t *cnx, bpf
                     state->in_recovery = true;
                     ret = picoquic_decode_frames_without_current_time(cnx, fb->source_symbols[i]->data + sizeof(uint64_t) + 1, (size_t) payload_length, 3, path);
 
-                    // we should free the recovered symbol: it has been correctly handled when decoding the packet
-                    my_free(cnx, fb->source_symbols[i]);
-                    if (state->current_symbol)
-                        // the symbol has not been consumed, so we must free its payload
-                        my_free(cnx, state->current_symbol);
-                    // otherwise, don't free the payload: it is used by the source symbol
-                    fb->source_symbols[i] = NULL;
-                    state->current_symbol = tmp_current_packet;
-                    state->current_symbol_length = tmp_current_packet_length;
                     state->in_recovery = false;
 
 
@@ -302,33 +303,49 @@ static __attribute__((always_inline)) int recover_block(picoquic_cnx_t *cnx, bpf
                         PROTOOP_PRINTF(cnx, "DECODED ! \n");
                         if (rp) {
                             rp->packets[rp->number_of_packets++] = pn;
+                            rp->recovered_sfpids[rp->number_of_sfpids++] = fb->source_symbols[i]->source_fec_payload_id;
                         }
                     } else {
                         PROTOOP_PRINTF(cnx, "ERROR WHILE DECODING: %u ! \n", (uint32_t) ret);
                     }
+                    // we should free the recovered symbol: it has been correctly handled when decoding the packet
+                    my_free(cnx, fb->source_symbols[i]);
+                    if (state->current_symbol) {
+                        // the symbol has not been consumed, so we must free its payload
+                        my_free(cnx, state->current_symbol);
+                    } // otherwise, don't free the payload: it is used by the source symbol
+
+                    state->current_symbol = tmp_current_packet;
+                    state->current_symbol_length = tmp_current_packet_length;
+                    fb->source_symbols[i] = NULL;
                 }
             }
         }
 
         if (rp) {
             reserve_frame_slot_t *slot = NULL;
-            if (should_send_recovered_frames(cnx, rp)) {
+            if (rp->number_of_packets > 0 && should_send_recovered_frames(cnx, rp)) {
+                PROTOOP_PRINTF(cnx, "BEFORE MALLOC RF\n");
                 slot = my_malloc(cnx, sizeof(reserve_frame_slot_t));
+                PROTOOP_PRINTF(cnx, "AFTER MALLOC RF\n");
             }
             if (slot) {
                 my_memset(slot, 0, sizeof(reserve_frame_slot_t));
                 slot->frame_ctx = rp;
                 slot->frame_type = RECOVERED_TYPE;
-                slot->nb_bytes = 200; /* FIXME dynamic count */
+                slot->nb_bytes = 250; /* FIXME dynamic count */
                 size_t reserved_size = reserve_frames(cnx, 1, slot);
+                PROTOOP_PRINTF(cnx, "RESERVED FOR FRAME %u (%lu bytes)\n", slot->frame_type, reserved_size);
                 if (reserved_size < slot->nb_bytes) {
                     PROTOOP_PRINTF(cnx, "Unable to reserve frame slot\n");
                     my_free(cnx, rp->packets);
+                    my_free(cnx, rp->recovered_sfpids);
                     my_free(cnx, rp);
                     my_free(cnx, slot);
                 }
             } else {
                 my_free(cnx, rp->packets);
+                my_free(cnx, rp->recovered_sfpids);
                 my_free(cnx, rp);
             }
         }
@@ -343,13 +360,13 @@ static __attribute__((always_inline)) int recover_block(picoquic_cnx_t *cnx, bpf
 
 // assumes that the data_length field of the frame is safe
 static __attribute__((always_inline)) int process_fec_frame_helper(picoquic_cnx_t *cnx, fec_frame_t *frame) {
-    // TODO: here, we don't handle the case where repair symbols are split into several frames. We should do it.
     repair_symbol_t *rs = malloc_repair_symbol_with_data(cnx, frame->header.repair_fec_payload_id, frame->data,
                                                          frame->header.data_length);
     if (!rs) {
         return PICOQUIC_ERROR_MEMORY;
     }
     rs->nss = frame->header.nss;
+    PROTOOP_PRINTF(cnx, "FRAME DATA = %p\n", (protoop_arg_t) frame->data);
     bpf_state *state = get_bpf_state(cnx);
     if (!state) {
         free_repair_symbol(cnx, rs);
@@ -360,12 +377,16 @@ static __attribute__((always_inline)) int process_fec_frame_helper(picoquic_cnx_
     params[1] = (protoop_arg_t) rs;
     params[2] = (protoop_arg_t) frame->header.nss;
     params[3] = (protoop_arg_t) frame->header.nrs;
+    PROTOOP_PRINTF(cnx, "FRAME DATA 2 = %p\n", (protoop_arg_t) frame->data);
     // receive_repair_symbol asks the underlying receiver-side FEC Framework to handle a received Repair Symbol
     int ret = (int) run_noparam(cnx, "receive_repair_symbol", 4, params, NULL);
+    PROTOOP_PRINTF(cnx, "FRAME DATA 3 = %p\n", (protoop_arg_t) frame->data);
     if(ret != 1) {
+        PROTOOP_PRINTF(cnx, "FREE RS\n");
         // the symbol could not be inserted: we do not care if an error happened, we free anyway and return the received error code
         free_repair_symbol(cnx, rs);
     }
+    PROTOOP_PRINTF(cnx, "FRAME DATA 4 = %p\n", (protoop_arg_t) frame->data);
     return ret;
 }
 

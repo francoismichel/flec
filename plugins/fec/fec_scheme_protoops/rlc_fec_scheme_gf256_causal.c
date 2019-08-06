@@ -49,22 +49,26 @@ There are two options to do this in C.
 This program uses the first option.
 ********/
 static __attribute__((always_inline)) void gaussElimination(picoquic_cnx_t *cnx, int n_eq, int n_unknowns, uint8_t **a, uint8_t *constant_terms[n_eq], uint8_t *x[n_eq], bool undetermined[n_unknowns], uint32_t symbol_size, uint8_t **mul, uint8_t *inv){
-    PROTOOP_PRINTF(cnx, "N_EQ = %d, n_unknowns = %d \n", n_eq, n_unknowns);
+    PROTOOP_PRINTF(cnx, "N_EQ = %d, n_unknowns = %d a = %p, ct = %p, x = %p\n", n_eq, n_unknowns, (protoop_arg_t) a, (protoop_arg_t) constant_terms, (protoop_arg_t) x);
     sort_system(cnx, a, constant_terms, n_eq, n_unknowns);
     int i,j,k;
     for(i=0;i<n_eq-1;i++){
         for(k=i+1;k<n_eq;k++){
             if(k > i){
+                PROTOOP_PRINTF(cnx, "a[%d] = %p, a[%p] = %p\n", i, (protoop_arg_t) a[i], k, (protoop_arg_t) a[k]);
                 uint8_t mulnum = a[k][i];
                 uint8_t muldenom = a[i][i];
                 // term=a[k][i]/a[i][i]
+                PROTOOP_PRINTF(cnx, "BEFORE MUL\n");
                 uint8_t term = gf256_mul(mulnum, inv[muldenom], mul);
                 for(j=0;j<n_unknowns;j++){
                     // a[k][j] -= a[k][i]/a[i][i]*a[i][j]
 //                    // i < m-1 AND m <= n, -> i < n-1
+                    PROTOOP_PRINTF(cnx, "BEFORE SUB \n");
                       a[k][j] = gf256_sub(a[k][j], gf256_mul(term, a[i][j], mul));
                 }
                 // a[k][j] -= a[k][i]/a[i][i]*a[i][j] for the big, constant term
+                PROTOOP_PRINTF(cnx, "BEFORE SUB_scaled, ct[%d] = %p, ct[%d] = %p\n", k, (protoop_arg_t) constant_terms[k], i, (protoop_arg_t) constant_terms[i]);
                 symbol_sub_scaled(constant_terms[k], term, constant_terms[i], symbol_size, mul);
             }
         }
@@ -162,7 +166,6 @@ protoop_arg_t fec_recover(picoquic_cnx_t *cnx)
     int n_unknowns = fec_block->total_source_symbols - fec_block->current_source_symbols;
     int n_eq = MIN(n_unknowns, fec_block->current_repair_symbols);
     int i = 0;
-    int j;
     uint8_t *coefs = my_malloc(cnx, fec_block->total_source_symbols*sizeof(uint8_t));//[fec_block->total_source_symbols];
     uint8_t **unknowns = my_malloc(cnx, (n_unknowns)*sizeof(uint8_t *));;//[n_unknowns];
     uint8_t **system_coefs = my_malloc(cnx, n_eq*sizeof(uint8_t *));//[n_eq][n_unknowns + 1];
@@ -176,7 +179,7 @@ protoop_arg_t fec_recover(picoquic_cnx_t *cnx)
         PROTOOP_PRINTF(cnx, "NOT ENOUGH MEM\n");
     }
 
-    for (j = 0 ; j < n_eq ; j++) {
+    for (int j = 0 ; j < n_eq ; j++) {
         system_coefs[j] = my_malloc(cnx, (n_unknowns) * sizeof(uint8_t));
         if (!system_coefs[j]) {
             PROTOOP_PRINTF(cnx, "NOT ENOUGH MEM\n");
@@ -191,32 +194,48 @@ protoop_arg_t fec_recover(picoquic_cnx_t *cnx)
             max_length = MAX(max_length, rs->data_length);
         }
     }
-    for (j = 0 ; j < n_unknowns ; j++) {
+    for (int j = 0 ; j < n_unknowns ; j++) {
         unknowns[j] = my_malloc(cnx, max_length);
         my_memset(unknowns[j], 0, max_length);
+    }
+
+    for (int i = 0 ; i < fec_block->total_source_symbols ; i++) {
+        if (!fec_block->source_symbols[i])
+            PROTOOP_PRINTF(cnx, "%u IS LOST\n", smallest_protected + i);
     }
 
     // building the system, equation by equation
     i = 0;
     for_each_repair_symbol(fec_block, rs) {
+//        PROTOOP_PRINTF(cnx, "I = %d\n", i);
         if (rs && i < n_eq) {
             uint32_t smallest_protected_by_rs = rs->repair_fec_payload_id.source_fpid.raw;
+            PROTOOP_PRINTF(cnx, "TRY RS, [%u, ...]\n", smallest_protected_by_rs);
             bool protects_at_least_one_source_symbol = false;
             for (int k = smallest_protected_by_rs - smallest_protected ; k < smallest_protected_by_rs + rs->nss - smallest_protected ; k++) {
                 // this source symbol is protected by this repair symbol
                 if (!fec_block->source_symbols[k]) {
                     protects_at_least_one_source_symbol = true;
+                    PROTOOP_PRINTF(cnx, "PROTECTS AT LEAST SS %d\n", smallest_protected + k);
                     break;
                 }
             }
             if (protects_at_least_one_source_symbol) {
+                PROTOOP_PRINTF(cnx, "ADD CONSTANT TERM %d\n", i);
                 constant_terms[i] = my_malloc(cnx, max_length);
+                if (!constant_terms[i]) {
+                    PROTOOP_PRINTF(cnx, "COULD NOT ALLOCATE CONSTANT TERM\n");
+//                    return -1
+                }
                 my_memset(constant_terms[i], 0, max_length);
                 my_memcpy(constant_terms[i], rs->data, rs->data_length);
+                PROTOOP_PRINTF(cnx, "BEFORE MEMSET 2\n");
                 my_memset(system_coefs[i], 0, fec_block->total_source_symbols);
+//                PROTOOP_PRINTF(cnx, "BEFORE GET COEFS, SMALLEST BY RS = %u, SMALLEST = %u\n", smallest_protected_by_rs, smallest_protected);
                 get_coefs(cnx, prng, (rs->repair_fec_payload_id.fec_scheme_specific), rs->nss, &coefs[smallest_protected_by_rs - smallest_protected]);
+                PROTOOP_PRINTF(cnx, "AFTER GET COEFS\n");
                 int current_unknown = 0;
-                for (j = smallest_protected_by_rs - smallest_protected ; j < smallest_protected_by_rs + rs->nss - smallest_protected ; j++) {
+                for (int j = smallest_protected_by_rs - smallest_protected ; j < smallest_protected_by_rs + rs->nss - smallest_protected ; j++) {
                     // this source symbol is protected by this repair symbol
                     if (fec_block->source_symbols[j]) {
                         // we add data_length to avoid overflowing on the source symbol. As we assume the source symbols are padded to 0, there is no harm in not adding the zeroes
@@ -230,25 +249,32 @@ protoop_arg_t fec_recover(picoquic_cnx_t *cnx)
         }
     }
 
+    int n_effective_equations = i;
+
     PROTOOP_PRINTF(cnx, "BEFORE GAUSSIAN, LENGTH = %d\n", max_length);
     // the system is built: let's recover it
-    gaussElimination(cnx, n_eq, n_unknowns, system_coefs, constant_terms, unknowns, undetermined, max_length, mul, fs->table_inv);
+    bool can_recover = n_effective_equations >= n_unknowns;
+    if (can_recover)
+        gaussElimination(cnx, n_effective_equations, n_unknowns, system_coefs, constant_terms, unknowns, undetermined, max_length, mul, fs->table_inv);
+    else
+        PROTOOP_PRINTF(cnx, "CANNOT RECOVER\n");
     PROTOOP_PRINTF(cnx, "AFTER GAUSSIAN\n");
     int current_unknown = 0;
-    for (j = 0 ; j < fec_block->total_source_symbols ; j++) {
-        if (!fec_block->source_symbols[j] && !undetermined[current_unknown] && !symbol_is_zero(unknowns[current_unknown], max_length)) {
+    for (int j = 0 ; j < fec_block->total_source_symbols ; j++) {
+        if (!fec_block->source_symbols[j] && can_recover && !undetermined[current_unknown] && !symbol_is_zero(unknowns[current_unknown], max_length)) {
             // TODO: handle the case where source symbols could be 0
             source_symbol_t *ss = malloc_source_symbol(cnx, (source_fpid_t) (((fec_block->fec_block_number) << 8) + ((uint8_t)j)), max_length);
             if (!ss) {
                 my_free(cnx, unknowns[current_unknown++]);
                 continue;
             }
+            ss->source_fec_payload_id.raw = fec_block->fec_block_number + j;
             my_memcpy(ss->data, unknowns[current_unknown], max_length);
             ss->data_length = max_length;
             fec_block->source_symbols[j] = ss;
             fec_block->current_source_symbols++;
             my_free(cnx, unknowns[current_unknown++]);
-        } else if (!fec_block->source_symbols[j] && (undetermined[current_unknown] || symbol_is_zero(unknowns[current_unknown], max_length))) {
+        } else if (!fec_block->source_symbols[j] && (!can_recover || undetermined[current_unknown] || symbol_is_zero(unknowns[current_unknown], max_length))) {
             // this unknown could not be recovered
             my_free(cnx, unknowns[current_unknown++]);
         }
@@ -257,7 +283,8 @@ protoop_arg_t fec_recover(picoquic_cnx_t *cnx)
     // free the system
     for (i = 0 ; i < n_eq ; i++) {
         my_free(cnx, system_coefs[i]);
-        my_free(cnx, constant_terms[i]);
+        if (i < n_effective_equations)
+            my_free(cnx, constant_terms[i]);
     }
     my_free(cnx, prng);
     my_free(cnx, system_coefs);

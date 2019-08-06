@@ -1,6 +1,7 @@
 #include <picoquic.h>
 #include "../fec_protoops.h"
 
+
 /*
  * The format of a RECOVERED frame is:
  *
@@ -14,10 +15,11 @@
  */
 
 
-protoop_arg_t write_fpid_frame(picoquic_cnx_t *cnx) {
+protoop_arg_t write_recovered_frame(picoquic_cnx_t *cnx) {
     uint8_t* bytes = (uint8_t *) get_cnx(cnx, AK_CNX_INPUT, 0);
     const uint8_t* bytes_max = (const uint8_t *) get_cnx(cnx, AK_CNX_INPUT, 1);
     recovered_packets_t *rp = (recovered_packets_t *) get_cnx(cnx, AK_CNX_INPUT, 2);
+    PROTOOP_PRINTF(cnx, "WRITE RECOVERED FRAME, %d PACKETS, %d SFPIDs\n", rp->number_of_packets, rp->number_of_sfpids);
     int consumed = 0;
     if (rp->number_of_packets == 0 || bytes_max - bytes < 2*sizeof(uint8_t) + sizeof(uint64_t)) {
         set_cnx(cnx, AK_CNX_OUTPUT, 0, (protoop_arg_t) consumed);
@@ -25,13 +27,20 @@ protoop_arg_t write_fpid_frame(picoquic_cnx_t *cnx) {
         free_rp(cnx, rp);
         return -1;
     }
+
     // the packets in rp must be sorted according to their packet number
     my_memset(bytes, RECOVERED_TYPE, sizeof(uint8_t));
     bytes += sizeof(uint8_t);
     consumed += sizeof(uint8_t);
+
     my_memcpy(bytes, &rp->number_of_packets, sizeof(uint8_t));
     bytes += sizeof(uint8_t);
     consumed += sizeof(uint8_t);
+
+    my_memcpy(bytes, &rp->number_of_sfpids, sizeof(uint8_t));
+    consumed += sizeof(uint8_t);
+    bytes += sizeof(uint8_t);
+
     encode_u64(rp->packets[0], bytes);
     bytes += sizeof(uint64_t);
     consumed += sizeof(uint64_t);
@@ -77,6 +86,13 @@ protoop_arg_t write_fpid_frame(picoquic_cnx_t *cnx) {
         my_memcpy(bytes, &range_length, sizeof(uint8_t));
         bytes += sizeof(uint8_t);
         consumed += sizeof(uint8_t);
+    }
+    // bulk-encode the sfpids
+    for (int i = 0 ; i < rp->number_of_sfpids ; i++) {
+        PROTOOP_PRINTF(cnx, "WRITE RECOVERED SFPID %u\n", rp->recovered_sfpids[i].raw);
+        encode_u32(rp->recovered_sfpids[i].raw, bytes);
+        consumed += sizeof(uint32_t);
+        bytes += sizeof(uint32_t);
     }
     set_cnx(cnx, AK_CNX_OUTPUT, 0, (protoop_arg_t) consumed);
     set_cnx(cnx, AK_CNX_OUTPUT, 1, (protoop_arg_t) 1);

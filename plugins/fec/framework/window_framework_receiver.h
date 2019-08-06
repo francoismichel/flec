@@ -83,8 +83,10 @@ static __attribute__((always_inline)) void populate_fec_block(picoquic_cnx_t *cn
 
 
 static __attribute__((always_inline)) void try_to_recover(picoquic_cnx_t *cnx, bpf_state *state, window_fec_framework_receiver_t *wff) {
+    PROTOOP_PRINTF(cnx, "TRY TO RECOVER\n");
     if (update_highest_contiguous_received(cnx, wff))
         remove_and_free_unused_repair_symbols(cnx, wff->received_repair_symbols, wff->highest_contiguous_received + 1);
+    PROTOOP_PRINTF(cnx, "BEFORE POPULATE\n");
     populate_fec_block(cnx, wff, &wff->fec_block_buffer);
     PROTOOP_PRINTF(cnx, "TOTAL SS = %d, CURRENT RS = %d, CURRENT SS = %d\n", wff->fec_block_buffer.total_source_symbols, wff->fec_block_buffer.current_repair_symbols, wff->fec_block_buffer.current_source_symbols);
     if (wff->fec_block_buffer.total_source_symbols == 0 || wff->fec_block_buffer.current_repair_symbols == 0 ||
@@ -102,6 +104,7 @@ static __attribute__((always_inline)) void try_to_recover(picoquic_cnx_t *cnx, b
 // returns false otherwise: the symbol can be destroyed
 static __attribute__((always_inline)) int window_receive_repair_symbol(picoquic_cnx_t *cnx, bpf_state *state, window_fec_framework_receiver_t *wff, repair_symbol_t *rs, uint8_t nss, uint8_t nrs){
     PROTOOP_PRINTF(cnx, "RECEIVE REPAIR SYMBOL, FSS = %u, NSS = %d\n", rs->repair_fec_payload_id.fec_scheme_specific, rs->nss);
+    PROTOOP_PRINTF(cnx, "%u + %u - 1 <= ? %u\n", rs->repair_fec_payload_id.source_fpid.raw, rs->nss, wff->highest_contiguous_received);
     if (rs->repair_fec_payload_id.source_fpid.raw + rs->nss - 1 <= wff->highest_contiguous_received)
         return false;
     repair_symbol_t *removed = add_repair_symbol(cnx, wff->received_repair_symbols, rs, nss);
@@ -140,11 +143,14 @@ static __attribute__((always_inline)) bool window_receive_source_symbol(picoquic
         wff->highest_removed = MAX(removed->source_fec_payload_id.raw, wff->highest_removed);
         free_source_symbol(cnx, removed);
     }
+    PROTOOP_PRINTF(cnx, "FREED OLD SS\n");
     // let's find all the blocks protecting this symbol to see if we can recover the remaining
     // we don't recover symbols if we already are in recovery mode
     if (!state->in_recovery && recover) {
         try_to_recover(cnx, state, wff);
     } else {
+        if (update_highest_contiguous_received(cnx, wff))
+            remove_and_free_unused_repair_symbols(cnx, wff->received_repair_symbols, wff->highest_contiguous_received + 1);
         PROTOOP_PRINTF(cnx, "RECEIVED SYMBOL %u BUT DIDN'T TRY TO RECOVER\n", ss->source_fec_payload_id.raw);
     }
     return true;

@@ -31,8 +31,8 @@ protoop_arg_t process_ack_range(picoquic_cnx_t *cnx)
                 picoquic_path_t * old_path = (picoquic_path_t *) get_pkt(p, AK_PKT_SEND_PATH);
 
                 uint32_t length = (uint32_t) get_pkt(p, AK_PKT_LENGTH);
-                // FIXME: horrible hack to store the slot number without changing the structure
-                uint64_t slot = get_pkt(p, AK_PKT_IS_CONGESTION_CONTROLLED);
+                uint64_t slot = get_pkt_metadata(cnx, p, 0);
+                PROTOOP_PRINTF(cnx, "ACKED SLOT %lu\n", slot);
                 window_slot_acked(cnx, state->framework_sender, slot);
                 if ((picoquic_congestion_algorithm_t *) get_cnx(cnx, AK_CNX_CONGESTION_CONTROL_ALGORITHM, 0) != NULL) {
                     helper_congestion_algorithm_notify(cnx, old_path,

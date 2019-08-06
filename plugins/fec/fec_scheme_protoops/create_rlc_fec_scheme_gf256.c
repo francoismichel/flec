@@ -9,19 +9,19 @@
 static __attribute__((always_inline)) int create_fec_schemes(picoquic_cnx_t *cnx, rlc_gf256_fec_scheme_t *fec_schemes[2]) {
     // TODO: free when error
     PROTOOP_PRINTF(cnx, "CALLED CREATE\n");
-    rlc_gf256_fec_scheme_t *fs = my_malloc(cnx, sizeof(rlc_gf256_fec_scheme_t));
+    rlc_gf256_fec_scheme_t *fs = my_malloc_ex(cnx, sizeof(rlc_gf256_fec_scheme_t));
     if (!fs)
         return PICOQUIC_ERROR_MEMORY;
-    uint8_t **table_mul = my_malloc(cnx, 256*sizeof(uint8_t *));
+    uint8_t **table_mul = my_malloc_ex(cnx, 256*sizeof(uint8_t *));
     if (!table_mul)
         return PICOQUIC_ERROR_MEMORY;
-    uint8_t *table_inv = my_malloc(cnx, 256*sizeof(uint8_t));
+    uint8_t *table_inv = my_malloc_ex(cnx, 256*sizeof(uint8_t));
     if (!table_inv)
         return PICOQUIC_ERROR_MEMORY;
     my_memset(table_inv, 0, 256*sizeof(uint8_t));
     assign_inv(table_inv);
     for (int i = 0 ; i < 256 ; i++) {
-        table_mul[i] = my_malloc(cnx, 256 * sizeof(uint8_t));
+        table_mul[i] = my_malloc_ex(cnx, 256 * sizeof(uint8_t));
         if (!table_mul[i])
             return PICOQUIC_ERROR_MEMORY;
         my_memset(table_mul[i], 0, 256*sizeof(uint8_t));
