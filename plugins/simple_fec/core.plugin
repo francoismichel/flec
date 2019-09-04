@@ -1,0 +1,2 @@
+schedule_frames_on_path pre protoops/check_for_available_slot.o
+available_slot replace protoops/available_slot.o
