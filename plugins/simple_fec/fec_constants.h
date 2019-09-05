@@ -16,6 +16,9 @@
 #define FRAME_REPAIR 0x2a
 #define FRAME_RECOVERED 0x2b
 
+#define REPAIR_FRAME_TYPE_BYTE_SIZE 1
+#define FPI_FRAME_TYPE_BYTE_SIZE 1
+
 // values
 #define MAX_SRC_FPI_SIZE 16
 #define CHUNK_SIZE 200

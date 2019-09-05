@@ -1,6 +1,6 @@
 
 //#ifndef PICOQUIC_FEC_H
-#define PICOQUIC_FEC_H
+//#define PICOQUIC_FEC_H
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -22,6 +22,7 @@ typedef struct {
     bool has_written_fpi_frame;
     bool has_written_repair_frame;
     bool is_incoming_packet_fec_protected;
+    bool current_packet_is_lost;
     source_symbol_id_t current_id;
     uint64_t last_protected_slot;
     uint64_t last_fec_slot;
@@ -30,6 +31,7 @@ typedef struct {
     uint64_t current_packet_number;
     framework_sender_t framework_sender;
     framework_receiver_t framework_receiver;
+    lost_packet_queue_t lost_packets;
 } plugin_state_t;
 
 static __attribute__((always_inline)) plugin_state_t *initialize_plugin_state(picoquic_cnx_t *cnx)
@@ -114,11 +116,6 @@ static __attribute__((always_inline)) bool get_ss_metadata_E(source_symbol_t *ss
     return ss->_whole_data[0] & 0b001U;
 }
 
-typedef struct repair_symbol {
-    uint16_t payload_length;
-    uint8_t *repair_payload;
-} repair_symbol_t;
-
 static __attribute__((always_inline)) source_symbol_t *create_source_symbol(picoquic_cnx_t *cnx, uint16_t chunk_size) {
     source_symbol_t *ret = my_malloc(cnx, sizeof(source_symbol_t));
     if (!ret)
@@ -137,6 +134,31 @@ static __attribute__((always_inline)) source_symbol_t *create_source_symbol(pico
 static __attribute__((always_inline)) void delete_source_symbol(picoquic_cnx_t *cnx, source_symbol_t *ss) {
     my_free(cnx, ss->_whole_data);
     my_free(cnx, ss);
+}
+
+typedef struct repair_symbol {
+    uint16_t payload_length;
+    uint8_t *repair_payload;
+} repair_symbol_t;
+
+
+static __attribute__((always_inline)) repair_symbol_t *create_repair_symbol(picoquic_cnx_t *cnx, uint16_t symbol_size) {
+    repair_symbol_t *ret = my_malloc(cnx, sizeof(repair_symbol_t));
+    if (!ret)
+        return NULL;
+    my_memset(ret, 0, sizeof(repair_symbol_t));
+    ret->repair_payload = my_malloc(cnx, symbol_size);
+    if (!ret->repair_payload){
+        my_free(cnx, ret);
+        return NULL;
+    }
+    my_memset(ret->repair_payload, 0, symbol_size);
+    return ret;
+}
+
+static __attribute__((always_inline)) void delete_repair_symbol(picoquic_cnx_t *cnx, repair_symbol_t *rs) {
+    my_free(cnx, rs->repair_payload);
+    my_free(cnx, rs);
 }
 
 static __attribute__((always_inline)) int preprocess_packet_payload(picoquic_cnx_t *cnx, const uint8_t *packet_payload, size_t payload_length, uint8_t *output_payload, size_t *total_size) {
