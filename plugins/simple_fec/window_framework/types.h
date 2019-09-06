@@ -5,7 +5,35 @@
 #include <picoquic.h>
 #include <memcpy.h>
 #include "../utils.h"
+#include "../fec.h"
 
+
+typedef uint32_t window_source_symbol_id_t; // it is just a contiguous sequence number
+
+typedef struct fss {
+    union {
+        uint8_t  val[4];
+        uint32_t val_big_endian;
+    };
+} window_fec_scheme_specific_t; // the fec scheme-specific value is 4 arbitrary bytes
+
+typedef struct repair_symbols_metadata {
+    window_fec_scheme_specific_t fss;
+    window_source_symbol_id_t first_id;
+    uint16_t n_protected_symbols;
+} repair_symbols_metadata_t;
+
+
+typedef struct {
+    repair_symbol_t repair_symbol;
+    repair_symbols_metadata_t metadata;
+} window_repair_symbol_t;
+
+
+typedef struct {
+    source_symbol_t source_symbol;
+    window_source_symbol_id_t id;
+} window_source_symbol_t;
 
 
 typedef struct fec_src_fpi_frame {
@@ -22,14 +50,6 @@ typedef _fec_repair_frame_t * fec_repair_frame_t;
 
 typedef protoop_arg_t window_redundancy_controller_t;
 
-typedef uint32_t window_source_symbol_id_t; // it is just a contiguous sequence number
-
-typedef struct fss {
-    union {
-        uint8_t  val[4];
-        uint32_t val_big_endian;
-    };
-} window_fec_scheme_specific_t; // the fec scheme-specific value is 4 arbitrary bytes
 
 typedef struct repair_frame {
     window_fec_scheme_specific_t fss;
