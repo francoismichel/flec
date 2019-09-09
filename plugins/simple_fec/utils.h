@@ -5,6 +5,8 @@
 #include <stdint.h>
 #include <memcpy.h>
 
+#define MIN(a, b) ((a < b) ? a : b)
+
 #define member_size(struct_type, member) (sizeof(((struct_type *) 0)->member))
 
 static __attribute__((always_inline)) uint64_t decode_un(uint8_t *bytes, int n) {

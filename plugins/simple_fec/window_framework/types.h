@@ -7,6 +7,35 @@
 #include "../utils.h"
 #include "../fec.h"
 
+/**
+ * recovers the missing symbols from a window
+ * \param[in] fec_scheme <b> window_fec_scheme_t </b> the fec scheme state
+ * \param[in] source_symbols <b> window_source_symbol_t ** </b> array of source symbols (a symbol is NULL if it is not present)
+ * \param[in] n_source_symbols <b> uint16_t </b> size of source_symbols
+ * \param[in] repair_symbols <b> window_repair_symbol_t ** </b> array of repair symbols
+ * \param[in] n_repair_symbols <b> uint16_t </b> size of repair_symbols
+ * \param[in] n_missing_source_symbols <b> uint16_t </b> number of missing source symbols in the array
+ * \param[in] symbol_size <b> uint16_t </b> size of a source/repair symbol in bytes
+ * \param[in] smallest_source_symbol_id <b> window_source_symbol_id_t </b> the id of the smallest source symbol in the array
+ *
+ * \return \b int Error code, 0 iff everything was fine
+ */
+#define FEC_PROTOOP_WINDOW_FEC_SCHEME_RECOVER "window_fecscheme_recover"
+#define WINDOW_INITIAL_SYMBOL_ID 1
+
+
+
+#define for_each_window_source_symbol(____sss, ____ss, ____nss) \
+    for (int ____i = 0, ____keep = 1, n = ____nsss; ____keep && ____i < n; ____i++, ____keep = 1-____keep ) \
+        for (____ss = ____sss[____i] ; ____keep ; ____keep = 1-____keep)
+
+#define for_each_window_repair_symbol(____rss, ____rs, ____nrs) \
+    for (int ____i = 0, ____keep = 1, n = ____nrs; ____keep && ____i < n; ____i++, ____keep = 1-____keep ) \
+        for (____rs = ____rss[____i] ; ____keep ; ____keep = 1-____keep)
+
+
+
+
 
 typedef uint32_t window_source_symbol_id_t; // it is just a contiguous sequence number
 
@@ -35,6 +64,22 @@ typedef struct {
     window_source_symbol_id_t id;
 } window_source_symbol_t;
 
+static __attribute__((always_inline)) window_source_symbol_t *create_window_source_symbol(picoquic_cnx_t *cnx, uint16_t symbol_size) {
+    window_source_symbol_t *ss = my_malloc(cnx, sizeof(window_source_symbol_t));
+    if (!ss)
+        return NULL;
+    my_memset(ss, 0, sizeof(window_source_symbol_t));
+
+    ss->source_symbol._whole_data = my_malloc(cnx, symbol_size*sizeof(uint8_t));
+    if (!ss->source_symbol._whole_data) {
+        my_free(cnx, ss);
+        return NULL;
+    }
+    my_memset(ss->source_symbol._whole_data, 0, symbol_size*sizeof(uint8_t));
+    ss->source_symbol.chunk_data = &ss->source_symbol._whole_data[1];
+    ss->source_symbol.chunk_size = symbol_size - 1;
+    return ss;
+}
 
 typedef struct fec_src_fpi_frame {
     source_symbol_id_t  id;
@@ -121,6 +166,123 @@ static __attribute__((always_inline)) int serialize_window_repair_frame(picoquic
 
     }
     return 0;
+}
+
+
+typedef struct recovered_frame {
+    uint64_t *packet_numbers;
+    window_source_symbol_id_t *ids;
+    size_t n_packets;
+    size_t max_packets;
+} window_recovered_frame_t;
+
+static __attribute__((always_inline)) window_recovered_frame_t *create_recovered_frame(picoquic_cnx_t *cnx) {
+    window_recovered_frame_t *rf = my_malloc(cnx, sizeof(window_recovered_frame_t));
+    if (!rf)
+        return NULL;
+    my_memset(rf, 0, sizeof(window_recovered_frame_t));
+    rf->packet_numbers = my_malloc(cnx, PICOQUIC_MAX_PACKET_SIZE);
+    if (!rf->packet_numbers) {
+        my_free(cnx, rf);
+        return NULL;
+    }
+    rf->ids = my_malloc(cnx, PICOQUIC_MAX_PACKET_SIZE);
+    if (!rf->ids) {
+        my_free(cnx, rf->packet_numbers);
+        my_free(cnx, rf);
+        return NULL;
+    }
+    my_memset(rf->packet_numbers, 0, PICOQUIC_MAX_PACKET_SIZE);
+    my_memset(rf->ids, 0, PICOQUIC_MAX_PACKET_SIZE);
+    rf->n_packets = 0;
+    rf->max_packets = MIN(PICOQUIC_MAX_PACKET_SIZE/sizeof(uint64_t), PICOQUIC_MAX_PACKET_SIZE/sizeof(window_source_symbol_id_t));
+    return rf;
+}
+
+static __attribute__((always_inline)) void delete_recovered_frame(picoquic_cnx_t *cnx, window_recovered_frame_t *rf) {
+    my_free(cnx, rf->packet_numbers);
+    my_free(cnx, rf->ids);
+    my_free(cnx, rf);
+}
+
+static __attribute__((always_inline)) bool add_packet_to_recovered_frame(picoquic_cnx_t *cnx, window_recovered_frame_t *rf, uint64_t packet_number, window_source_symbol_id_t id) {
+    if (rf->n_packets == rf->max_packets)
+        return false;
+    rf->packet_numbers[rf->n_packets] = packet_number;
+    rf->ids[rf->n_packets] = id;
+    rf->n_packets++;
+    return true;
+}
+
+
+// we do not write the type byte
+static __attribute__((always_inline)) int serialize_window_recovered_frame(picoquic_cnx_t *cnx, uint8_t *bytes, size_t buffer_length, window_recovered_frame_t *rf, size_t *consumed) {
+    *consumed = 0;
+    //  frame header                           frame payload
+    if (sizeof(uint8_t) + sizeof(uint64_t) + rf->n_packets*(sizeof(uint64_t) + sizeof(window_source_symbol_id_t)) > buffer_length) {
+        // buffer too small
+        return PICOQUIC_ERROR_MEMORY;
+    }
+
+    // the packets in rp must be sorted according to their packet number
+    ssize_t size = 0;
+
+    size = picoquic_varint_encode(bytes, buffer_length - *consumed, rf->n_packets);
+    bytes += size;
+    *consumed += size;
+
+    encode_u64(rf->packet_numbers[0], bytes);
+    bytes += sizeof(uint64_t);
+    *consumed += sizeof(uint64_t);
+
+    uint64_t range_length = 0;
+    for (int i = 1 ; i < rf->n_packets ; i++) {
+        // FIXME: handle gaps of more than 0xFF
+        if (rf->packet_numbers[i] <= rf->packet_numbers[i-1]) {
+            // error
+            *consumed = 0;
+            PROTOOP_PRINTF(cnx, "ERROR: THE PACKETS ARE NOT IN ORDER IN THE RECOVERED FRAME\n");
+            return -1;
+        }
+        if (rf->packet_numbers[i] == rf->packet_numbers[i-1]) {
+            range_length++;
+        } else {
+            if (buffer_length - *consumed < 2*sizeof(uint8_t)) {
+                set_cnx(cnx, AK_CNX_OUTPUT, 0, (protoop_arg_t) 0);
+                set_cnx(cnx, AK_CNX_OUTPUT, 1, (protoop_arg_t) 0);
+                PROTOOP_PRINTF(cnx, "ERROR TOO FEW AVAILABLE BYTES\n");
+                return -1;
+            }
+            // write range
+            size = picoquic_varint_encode(bytes, buffer_length - *consumed, range_length);
+            bytes += size;
+            *consumed += size;
+            // write gap
+            size = picoquic_varint_encode(bytes, buffer_length - *consumed, (rf->packet_numbers[i] - rf->packet_numbers[i-1]) - 1);
+            bytes += size;
+            *consumed += size;
+            range_length = 0;
+        }
+    }
+    // write last range if needed
+    if (range_length > 0) {
+        if (buffer_length - *consumed < 2*sizeof(uint8_t)) {
+            *consumed = 0;
+            return -1;
+        }
+        size = picoquic_varint_encode(bytes, buffer_length - *consumed, range_length);
+        bytes += size;
+        *consumed += size;
+    }
+    // bulk-encode the sfpids
+    for (int i = 0 ; i < rf->n_packets ; i++) {
+        encode_u32(rf->ids[i], bytes);
+        *consumed += sizeof(uint32_t);
+        bytes += sizeof(uint32_t);
+    }
+    return 0;
+
+
 }
 
 #endif //PICOQUIC_TYPES_H
