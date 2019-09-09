@@ -271,3 +271,22 @@ static __attribute__((always_inline)) int try_to_recover(picoquic_cnx_t *cnx, wi
     my_free(cnx, recovered_packet);
     return err;
 }
+
+static __attribute__((always_inline)) window_recovered_frame_t *get_recovered_frame(picoquic_cnx_t *cnx, window_fec_framework_receiver_t *wff, size_t max_bytes) {
+    size_t minimum_size = 2*sizeof(uint64_t);
+    if (max_bytes < minimum_size) // not enough space
+        return NULL;
+    window_recovered_frame_t *rf = create_window_recovered_frame(cnx);
+    if (!rf)
+        return NULL;
+    max_bytes -= minimum_size;
+    while(!pq_is_empty(wff->recovered_packets) && max_bytes > sizeof(uint64_t) + sizeof(window_source_symbol_id_t)) {
+        uint64_t pn = 0;
+        uint64_t id = 0;
+        pq_get_min_key_val(wff->recovered_packets, &pn, (void **) &id);
+        add_packet_to_recovered_frame(cnx, rf, pn, id);
+        max_bytes -= sizeof(uint64_t) + sizeof(window_source_symbol_id_t);
+        pq_pop_min(wff->recovered_packets);
+    }
+    return rf;
+}

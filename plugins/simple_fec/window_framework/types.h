@@ -131,10 +131,6 @@ static __attribute__((always_inline)) int serialize_window_source_symbol_id(uint
     return 0;
 }
 
-static __attribute__((always_inline)) int serialize_window_fpi_frame(uint8_t *out_buffer, size_t buffer_length, source_symbol_id_t ssid, size_t *consumed) {
-    window_source_symbol_id_t id = (window_source_symbol_id_t) ssid;
-    return serialize_window_source_symbol_id(out_buffer, buffer_length, id, consumed);
-}
 
 static __attribute__((always_inline)) int serialize_window_repair_frame(picoquic_cnx_t *cnx, uint8_t *out_buffer, size_t buffer_length, window_repair_frame_t *repair_frame, uint16_t symbol_size, size_t *consumed) {
     if (buffer_length < REPAIR_FRAME_HEADER_SIZE + repair_frame->n_repair_symbols*symbol_size)
@@ -168,6 +164,69 @@ static __attribute__((always_inline)) int serialize_window_repair_frame(picoquic
     return 0;
 }
 
+static __attribute__((always_inline)) int decode_window_source_symbol_id(uint8_t *buffer, size_t buffer_length,
+                                                                         window_source_symbol_id_t *id, size_t *consumed) {
+    if (buffer_length < sizeof(window_source_symbol_id_t))
+        return PICOQUIC_ERROR_MEMORY;
+    *id = decode_u32(buffer);
+    *consumed = sizeof(window_source_symbol_id_t);
+    return 0;
+}
+
+static __attribute__((always_inline)) int serialize_window_fpi_frame(uint8_t *out_buffer, size_t buffer_length, source_symbol_id_t ssid, size_t *consumed, size_t symbol_size) {
+    window_source_symbol_id_t id = (window_source_symbol_id_t) ssid;
+    return serialize_window_source_symbol_id(out_buffer, buffer_length, id, consumed);
+}
+
+static __attribute__((always_inline)) window_repair_frame_t *parse_window_repair_frame(picoquic_cnx_t *cnx, uint8_t *bytes, uint8_t *bytes_max,
+        window_repair_frame_t *repair_frame, uint16_t symbol_size, size_t *consumed, bool skip_repair_payload) {
+    if (bytes_max - bytes < REPAIR_FRAME_HEADER_SIZE + repair_frame->n_repair_symbols*symbol_size)
+        return NULL;
+    *consumed = 0;
+    window_repair_frame_t *rf = create_repair_frame(cnx);
+    if (!rf)
+        return NULL;
+    // encode fec-scheme-specific
+
+    my_memcpy(repair_frame->fss.val, bytes, sizeof(repair_frame->fss.val));
+    *consumed += sizeof(repair_frame->fss.val);
+    size_t tmp = 0;
+    // decode symbol id
+    int err = decode_window_source_symbol_id(bytes + *consumed, bytes_max - bytes - *consumed, &rf->first_protected_symbol, &tmp);
+    if (err)
+        return NULL;
+    *consumed += tmp;
+    // encode number of repair symbols (the symbol size is implicitly negociated so we don't need to encode it)
+    repair_frame->n_protected_symbols = decode_un(bytes + *consumed, sizeof(repair_frame->n_protected_symbols));
+    *consumed += sizeof(repair_frame->n_protected_symbols);
+    repair_frame->n_repair_symbols = decode_un(bytes + *consumed, sizeof(repair_frame->n_repair_symbols));
+    *consumed += sizeof(repair_frame->n_repair_symbols);
+    if (!skip_repair_payload) {
+        rf->symbols = my_malloc(cnx, repair_frame->n_repair_symbols*sizeof(window_repair_symbol_t *));
+        if (!rf->symbols) {
+            delete_repair_frame(cnx, rf);
+            *consumed = 0;
+            return NULL;
+        }
+        my_memset(rf->symbols, 0, repair_frame->n_repair_symbols*sizeof(window_repair_symbol_t *));
+        // decode payload
+        for (int i = 0 ; i < repair_frame->n_repair_symbols ; i++) {
+            // decoding the ith symbol
+            rf->symbols[i] = create_repair_symbol(cnx, symbol_size);
+            if (!rf->symbols[i]) {
+                for (int j = 0 ; j < i ; j++) {
+                    delete_repair_symbol(cnx, rf->symbols[j]);
+                }
+                delete_repair_frame(cnx, rf);
+                *consumed = 0;
+            }
+            my_memcpy(repair_frame->symbols[i]->repair_payload, bytes + *consumed, symbol_size);
+            *consumed += symbol_size;
+        }
+
+    }
+    return rf;
+}
 
 typedef struct recovered_frame {
     uint64_t *packet_numbers;
@@ -176,7 +235,7 @@ typedef struct recovered_frame {
     size_t max_packets;
 } window_recovered_frame_t;
 
-static __attribute__((always_inline)) window_recovered_frame_t *create_recovered_frame(picoquic_cnx_t *cnx) {
+static __attribute__((always_inline)) window_recovered_frame_t *create_window_recovered_frame(picoquic_cnx_t *cnx) {
     window_recovered_frame_t *rf = my_malloc(cnx, sizeof(window_recovered_frame_t));
     if (!rf)
         return NULL;
@@ -283,6 +342,80 @@ static __attribute__((always_inline)) int serialize_window_recovered_frame(picoq
     return 0;
 
 
+}
+
+// we do not read the type byte
+static __attribute__((always_inline)) uint8_t *parse_window_recovered_frame(picoquic_cnx_t *cnx, uint8_t *bytes, uint8_t *bytes_max, size_t *consumed) {
+    uint64_t first_recovered_packet;
+
+    uint64_t number_of_packets;
+    ssize_t size = picoquic_varint_decode(bytes, bytes_max - bytes, &number_of_packets);
+    bytes += size;
+
+    first_recovered_packet = decode_u64(bytes);
+    bytes += sizeof(uint64_t);
+    uint8_t *size_and_packets = my_malloc(cnx, sizeof(uint64_t) + number_of_packets*(sizeof(uint64_t) + sizeof(window_source_symbol_id_t))); // sadly, we must place everything in one single malloc, because skip_frame will free our output
+    my_memset(size_and_packets, 0, sizeof(uint64_t) + number_of_packets*(sizeof(uint64_t) + sizeof(window_source_symbol_id_t)));
+    ((uint64_t *) size_and_packets)[0] = number_of_packets;
+    uint64_t *packets =&(((uint64_t *) size_and_packets)[1]);
+    packets[0] = first_recovered_packet;
+    int currently_parsed_recovered_packets = 1;
+    uint64_t last_recovered_packet = first_recovered_packet;
+    bool range_is_gap = false;
+    while(currently_parsed_recovered_packets < number_of_packets && bytes < bytes_max - 1) {  // - 1 because there is the number of sfpid afterwards
+        uint64_t range;
+        size = picoquic_varint_decode(bytes, bytes_max - bytes, &range);
+        bytes += size;
+        if (!range_is_gap) {
+            // this is a range of recovered packets
+            if (currently_parsed_recovered_packets + range > number_of_packets) {
+                // error
+                my_free(cnx, size_and_packets);
+                return NULL;
+            }
+            for (int j = 0 ; j < range ; j++) { // we add each packet of the range in the recovered packets
+                last_recovered_packet++;    // the last recovered packet is now this one
+                packets[currently_parsed_recovered_packets] = last_recovered_packet;
+                PROTOOP_PRINTF(cnx, "PACKET %lx HAS BEEN RECOVERED BY THE PEER\n", last_recovered_packet);
+                currently_parsed_recovered_packets++;
+            }
+            range_is_gap = true; // after a range of recovered packets, there must be a gap or nothing
+        } else {
+            // this range is a gap of recovered packets
+            // it implicitly announces the recovery of the packet just after this gap
+            last_recovered_packet += range + 1;
+            packets[currently_parsed_recovered_packets] = last_recovered_packet;
+            currently_parsed_recovered_packets++;
+            range_is_gap = false; // after a gap of recovered packets, there must be a range or nothing
+            PROTOOP_PRINTF(cnx, "PACKET %lx HAS BEEN RECOVERED BY THE PEER\n", last_recovered_packet);
+        }
+    }
+
+    if (currently_parsed_recovered_packets != number_of_packets || bytes >= bytes_max) {
+        // error
+        my_free(cnx, size_and_packets);
+        PROTOOP_PRINTF(cnx, "DID NOT PARSE THE CORRECT NUMBER OF RECOVERED PACKETS (%u < %u)\n", currently_parsed_recovered_packets, number_of_packets);
+        return NULL;
+    }
+
+    uint8_t currently_parsed_sfpids = 0;
+    window_source_symbol_id_t *idx = (window_source_symbol_id_t *) (packets + currently_parsed_recovered_packets);
+    while(currently_parsed_sfpids < number_of_packets && bytes < bytes_max) {
+        size_t cons = 0;
+        decode_window_source_symbol_id(bytes, bytes_max - bytes, &idx[currently_parsed_sfpids++], &cons);
+        bytes += cons;
+    }
+
+
+
+    if (currently_parsed_sfpids != number_of_packets || bytes >= bytes_max) {
+        // error
+        my_free(cnx, size_and_packets);
+        PROTOOP_PRINTF(cnx, "DID NOT PARSE THE CORRECT NUMBER OF RECOVERED SFPIDS (%u < %u)\n", currently_parsed_sfpids, number_of_packets);
+        return NULL;
+    }
+
+    return bytes;
 }
 
 #endif //PICOQUIC_TYPES_H
