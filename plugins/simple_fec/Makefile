@@ -1,4 +1,4 @@
-SRC=$(wildcard *protoops/*.c)
+SRC=$(shell find . -wholename "*protoops/*.c")
 OBJ=$(SRC:.c=.o)
 CFLAGS=-I../../picoquic #-DDISABLE_PROTOOP_PRINTF
 

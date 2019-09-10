@@ -4,6 +4,8 @@
 
 #include <stdint.h>
 #include <memcpy.h>
+#include "../helpers.h"
+#include "fec_constants.h"
 
 #define MIN(a, b) ((a < b) ? a : b)
 
@@ -55,7 +57,9 @@ static __attribute__((always_inline)) void encode_u64(uint64_t to_encode, uint8_
 }
 
 static __attribute__((always_inline)) int get_next_source_symbol_id(picoquic_cnx_t *cnx, framework_sender_t sender, source_symbol_id_t *ret) {
-    return (int) run_noparam(cnx, FEC_PROTOOP_GET_NEXT_SOURCE_SYMBOL_ID, 1, &sender, (protoop_arg_t *) &ret);
+    protoop_arg_t out = 0;
+    int err = (int) run_noparam(cnx, FEC_PROTOOP_GET_NEXT_SOURCE_SYMBOL_ID, 1, &sender, &out);
+    return err;
 }
 
 static __attribute__((always_inline)) int reserve_src_fpi_frame(picoquic_cnx_t *cnx, source_symbol_id_t id) {
@@ -194,6 +198,20 @@ static __attribute__((always_inline)) void enqueue_recovered_packets(recovered_p
         enqueue_recovered_packet_to_buffer(b, rp[i]);
     }
 }
+
+
+
+
+#define for_each_source_symbol(____sss, ____ss, ____nss) \
+    for (int ____i = 0, ____keep = 1, n = ____nsss; ____keep && ____i < n; ____i++, ____keep = 1-____keep ) \
+        for (____ss = ____sss[____i] ; ____keep ; ____keep = 1-____keep)
+
+#define for_each_repair_symbol(____rss, ____rs, ____nrs) \
+    for (int ____i = 0, ____keep = 1, n = ____nrs; ____keep && ____i < n; ____i++, ____keep = 1-____keep ) \
+        for (____rs = ____rss[____i] ; ____keep ; ____keep = 1-____keep)
+
+
+
 
 
 

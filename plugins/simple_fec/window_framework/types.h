@@ -82,6 +82,22 @@ static __attribute__((always_inline)) window_source_symbol_t *create_window_sour
     return ss;
 }
 
+static __attribute__((always_inline)) window_repair_symbol_t *create_window_repair_symbol(picoquic_cnx_t *cnx, uint16_t symbol_size) {
+    window_repair_symbol_t *rs = my_malloc(cnx, sizeof(window_source_symbol_t));
+    if (!rs)
+        return NULL;
+    my_memset(rs, 0, sizeof(window_repair_symbol_t));
+
+    rs->repair_symbol.repair_payload = my_malloc(cnx, symbol_size*sizeof(uint8_t));
+    if (!rs->repair_symbol.repair_payload) {
+        my_free(cnx, rs);
+        return NULL;
+    }
+    my_memset(rs->repair_symbol.repair_payload, 0, symbol_size*sizeof(uint8_t));
+    rs->repair_symbol.payload_length = symbol_size;
+    return rs;
+}
+
 typedef struct fec_src_fpi_frame {
     source_symbol_id_t  id;
 } _fec_src_fpi_frame_t;

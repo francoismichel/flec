@@ -132,6 +132,7 @@ static __attribute__((always_inline)) repair_symbol_t *dequeue_repair_symbol(pic
         }
         wff->repair_symbols_queue_length--;
     }
+    return ret;
 }
 
 // adds a repair symbol in the queue waiting for the symbol to be sent
@@ -399,7 +400,7 @@ static __attribute__((always_inline)) int generate_and_queue_repair_symbols(pico
 }
 
 
-static __attribute__((always_inline)) window_source_symbol_id_t get_source_id(window_fec_framework_t *wff){
+static __attribute__((always_inline)) window_source_symbol_id_t window_get_next_source_symbol_id(window_fec_framework_t *wff){
     return wff->max_id + 1;
 }
 
@@ -552,7 +553,7 @@ static __attribute__((always_inline)) void process_recovered_packets(picoquic_cn
 }
 
 
-static __attribute__((always_inline)) int window_detect_lost_protected_packets(picoquic_cnx_t *cnx, uint64_t current_time, picoquic_packet_context_enum pc) {
+static __attribute__((always_inline)) int window_detect_lost_protected_packets(picoquic_cnx_t *cnx, window_fec_framework_t *wff, uint64_t current_time, picoquic_packet_context_enum pc) {
 
     char *reason = NULL;
     int nb_paths = (int) get_cnx(cnx, AK_CNX_NB_PATHS, 0);
@@ -622,7 +623,7 @@ static __attribute__((always_inline)) int window_detect_lost_protected_packets(p
                                                                   !get_pkt(p, AK_PKT_IS_MTU_PROBE)));
 
                         state->current_packet_is_lost = false;
-                        window_slot_nacked(cnx, state->framework_sender, slot);
+                        window_slot_nacked(cnx, wff, slot);
                         helper_congestion_algorithm_notify(cnx, old_path,
                                                            (timer_based_retransmit == 0)
                                                            ? picoquic_congestion_notification_repeat
