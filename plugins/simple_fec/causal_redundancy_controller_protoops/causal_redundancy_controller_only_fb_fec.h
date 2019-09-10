@@ -2,7 +2,8 @@
 #define CAUSAL_REDUNDANCY_CONTROLLER_H
 #include "picoquic.h"
 #include "../fec.h"
-#include "../fec_protoops.h"
+#include "../window_framework/types.h"
+
 
 #define MAX_SLOTS 100
 
@@ -116,10 +117,8 @@ static __attribute__((always_inline)) bool is_buffer_empty(buffer_t *buffer) {
 
 
 
-
-
-static __attribute__((always_inline)) bool is_symbol_in_window(rlnc_window_t *window, source_fpid_t id) {
-    return window->start <= id.raw && id.raw < window->end;
+static __attribute__((always_inline)) bool is_symbol_in_window(rlnc_window_t *window, window_source_symbol_id_t id) {
+    return window->start <= id && id < window->end;
 }
 
 static __attribute__((always_inline)) bool is_window_empty(rlnc_window_t *window) {
@@ -142,8 +141,8 @@ static __attribute__((always_inline)) bool window_intersects(rlnc_window_t *wind
     return !is_window_empty(window1) && !is_window_empty(window2) && window1->end > window2->start;
 }
 
-static __attribute__((always_inline)) bool remove_symbol_from_window(rlnc_window_t *window, source_fpid_t id) {
-    if (!is_symbol_in_window(window, id) || is_window_empty(window) || window->start != id.raw) return false;
+static __attribute__((always_inline)) bool remove_symbol_from_window(rlnc_window_t *window, window_source_symbol_id_t id) {
+    if (!is_symbol_in_window(window, id) || is_window_empty(window) || window->start != id) return false;
     window->start++;
     return true;
 }
@@ -200,7 +199,7 @@ static __attribute__((always_inline)) rlnc_window_t *get_window_sent_at_slot(slo
     return &history->sent_windows[((uint64_t)slot) % ((uint64_t)history->max_size)].window;
 }
 
-static __attribute__((always_inline)) bool is_symbol_protected_in_history(slots_history_t *history, source_fpid_t id) {
+static __attribute__((always_inline)) bool is_symbol_protected_in_history(slots_history_t *history, window_source_symbol_id_t id) {
     // TODO: enhance performance
     for (int i = 0 ; i < history->max_size ; i++) {
         if (history->sent_windows[i].slot != -1 && is_symbol_in_window(&history->sent_windows[i].window, id))
@@ -208,8 +207,6 @@ static __attribute__((always_inline)) bool is_symbol_protected_in_history(slots_
     }
     return false;
 }
-
-
 
 
 
@@ -227,7 +224,7 @@ typedef struct {
     int64_t ad, md, n_lost_slots;
     int64_t threshold_times_granularity;
     int64_t d_times_granularity;
-    source_fpid_t latest_symbol_protected_by_fec;
+    window_source_symbol_id_t latest_symbol_protected_by_fec;
     uint32_t k, m;
     uint64_t n_received_feedbacks;
     bool flush_dof_mode;
@@ -307,7 +304,7 @@ static __attribute__((always_inline)) int64_t r_times_granularity(causal_redunda
 }
 
 static __attribute__((always_inline)) bool EW(causal_redundancy_controller_t *controller, rlnc_window_t *current_window) {
-    return !is_window_empty(current_window) && ((uint64_t)(current_window->end-1)) % ((uint64_t)controller->k) == 0 && ((int64_t) current_window->end - (int64_t) current_window->start >= controller->k) && (current_window->end-1) - controller->latest_symbol_protected_by_fec.raw >= controller->k;
+    return !is_window_empty(current_window) && ((uint64_t)(current_window->end-1)) % ((uint64_t)controller->k) == 0 && ((int64_t) current_window->end - (int64_t) current_window->start >= controller->k) && (current_window->end-1) - controller->latest_symbol_protected_by_fec >= controller->k;
 }
 
 static __attribute__((always_inline)) bool threshold_exceeded(causal_redundancy_controller_t *controller) {
@@ -361,22 +358,20 @@ static __attribute__((always_inline)) uint32_t compute_md(causal_redundancy_cont
 }
 
 static __attribute__((always_inline)) causal_packet_type_t what_to_send(picoquic_cnx_t *cnx, causal_redundancy_controller_t *controller) {
-    PROTOOP_PRINTF(cnx, "CALL TO WTS, BUF SIZE = %d\n", controller->what_to_send->current_size);
     if (is_buffer_empty(controller->what_to_send))
         return nothing;
     buffer_elem_t type;
     dequeue_elem_from_buffer(controller->what_to_send, &type);
-    PROTOOP_PRINTF(cnx, "DEQUEUED %d\n", type);
     return type;
 }
 
 // either acked or recovered
-static __attribute__((always_inline)) void symbol_received(picoquic_cnx_t *cnx, causal_redundancy_controller_t *controller, source_fpid_t symbol_id, uint64_t acked_slot, rlnc_window_t *current_window) {
+static __attribute__((always_inline)) void symbol_received(picoquic_cnx_t *cnx, causal_redundancy_controller_t *controller, window_source_symbol_id_t symbol_id, uint64_t acked_slot, rlnc_window_t *current_window) {
     // remove all the acked slots in the window
     add_elem_to_buffer(controller->acked_slots, acked_slot);
-    add_elem_to_buffer(controller->received_symbols, symbol_id.raw);
-    while(remove_symbol_from_window(current_window, symbol_id) && symbol_id.raw++, is_elem_in_buffer(controller->received_symbols,
-                                                                                               symbol_id.raw));
+    add_elem_to_buffer(controller->received_symbols, symbol_id);
+    while(remove_symbol_from_window(current_window, symbol_id) && symbol_id++, is_elem_in_buffer(controller->received_symbols,
+                                                                                               symbol_id));
     // TODO
 }
 
@@ -384,7 +379,7 @@ static __attribute__((always_inline)) void symbol_received(picoquic_cnx_t *cnx, 
 static __attribute__((always_inline)) void sent_packet(causal_redundancy_controller_t *controller, causal_packet_type_t type, uint64_t slot, rlnc_window_t *window) {
     add_elem_to_history(controller->slots_history, slot, *window);
     if (!EW(controller, window)) {
-        controller->latest_symbol_protected_by_fec.raw = (((uint64_t) (window->end-1))/((uint64_t)controller->k))*controller->k;
+        controller->latest_symbol_protected_by_fec = (((uint64_t) (window->end-1))/((uint64_t)controller->k))*controller->k;
     }
     switch(type) {
         case fec_packet:
@@ -404,26 +399,22 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, causal_
     if (feedback == nack_feedback)  {
         controller->n_lost_slots++;
     }
-    // FIXME: experimental: set k according to the cwin, but bound it to the buffer length: we cannot store more than RECEIVE_BUFFER_MAX_LENGTH, and sometimes the window length will be 2*k
-    controller->k = MIN(RECEIVE_BUFFER_MAX_LENGTH/2 - 1, 1 + (get_path((picoquic_path_t *) get_cnx(cnx, AK_CNX_PATH, 0), AK_PATH_CWIN, 0)/PICOQUIC_MAX_PACKET_SIZE));
-    PROTOOP_PRINTF(cnx, "SETTING K TO %u\n", controller->k);
+    // FIXME: experimental: set k according to the cwin, but bound it to the buffer length: we cannot store more than MAX_SENDING_WINDOW_SIZE, and sometimes the window length will be 2*k
+    controller->k = MIN(MAX_SENDING_WINDOW_SIZE/2 - 1, 1 + (get_path((picoquic_path_t *) get_cnx(cnx, AK_CNX_PATH, 0), AK_PATH_CWIN, 0)/PICOQUIC_MAX_PACKET_SIZE));
     controller->md = compute_md(controller, current_window);
     controller->ad = compute_ad(controller, current_window);
     controller->d_times_granularity = controller->ad != 0 ? (((uint64_t) controller->md*GRANULARITY))/((uint64_t) (controller->ad)) : 0;
     bool added_new_packet = false;
     int i;
-    PROTOOP_PRINTF(cnx, "RUN ALGO, FEEDBACK = %d, WINDOW = [%d,%d[\n", feedback, current_window->start, current_window->end);
     if (true || is_buffer_empty(controller->what_to_send)) {
 //        PROTOOP_PRINTF(cnx, "WHAT TO SEND SIZE = %d\n", controller->what_to_send->current_size);
         if (controller->flush_dof_mode) {
-            PROTOOP_PRINTF(cnx, "FLUSH DOF\n");
             add_elem_to_buffer(controller->what_to_send, fec_packet);
             controller->ad++;
         } else {
             // remove all the acked slots in the window
             switch (feedback) {
                 case no_feedback:
-                    PROTOOP_PRINTF(cnx, "NO FEEDBACK\n");
                     if (false && EW(controller, current_window)) {
                         PROTOOP_PRINTF(cnx, "EW, SEND FEC\n");
                         for (i = 0; i < controller->m; i++) {
@@ -432,13 +423,11 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, causal_
                         controller->ad += controller->m;
                     } else {
                         // TODO: first check if new data are available to send ?
-                        PROTOOP_PRINTF(cnx, "NEW RLNC\n");
                         added_new_packet = true;
                         add_elem_to_buffer(controller->what_to_send, new_rlnc_packet);
                     }
                     break;
                 case nack_feedback:
-                    PROTOOP_PRINTF(cnx, "FEEDBACK NACK\n");
                     if (false && (controller->d_times_granularity == -1 || threshold_exceeded(controller))) {
                         PROTOOP_PRINTF(cnx, "THRESHOLD EXCEEDED\n");
                         if (true || !EW(controller, current_window)) {
@@ -454,7 +443,6 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, causal_
                             controller->ad += controller->m;
                         }
                     } else {
-                        PROTOOP_PRINTF(cnx, "THRESHOLD NOT EXCEEDED, SEND FB FEC\n");
                         add_elem_to_buffer(controller->what_to_send, fb_fec_packet);
                         controller->ad++;
                         if (false && EW(controller, current_window)) {
@@ -466,7 +454,6 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, causal_
                     }
                     break;
                 case ack_feedback:
-                    PROTOOP_PRINTF(cnx, "FEEDBACK ACK\n");
                     if (false && EW(controller, current_window)) {
                         PROTOOP_PRINTF(cnx, "EW, SEND FEC\n");
                         for (i = 0; i < controller->m; i++) {
@@ -474,13 +461,10 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, causal_
                         }
                         controller->ad += controller->m;
                     } else {
-                        PROTOOP_PRINTF(cnx, "NOT EW\n");
                         if (threshold_strictly_greater(controller)) {
-                            PROTOOP_PRINTF(cnx, "THRESHOLD STRICTLY GREATER, FB-FEC\n");
                             add_elem_to_buffer(controller->what_to_send, fb_fec_packet);
                             controller->ad++;
                         } else {
-                            PROTOOP_PRINTF(cnx, "SEND NEW RLNC\n");
                             added_new_packet = true;
                             // TODO: first check if new data are available to send ?
                             add_elem_to_buffer(controller->what_to_send, new_rlnc_packet);
@@ -488,7 +472,6 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, causal_
                     }
                     break;
                 default:
-                    PROTOOP_PRINTF(cnx, "DEFAULT\n");
                     break;
             }
         }
@@ -499,11 +482,9 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, causal_
         PROTOOP_PRINTF(cnx, "BUFFER NOT EMPTY\n");
 
     }
-    PROTOOP_PRINTF(cnx, "END\n");
 }
 
 static __attribute__((always_inline)) void slot_acked(picoquic_cnx_t *cnx, causal_redundancy_controller_t *controller, uint64_t slot, rlnc_window_t *current_window) {
-    PROTOOP_PRINTF(cnx, "CAUSAL ACK\n");
     add_elem_to_buffer(controller->acked_slots, slot);
     run_algo(cnx, controller, ack_feedback, current_window);
 }
@@ -514,7 +495,6 @@ static __attribute__((always_inline)) void free_slot_without_feedback(picoquic_c
 
 static __attribute__((always_inline)) void slot_nacked(picoquic_cnx_t *cnx, causal_redundancy_controller_t *controller, uint64_t slot, rlnc_window_t *current_window) {
     // remove all the acked slots in the window
-    PROTOOP_PRINTF(cnx, "CAUSAL NACK\n");
     add_elem_to_buffer(controller->nacked_slots, slot);
     run_algo(cnx, controller, nack_feedback, current_window);
 }

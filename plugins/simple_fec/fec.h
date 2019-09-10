@@ -1,6 +1,6 @@
 
-//#ifndef PICOQUIC_FEC_H
-//#define PICOQUIC_FEC_H
+#ifndef PICOQUIC_FEC_H
+#define PICOQUIC_FEC_H
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -10,13 +10,6 @@
 #include "utils.h"
 
 #define SIMPLE_FEC_OPAQUE_ID 42
-
-typedef protoop_arg_t source_symbol_id_t;   // defined by the underlying framework
-typedef protoop_arg_t framework_sender_t;
-typedef protoop_arg_t framework_receiver_t;
-typedef protoop_arg_t fec_scheme_t;
-
-
 
 typedef struct {
     bool has_written_fpi_frame;
@@ -234,4 +227,5 @@ static __attribute__((always_inline)) source_symbol_t **packet_payload_to_source
     return retval;
 }
 
-//#endif //PICOQUIC_FEC_H
+
+#endif //PICOQUIC_FEC_H

@@ -26,6 +26,7 @@ protoop_arg_t incoming_encrypted(picoquic_cnx_t *cnx)
         args[0] = (protoop_arg_t) symbols;
         args[1] = (protoop_arg_t) n_symbols;
         err = (int) run_noparam(cnx, FEC_PROTOOP_RECEIVE_SOURCE_SYMBOLS, 2, args, NULL);
+        my_free(cnx, symbols);
     }
     return err;
 }

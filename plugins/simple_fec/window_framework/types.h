@@ -23,6 +23,7 @@
 #define FEC_PROTOOP_WINDOW_FEC_SCHEME_RECOVER "window_fecscheme_recover"
 #define WINDOW_INITIAL_SYMBOL_ID 1
 
+#define MAX_SENDING_WINDOW_SIZE 100
 
 
 #define for_each_window_source_symbol(____sss, ____ss, ____nss) \

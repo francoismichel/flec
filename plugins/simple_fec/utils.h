@@ -55,7 +55,7 @@ static __attribute__((always_inline)) void encode_u64(uint64_t to_encode, uint8_
 }
 
 static __attribute__((always_inline)) int get_next_source_symbol_id(picoquic_cnx_t *cnx, framework_sender_t sender, source_symbol_id_t *ret) {
-    return (int) run_noparam(cnx, FEC_PROTOOP_GET_NEXT_SOURCE_SYMBOL_ID, 1, &sender, &ret);
+    return (int) run_noparam(cnx, FEC_PROTOOP_GET_NEXT_SOURCE_SYMBOL_ID, 1, &sender, (protoop_arg_t *) &ret);
 }
 
 static __attribute__((always_inline)) int reserve_src_fpi_frame(picoquic_cnx_t *cnx, source_symbol_id_t id) {
@@ -69,8 +69,8 @@ static __attribute__((always_inline)) int reserve_src_fpi_frame(picoquic_cnx_t *
     slot->nb_bytes = 1 + MAX_SRC_FPI_SIZE;
     slot->is_congestion_controlled = false;
     slot->low_priority = true;
-    slot->frame_ctx = id;
-    if (reserve_frames(nx, 1, slot) != 1 + MAX_SRC_FPI_SIZE)
+    slot->frame_ctx = (void *) id;
+    if (reserve_frames(cnx, 1, slot) != 1 + MAX_SRC_FPI_SIZE)
         return PICOQUIC_ERROR_MEMORY;
     return 0;
 }
@@ -144,6 +144,55 @@ static __attribute__((always_inline)) int64_t get_first_lost_packet(picoquic_cnx
     if (!queue->head && !queue->tail)
         return -1;
     return queue->head->pn;
+}
+
+#define MAX_RECOVERED_PACKETS_IN_BUFFER 50
+typedef struct {
+    uint32_t start;
+    uint32_t size;
+    uint64_t packet_numbers[MAX_RECOVERED_PACKETS_IN_BUFFER];
+} recovered_packets_buffer_t;
+
+
+static __attribute__((always_inline)) recovered_packets_buffer_t *create_recovered_packets_buffer(picoquic_cnx_t *cnx) {
+    recovered_packets_buffer_t *rpb = my_malloc(cnx, sizeof(recovered_packets_buffer_t));
+    if (!rpb)
+        return NULL;
+    my_memset(rpb, 0, sizeof(recovered_packets_buffer_t));
+    return rpb;
+}
+
+static __attribute__((always_inline)) void delete_recovered_packets_buffer(picoquic_cnx_t *cnx, recovered_packets_buffer_t *rpb) {
+    my_free(cnx, rpb);
+}
+
+static __attribute__((always_inline)) void enqueue_recovered_packet_to_buffer(recovered_packets_buffer_t *b, uint64_t packet) {
+    b->packet_numbers[(b->start + b->size) % MAX_RECOVERED_PACKETS_IN_BUFFER] = packet;
+    if (b->size < MAX_RECOVERED_PACKETS_IN_BUFFER) b->size++;
+    else {
+        // we just removed the first enqueued packet, so shift the start
+        b->start = (b->start + 1) % MAX_RECOVERED_PACKETS_IN_BUFFER;
+    }
+}
+
+// pre: size > 0
+static __attribute__((always_inline)) uint64_t peek_first_recovered_packet_in_buffer(recovered_packets_buffer_t *b) {
+    return b->packet_numbers[b->start];
+}
+
+// pre: size > 0
+static __attribute__((always_inline)) uint64_t dequeue_recovered_packet_from_buffer(recovered_packets_buffer_t *b) {
+    if (b->size == 0) return -1;
+    uint64_t packet = peek_first_recovered_packet_in_buffer(b);
+    b->size--;
+    b->start = (b->start + 1) % MAX_RECOVERED_PACKETS_IN_BUFFER;
+    return packet;
+}
+
+static __attribute__((always_inline)) void enqueue_recovered_packets(recovered_packets_buffer_t *b, uint64_t *rp, uint64_t n_packets) {
+    for(int i = 0 ; i < n_packets ; i++) {
+        enqueue_recovered_packet_to_buffer(b, rp[i]);
+    }
 }
 
 

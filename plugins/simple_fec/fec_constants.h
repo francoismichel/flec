@@ -43,8 +43,10 @@ typedef enum what_to_send {
     what_to_send_repair_symbol
 } what_to_send_t;
 
-
-
+typedef protoop_arg_t source_symbol_id_t;   // defined by the underlying framework
+typedef protoop_arg_t framework_sender_t;
+typedef protoop_arg_t framework_receiver_t;
+typedef protoop_arg_t fec_scheme_t;
 
 
 

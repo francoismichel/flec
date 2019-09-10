@@ -3,6 +3,7 @@
 #include "../../helpers.h"
 #include "../fec_constants.h"
 #include "../utils.h"
+#include "../fec.h"
 
 // we here assume a single-path context
 

@@ -41,7 +41,7 @@ protoop_arg_t schedule_frames_on_path(picoquic_cnx_t *cnx)
         args[2] = length - header_length;
         args[3] = get_pkt(packet, AK_PKT_SEQUENCE_NUMBER);
         uint16_t n_symbols = 0;
-        source_symbol_t *symbols = packet_payload_to_source_symbols(cnx, payload_with_pn, length - header_length, SYMBOL_SIZE, get_pkt(packet, AK_PKT_SEQUENCE_NUMBER), &n_symbols);
+        source_symbol_t **symbols = packet_payload_to_source_symbols(cnx, payload_with_pn, length - header_length, SYMBOL_SIZE, get_pkt(packet, AK_PKT_SEQUENCE_NUMBER), &n_symbols);
         if (!symbols)
             return PICOQUIC_ERROR_MEMORY;
 //        uint32_t symbol_length = (uint32_t) run_noparam_with_pid(cnx, "packet_payload_to_source_symbol", 4, args, NULL, &state->packet_to_source_symbol_id);
@@ -56,7 +56,7 @@ protoop_arg_t schedule_frames_on_path(picoquic_cnx_t *cnx)
             args[0] = (protoop_arg_t) symbols;
             args[1] = (protoop_arg_t) n_symbols;
             int err = (int) run_noparam(cnx, FEC_PROTOOP_PROTECT_SOURCE_SYMBOLS, 2, args, NULL);
-
+            my_free(cnx, symbols);
 //            int err = protect_packet(cnx, &state->current_sfpid_frame->source_fpid, payload_with_pn, symbol_length);
             if (err){
                 PROTOOP_PRINTF(cnx, "ERROR WHILE PROTECTING\n");

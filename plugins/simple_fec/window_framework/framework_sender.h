@@ -8,7 +8,6 @@
 #include "../causal_redundancy_controller_protoops/causal_redundancy_controller_only_fb_fec.h"
 
 #define INITIAL_SYMBOL_ID 1
-#define MAX_WINDOW_SIZE 100
 #define MAX_QUEUED_REPAIR_SYMBOLS 6
 #define MAX_SLOT_VALUE 0x7FFFFF
 
@@ -32,7 +31,7 @@ typedef struct window_slot {
 
 typedef struct {
     fec_scheme_t fec_scheme;
-    window_slot_t fec_window[MAX_WINDOW_SIZE];
+    window_slot_t fec_window[MAX_SENDING_WINDOW_SIZE];
     queue_item repair_symbols_queue[MAX_QUEUED_REPAIR_SYMBOLS];
     window_redundancy_controller_t controller;
     window_source_symbol_id_t max_id;
@@ -40,6 +39,7 @@ typedef struct {
     window_source_symbol_id_t highest_sent_id;
     window_source_symbol_id_t smallest_in_transit;
     window_source_symbol_id_t highest_in_transit;
+    recovered_packets_buffer_t *rps;
     int window_length;
     uint32_t repair_symbols_queue_head;
     int repair_symbols_queue_length;
@@ -60,6 +60,11 @@ static __attribute__((always_inline)) window_fec_framework_t *create_framework_s
     wff->smallest_in_transit = INITIAL_SYMBOL_ID-1;
     wff->controller = controller;
     wff->fec_scheme = fs;
+    wff->rps = create_recovered_packets_buffer(cnx);
+    if (!wff->rps) {
+        my_free(cnx, wff);
+        return NULL;
+    }
     return wff;
 }
 
@@ -238,7 +243,7 @@ static __attribute__((always_inline)) int reserve_repair_frames(picoquic_cnx_t *
 
 static __attribute__((always_inline)) bool _remove_source_symbol_from_window(picoquic_cnx_t *cnx, window_fec_framework_t *wff, source_symbol_t *ss, window_source_symbol_id_t id){
 
-    int idx = (int) (id % MAX_WINDOW_SIZE);
+    int idx = (int) (id % MAX_SENDING_WINDOW_SIZE);
     // wrong symbol ?
     if (!wff->fec_window[idx].symbol || wff->fec_window[idx].id != id)
         return false;
@@ -262,9 +267,9 @@ static __attribute__((always_inline)) bool remove_source_symbol_from_window(pico
             return false;
         wff->smallest_in_transit++;
 
-        while(!is_fec_window_empty(wff) && wff->fec_window[wff->smallest_in_transit % MAX_WINDOW_SIZE].received) {
+        while(!is_fec_window_empty(wff) && wff->fec_window[wff->smallest_in_transit % MAX_SENDING_WINDOW_SIZE].received) {
 
-            if (!_remove_source_symbol_from_window(cnx, wff, wff->fec_window[wff->smallest_in_transit % MAX_WINDOW_SIZE].symbol, id))
+            if (!_remove_source_symbol_from_window(cnx, wff, wff->fec_window[wff->smallest_in_transit % MAX_SENDING_WINDOW_SIZE].symbol, id))
                 return false;
             wff->smallest_in_transit++;
         }
@@ -279,7 +284,7 @@ static __attribute__((always_inline)) bool remove_source_symbol_from_window(pico
 
 static __attribute__((always_inline)) bool add_source_symbol_to_window(picoquic_cnx_t *cnx, window_fec_framework_t *wff, source_symbol_t *ss, window_source_symbol_id_t id) {
     if (ss) {
-        int idx = (int) (id % MAX_WINDOW_SIZE);
+        int idx = (int) (id % MAX_SENDING_WINDOW_SIZE);
         if (wff->fec_window[idx].symbol || id <= wff->highest_in_transit) {
             // we cannot add a symbol if another one is already there
             return false;
@@ -304,7 +309,7 @@ static __attribute__((always_inline)) bool add_source_symbol_to_window(picoquic_
 static __attribute__((always_inline)) int sfpid_has_landed(picoquic_cnx_t *cnx, window_fec_framework_t *wff, window_source_symbol_id_t id, bool received) {
     PROTOOP_PRINTF(cnx, "SYMBOL %d LANDED, RECEIVED = %d\n", id, received);
     // remove all the needed symbols from the window
-    uint32_t idx = id % MAX_WINDOW_SIZE;
+    uint32_t idx = id % MAX_SENDING_WINDOW_SIZE;
     if (received && wff->fec_window[idx].symbol) {
         if (wff->fec_window[idx].id == id) {
             wff->fec_window[idx].received = true;
@@ -402,8 +407,8 @@ static __attribute__((always_inline)) int select_all_inflight_source_symbols(pic
                                                 source_symbol_t **symbols, uint16_t *n_symbols, window_source_symbol_id_t *first_protected_id)
 {
     uint16_t n = 0;
-    for (int i = MAX(wff->smallest_in_transit, wff->highest_in_transit - MIN(MAX_WINDOW_SIZE, wff->highest_in_transit)) ; i <= wff->highest_in_transit ; i++) {
-        uint32_t idx = ((uint32_t) i) % MAX_WINDOW_SIZE;
+    for (int i = MAX(wff->smallest_in_transit, wff->highest_in_transit - MIN(MAX_SENDING_WINDOW_SIZE, wff->highest_in_transit)) ; i <= wff->highest_in_transit ; i++) {
+        uint32_t idx = ((uint32_t) i) % MAX_SENDING_WINDOW_SIZE;
         source_symbol_t *ss = wff->fec_window[idx].symbol;
         if (!ss || wff->fec_window[idx].id != i)
             return -1;
@@ -533,6 +538,20 @@ static __attribute__((always_inline)) causal_packet_type_t window_what_to_send(p
     return is_fec_window_empty(wff) ? new_rlnc_packet : what;
 }
 
+static __attribute__((always_inline)) void window_packet_has_been_recovered(picoquic_cnx_t *cnx, window_fec_framework_t *wff, uint64_t pn, window_source_symbol_id_t first_id) {
+    enqueue_recovered_packet_to_buffer(wff->rps, pn);
+}
+
+static __attribute__((always_inline)) void process_recovered_packets(picoquic_cnx_t *cnx, window_fec_framework_t *wff, const uint8_t *size_and_packets) {
+    uint64_t n_packets = *((uint64_t *) size_and_packets);
+    uint64_t *packet_numbers = (uint64_t *) (size_and_packets + sizeof(uint64_t));
+    window_source_symbol_id_t *ids = (window_source_symbol_id_t  *) (packet_numbers + n_packets);
+    for (int i = 0 ; i < n_packets ; i++) {
+        window_packet_has_been_recovered(cnx, wff, packet_numbers[i], ids[i]);
+    }
+}
+
+
 static __attribute__((always_inline)) int window_detect_lost_protected_packets(picoquic_cnx_t *cnx, uint64_t current_time, picoquic_packet_context_enum pc) {
 
     char *reason = NULL;
@@ -627,6 +646,46 @@ static __attribute__((always_inline)) int window_detect_lost_protected_packets(p
     }
     return 0;
 }
+
+
+
+static __attribute__((always_inline)) void window_maybe_notify_recovered_packets_to_cc(picoquic_cnx_t *cnx, recovered_packets_buffer_t *b, uint64_t current_time) {
+    // TODO: handle multipath, currently only single-path
+    picoquic_path_t *path = (picoquic_path_t *) get_cnx(cnx, AK_CNX_PATH, 0);
+    picoquic_packet_context_t *pkt_ctx = (picoquic_packet_context_t *) get_path(path, AK_PATH_PKT_CTX, picoquic_packet_context_application);
+    picoquic_packet_t *current_packet = (picoquic_packet_t *) get_pkt_ctx(pkt_ctx, AK_PKTCTX_RETRANSMIT_OLDEST);
+    while(b->size > 0 && current_packet) {
+        picoquic_packet_t *pnext = (picoquic_packet_t *) get_pkt(current_packet, AK_PKT_NEXT_PACKET);
+        uint64_t current_pn64 = get_pkt(current_packet, AK_PKT_SEQUENCE_NUMBER);
+        if (current_pn64 == peek_first_recovered_packet_in_buffer(b)) {
+            int timer_based = 0;
+            if (!helper_retransmit_needed_by_packet(cnx, current_packet, current_time, &timer_based, NULL)) {
+                // we don't need to notify it now: the packet is not considered as lost
+                // don't try any subsequenc packets as they have been sent later
+                break;
+            }
+            //we need to remove this packet from the retransmit queue
+            uint64_t retrans_cc_notification_timer = get_pkt_ctx(pkt_ctx, AK_PKTCTX_LATEST_RETRANSMIT_CC_NOTIFICATION_TIME) + get_path(path, AK_PATH_SMOOTHED_RTT, 0);
+            bool packet_is_pure_ack = get_pkt(current_packet, AK_PKT_IS_PURE_ACK);
+            // notify everybody that this packet is lost
+            helper_packet_was_lost(cnx, current_packet, path);
+            helper_dequeue_retransmit_packet(cnx, current_packet, 1);
+            if (current_time >= retrans_cc_notification_timer && !packet_is_pure_ack) {    // do as in core: if is pure_ack or recently notified, do not notify cc
+                set_pkt_ctx(pkt_ctx, AK_PKTCTX_LATEST_RETRANSMIT_CC_NOTIFICATION_TIME, current_time);
+                helper_congestion_algorithm_notify(cnx, path, picoquic_congestion_notification_repeat, 0, 0,
+                                                   current_pn64, current_time);
+            }
+            PROTOOP_PRINTF(cnx, "[[PACKET RECOVERED]] %lu,%lu\n", current_pn64, current_time - get_pkt(current_packet, AK_PKT_SEND_TIME));
+            dequeue_recovered_packet_from_buffer(b);
+        } else if (current_pn64 > peek_first_recovered_packet_in_buffer(b)) {
+            // the packet to remove is already gone from the retransmit queue
+            dequeue_recovered_packet_from_buffer(b);
+        } // else, do nothing, try the next packet
+        current_packet = pnext;
+    }
+}
+
+
 
 
 //#endif //PICOQUIC_FEC_WINDOW_FRAMEWORK_SENDER_H
