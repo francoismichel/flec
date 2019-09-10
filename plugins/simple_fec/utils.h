@@ -62,6 +62,39 @@ static __attribute__((always_inline)) int get_next_source_symbol_id(picoquic_cnx
     return err;
 }
 
+
+static __attribute__((always_inline)) int receive_packet_payload(picoquic_cnx_t *cnx, const uint8_t *payload, size_t payload_length,
+        uint64_t packet_number, source_symbol_id_t first_symbol_id) {
+    protoop_arg_t args[4];
+
+    args[0] = (protoop_arg_t) payload;
+    args[1] = (protoop_arg_t) payload_length;
+    args[2] = (protoop_arg_t) packet_number;
+    args[3] = (protoop_arg_t) first_symbol_id;
+
+
+    int err = (int) run_noparam(cnx, FEC_RECEIVE_PACKET_PAYLOAD, 4, args, NULL);
+    return err;
+}
+
+
+static __attribute__((always_inline)) int protect_packet_payload(picoquic_cnx_t *cnx, const uint8_t *payload, size_t payload_length,
+        uint64_t packet_number, source_symbol_id_t *first_symbol_id, uint16_t *n_symbols) {
+    protoop_arg_t args[3];
+
+    args[0] = (protoop_arg_t) payload;
+    args[1] = (protoop_arg_t) payload_length;
+    args[2] = (protoop_arg_t) packet_number;
+
+    protoop_arg_t out[2];
+
+    int err = (int) run_noparam(cnx, FEC_PROTECT_PACKET_PAYLOAD, 3, args, out);
+
+    *first_symbol_id = out[0];
+    *n_symbols = out[1];
+    return err;
+}
+
 static __attribute__((always_inline)) int reserve_src_fpi_frame(picoquic_cnx_t *cnx, source_symbol_id_t id) {
     reserve_frame_slot_t *slot = (reserve_frame_slot_t *) my_malloc(cnx, sizeof(reserve_frame_slot_t));
     if (!slot)

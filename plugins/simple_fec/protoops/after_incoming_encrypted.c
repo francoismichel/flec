@@ -18,15 +18,8 @@ protoop_arg_t incoming_encrypted(picoquic_cnx_t *cnx)
         return PICOQUIC_ERROR_MEMORY;
     int err = 0;
     if (state->is_incoming_packet_fec_protected) {
-        uint16_t n_symbols = 0;
-        source_symbol_t **symbols = packet_payload_to_source_symbols(cnx, state->current_packet, state->current_packet_length, SYMBOL_SIZE, state->current_packet_number, &n_symbols);
-        if (!symbols || n_symbols == 0)
-            return 0;
-        protoop_arg_t args[2];
-        args[0] = (protoop_arg_t) symbols;
-        args[1] = (protoop_arg_t) n_symbols;
-        err = (int) run_noparam(cnx, FEC_PROTOOP_RECEIVE_SOURCE_SYMBOLS, 2, args, NULL);
-        my_free(cnx, symbols);
+        err = receive_packet_payload(cnx, state->current_packet, state->current_packet_length,
+                                         state->current_packet_number, state->current_packet_first_id);
     }
     return err;
 }

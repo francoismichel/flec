@@ -20,11 +20,14 @@ typedef struct {
     uint64_t last_protected_slot;
     uint64_t last_fec_slot;
     uint8_t *current_packet;
+    source_symbol_id_t current_packet_first_id;
     uint16_t current_packet_length;
     uint64_t current_packet_number;
     framework_sender_t framework_sender;
     framework_receiver_t framework_receiver;
     lost_packet_queue_t lost_packets;
+
+    uint16_t symbol_size;
 } plugin_state_t;
 
 static __attribute__((always_inline)) plugin_state_t *initialize_plugin_state(picoquic_cnx_t *cnx)
@@ -53,6 +56,8 @@ static __attribute__((always_inline)) plugin_state_t *initialize_plugin_state(pi
     }
     state->framework_receiver = (framework_receiver_t) frameworks[0];
     state->framework_sender = (framework_sender_t) frameworks[1];
+
+    state->symbol_size = SYMBOL_SIZE;
     return state;
 }
 
@@ -109,11 +114,14 @@ static __attribute__((always_inline)) bool get_ss_metadata_E(source_symbol_t *ss
     return ss->_whole_data[0] & 0b001U;
 }
 
-static __attribute__((always_inline)) source_symbol_t *create_source_symbol(picoquic_cnx_t *cnx, uint16_t chunk_size) {
-    source_symbol_t *ret = my_malloc(cnx, sizeof(source_symbol_t));
+// creates a source symbol with a larger memory size for the structure to allow source symbols composition
+static __attribute__((always_inline)) source_symbol_t *create_larger_source_symbol(picoquic_cnx_t *cnx, uint16_t chunk_size, size_t mem_size) {
+    if (mem_size < sizeof(source_symbol_t))
+        return NULL;
+    source_symbol_t *ret = my_malloc(cnx, mem_size);
     if (!ret)
         return NULL;
-    my_memset(ret, 0, sizeof(source_symbol_t));
+    my_memset(ret, 0, mem_size);
     ret->_whole_data = my_malloc(cnx, chunk_size + 1);
     if (!ret->_whole_data){
         my_free(cnx, ret);
@@ -122,6 +130,10 @@ static __attribute__((always_inline)) source_symbol_t *create_source_symbol(pico
     ret->chunk_data = ret->_whole_data + 1;
     my_memset(ret->_whole_data, 0, chunk_size + 1);
     return ret;
+}
+
+static __attribute__((always_inline)) source_symbol_t *create_source_symbol(picoquic_cnx_t *cnx, uint16_t chunk_size) {
+    return create_larger_source_symbol(cnx, chunk_size, sizeof(source_symbol_t));
 }
 
 static __attribute__((always_inline)) void delete_source_symbol(picoquic_cnx_t *cnx, source_symbol_t *ss) {
@@ -177,14 +189,16 @@ static __attribute__((always_inline)) int preprocess_packet_payload(picoquic_cnx
 }
 
 
-static __attribute__((always_inline)) source_symbol_t **packet_payload_to_source_symbols(picoquic_cnx_t *cnx, uint8_t *payload, uint16_t payload_length, uint16_t symbol_size, uint64_t packet_number, uint16_t *n_chunks) {
+// TODO: maybe move this in utils.h
+static __attribute__((always_inline)) source_symbol_t **packet_payload_to_source_symbols(picoquic_cnx_t *cnx, uint8_t *payload,
+        uint16_t payload_length, uint16_t symbol_size, uint64_t packet_number, uint16_t *n_chunks, size_t source_symbol_memory_size) {
     if (payload_length == 0)
         return NULL;
     uint8_t *processed_payload = my_malloc(cnx, payload_length + sizeof(uint64_t));
     if (!processed_payload) {
         return NULL;
     }
-    int chunk_size = symbol_size - 1;
+    uint16_t chunk_size = symbol_size - 1;
     // add the packet number at the beginning of the payload we do it anyway, even if the design allows us to not encode it
     encode_u64(packet_number, processed_payload);
     size_t processed_length = sizeof(packet_number);
@@ -197,13 +211,15 @@ static __attribute__((always_inline)) source_symbol_t **packet_payload_to_source
     uint16_t padded_length = (processed_length % chunk_size == 0) ? processed_length : (chunk_size * (processed_length/chunk_size + 1));
     uint16_t padding_length = padded_length - processed_length;
     *n_chunks = padded_length / chunk_size;
-    source_symbol_t **retval = (source_symbol_t **) my_malloc(cnx, *n_chunks);
+    source_symbol_t **retval = (source_symbol_t **) my_malloc(cnx, MAX(*n_chunks, 1)*sizeof(source_symbol_t *));
     if (!retval)
         return NULL;
-    my_memset(retval, 0, *n_chunks);
+    my_memset(retval, 0, MAX(*n_chunks, 1)*sizeof(source_symbol_t *));
+    if (*n_chunks == 0)
+        return retval;
     size_t offset_in_payload = 0;
     for (int current_symbol = 0 ; current_symbol < *n_chunks ; current_symbol++) {
-        source_symbol_t *symbol = create_source_symbol(cnx, chunk_size);    // chunk size == symbol size - 1
+        source_symbol_t *symbol = create_larger_source_symbol(cnx, chunk_size, source_symbol_memory_size);    // chunk size == symbol size - 1
         if (!symbol)
             return NULL;
         switch (current_symbol) {

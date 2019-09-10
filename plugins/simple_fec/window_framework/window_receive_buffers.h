@@ -1,4 +1,4 @@
-#ifndef PICOQUIC_WINDOW_RECEIVE_BUFFERS_OLD_H
+#ifndef PICOQUIC_WINDOW_RECEIVE_BUFFERS_H
 #define PICOQUIC_WINDOW_RECEIVE_BUFFERS_H
 
 #include "../fec.h"
@@ -27,14 +27,8 @@ static __attribute__((always_inline)) void release_source_symbols_buffer(picoqui
     my_free(cnx, buffer);
 }
 
-static __attribute__((always_inline)) bool buffer_contains_source_symbol(cnx, wff->received_source_symbols, wff->highest_contiguous_received + 1) {
-    // FIXME: inefficient
-    for (int i = 1 ; i < )
-}
-
 // returns the symbol that has been removed if the buffer was full
-static __attribute__((always_inline)) window_source_symbol_t *add_source_symbol(picoquic_cnx_t *cnx, received_source_symbols_buffer_t *buffer, window_source_symbol_t *ss,
-        window_source_symbol_id_t id) {
+static __attribute__((always_inline)) window_source_symbol_t *add_source_symbol(picoquic_cnx_t *cnx, received_source_symbols_buffer_t *buffer, window_source_symbol_t *ss) {
     return pq_insert_and_pop_min_if_full(buffer->pq, ss->id, ss);
 }
 
@@ -92,7 +86,7 @@ static __attribute__((always_inline)) void remove_and_free_unused_repair_symbols
         window_repair_symbol_t *current = pq_get_min(buffer->pq);
         if (current->metadata.first_id + current->metadata.n_protected_symbols - 1 < remove_under) {
             pq_pop_min(buffer->pq);
-            delete_repair_symbol(cnx, current);
+            delete_window_repair_symbol(cnx, current);
         } else {
             break;
         }
@@ -120,4 +114,4 @@ static __attribute__((always_inline)) int get_repair_symbols(picoquic_cnx_t *cnx
     return added;
 }
 
-#endif //PICOQUIC_WINDOW_RECEIVE_BUFFERS_OLD_H
+#endif //PICOQUIC_WINDOW_RECEIVE_BUFFERS_H

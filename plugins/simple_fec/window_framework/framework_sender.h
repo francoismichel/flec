@@ -493,6 +493,30 @@ static __attribute__((always_inline)) int protect_source_symbol(picoquic_cnx_t *
 }
 
 
+static __attribute__((always_inline)) int window_protect_packet_payload(picoquic_cnx_t *cnx, window_fec_framework_t *wff,
+                                                                        uint8_t *payload, size_t payload_length, uint64_t packet_number,
+                                                                        source_symbol_id_t *first_symbol_id, uint16_t *n_chunks, size_t symbol_size) {
+    *n_chunks = 0;
+    source_symbol_t **sss = packet_payload_to_source_symbols(cnx, payload, payload_length, symbol_size, packet_number, n_chunks, sizeof(window_source_symbol_t));
+    if (!sss)
+        return PICOQUIC_ERROR_MEMORY;
+    for (int i = 0 ; i < *n_chunks ; i++) {
+        window_source_symbol_id_t id = 0;
+        int err = protect_source_symbol(cnx, wff, sss[i], &id);
+        if (err) {
+           my_free(cnx, sss);
+           return err;
+        }
+        if (i == 0)
+            *first_symbol_id = id;
+    }
+    my_free(cnx, sss);
+    return 0;
+}
+
+
+
+
 static __attribute__((always_inline)) uint64_t window_sent_symbol(picoquic_cnx_t *cnx, window_fec_framework_t *wff, causal_packet_type_t type, rlnc_window_t *window) {
     sent_packet(wff->controller, type, wff->current_slot, window);
     return wff->current_slot++;
@@ -604,9 +628,9 @@ static __attribute__((always_inline)) int window_detect_lost_protected_packets(p
                     // if the pc is the application, we want to free the packet: indeed, we disable the retransmissions
 
                     uint64_t slot = get_pkt_metadata(cnx, p, FEC_PKT_METADATA_SENT_SLOT);
-                    bool fec_protected = get_pkt_metadata(cnx, p, FEC_PKT_METADATA_IS_FEC_PROTECTED);
-                    bool fec_related = fec_protected || get_pkt_metadata(cnx, p, FEC_PKT_METADATA_CONTAINS_FEC_PACKET);
-                    uint32_t sfpid = get_pkt_metadata(cnx, p, FEC_PKT_METADATA_SFPID);
+                    bool fec_protected = FEC_PKT_IS_FEC_PROTECTED(get_pkt_metadata(cnx, p, FEC_PKT_METADATA_FLAGS));
+                    bool fec_related = fec_protected || FEC_PKT_CONTAINS_REPAIR_FRAME(get_pkt_metadata(cnx, p, FEC_PKT_METADATA_FLAGS));
+                    uint32_t sfpid = get_pkt_metadata(cnx, p, FEC_PKT_METADATA_FIRST_SOURCE_SYMBOL_ID);
                     plugin_state_t *state = NULL;
                     if (fec_related) {
                         state = get_plugin_state(cnx);

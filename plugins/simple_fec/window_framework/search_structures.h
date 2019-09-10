@@ -10,7 +10,6 @@
 #include "../../helpers.h"
 #include "types.h"
 
-#define MAX(a, b) ((a > b) ? a : b)
 #define ROOT 1
 
 typedef struct {
@@ -418,6 +417,7 @@ static __attribute__((always_inline)) int remove_node(picoquic_cnx_t *cnx, recei
         t->first_interval = current->next;
     }
     my_free(cnx, current);
+    return 0;
 }
 
 
@@ -516,6 +516,7 @@ static __attribute__((always_inline)) int tracker_receive_source_symbol(picoquic
             return PICOQUIC_ERROR_MEMORY;
         previous->next = new_node;
     }
+    return 0;
 }
 
 static __attribute__((always_inline)) int get_highest_contiguous_received_source_symbol(received_symbols_tracker_t t) {

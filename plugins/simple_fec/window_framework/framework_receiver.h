@@ -133,12 +133,12 @@ static __attribute__((always_inline)) int recover_lost_symbols(picoquic_cnx_t *c
 
 // returns true if the symbol has been successfully processed
 // returns false otherwise: the symbol can be destroyed
-static __attribute__((always_inline)) int window_receive_source_symbol(picoquic_cnx_t *cnx, window_fec_framework_receiver_t *wff, window_source_symbol_t *ss, window_source_symbol_id_t id){
+static __attribute__((always_inline)) int window_receive_source_symbol(picoquic_cnx_t *cnx, window_fec_framework_receiver_t *wff, window_source_symbol_t *ss){
     window_source_symbol_id_t removed_id = 0;
-    window_source_symbol_t *removed = add_source_symbol(cnx, wff->received_source_symbols, ss, id);
+    window_source_symbol_t *removed = add_source_symbol(cnx, wff->received_source_symbols, ss);
     if (removed) {
         wff->highest_removed = MAX(removed_id, wff->highest_removed);
-        delete_source_symbol(cnx, removed);
+        delete_window_source_symbol(cnx, removed);
     }
     uint32_t highest_contiguous_received = get_highest_contiguous_received_source_symbol(wff->symbols_tracker);
     int err = tracker_receive_source_symbol(cnx, wff->symbols_tracker, ss->id);
@@ -152,6 +152,28 @@ static __attribute__((always_inline)) int window_receive_source_symbol(picoquic_
     }
     return 0;
 }
+
+
+static __attribute__((always_inline)) int window_receive_packet_payload(picoquic_cnx_t *cnx, window_fec_framework_receiver_t *wff,
+        uint8_t *payload, size_t payload_length, uint64_t packet_number, window_source_symbol_id_t first_symbol_id, size_t symbol_size) {
+    uint16_t n_chunks = 0;
+    source_symbol_t **sss = packet_payload_to_source_symbols(cnx, payload, payload_length, symbol_size, packet_number, &n_chunks, sizeof(window_source_symbol_t));
+    if (!sss)
+        return PICOQUIC_ERROR_MEMORY;
+
+    for (int i = 0 ; i < n_chunks ; i++) {
+        window_source_symbol_t *ss = (window_source_symbol_t *) sss[i];
+        ss->id = first_symbol_id + i;
+        int err = window_receive_source_symbol(cnx, wff, ss);
+        if (err) {
+            my_free(cnx, sss);
+            return err;
+        }
+    }
+    my_free(cnx, sss);
+    return 0;
+}
+
 
 // returns true if the symbol has been successfully processed
 // returns false otherwise: the symbol can be destroyed
@@ -179,9 +201,9 @@ static __attribute__((always_inline)) bool reassemble_packet_from_recovered_symb
             // the packet cannot be complete, so we failed reassembling it
             return false;
         }
-        if (get_ss_metadata_S(source_symbols[current_index])) {
+        if (get_ss_metadata_S(&source_symbols[current_index]->source_symbol)) {
             start_index = current_index;
-            if (get_ss_metadata_N(source_symbols[current_index])) {
+            if (get_ss_metadata_N(&source_symbols[current_index]->source_symbol)) {
                 // let's get the packet number
                 *packet_number = decode_u64(source_symbols[current_index]->source_symbol.chunk_data);
             }
@@ -197,7 +219,7 @@ static __attribute__((always_inline)) bool reassemble_packet_from_recovered_symb
             // the packet cannot be complete, so we failed reassembling it
             return false;
         }
-        if (get_ss_metadata_E(source_symbols[current_index])) {
+        if (get_ss_metadata_E(&source_symbols[current_index]->source_symbol)) {
             end_index = current_index;
             break;
         }
@@ -212,7 +234,7 @@ static __attribute__((always_inline)) bool reassemble_packet_from_recovered_symb
             // packet too big, should never happen
             return false;
         // we skip the packet number if it is present in the symbol
-        uint8_t data_offset = get_ss_metadata_N(source_symbols[i]) ? sizeof(uint64_t) : 0;
+        uint8_t data_offset = get_ss_metadata_N(&source_symbols[i]->source_symbol) ? sizeof(uint64_t) : 0;
         // copy the chunk into the packet
         my_memcpy(&buffer[*payload_size], source_symbols[i]->source_symbol.chunk_data + data_offset, source_symbols[i]->source_symbol.chunk_size - data_offset);
         *payload_size += source_symbols[i]->source_symbol.chunk_size - data_offset;
@@ -250,7 +272,8 @@ static __attribute__((always_inline)) int try_to_recover(picoquic_cnx_t *cnx, wi
     for (int i = 0 ; i < missing_source_symbols ; i++) {
         window_source_symbol_t *ss = wff->ss_recovery_buffer[wff->missing_symbols_buffer[i] - first_selected_id];
         if (ss) {
-            window_receive_source_symbol(cnx, wff, ss, wff->missing_symbols_buffer[i]);
+            ss->id = wff->missing_symbols_buffer[i];
+            window_receive_source_symbol(cnx, wff, ss);
             size_t packet_size = 0;
             uint64_t packet_number = 0;
             window_source_symbol_id_t first_id_in_packet = 0;

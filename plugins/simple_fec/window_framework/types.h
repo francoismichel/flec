@@ -82,6 +82,10 @@ static __attribute__((always_inline)) window_source_symbol_t *create_window_sour
     return ss;
 }
 
+static __attribute__((always_inline)) void delete_window_source_symbol(picoquic_cnx_t *cnx, window_source_symbol_t *ss) {
+    delete_source_symbol(cnx, (source_symbol_t *) ss);
+}
+
 static __attribute__((always_inline)) window_repair_symbol_t *create_window_repair_symbol(picoquic_cnx_t *cnx, uint16_t symbol_size) {
     window_repair_symbol_t *rs = my_malloc(cnx, sizeof(window_source_symbol_t));
     if (!rs)
@@ -98,6 +102,10 @@ static __attribute__((always_inline)) window_repair_symbol_t *create_window_repa
     return rs;
 }
 
+static __attribute__((always_inline)) void delete_window_repair_symbol(picoquic_cnx_t *cnx, window_repair_symbol_t *rs) {
+    delete_repair_symbol(cnx, (repair_symbol_t *) rs);
+}
+
 typedef struct fec_src_fpi_frame {
     source_symbol_id_t  id;
 } _fec_src_fpi_frame_t;
@@ -105,10 +113,6 @@ typedef struct fec_src_fpi_frame {
 typedef struct fec_repair_frame {
     repair_symbol_t symbol;
 } _fec_repair_frame_t;
-
-typedef _fec_src_fpi_frame_t * fec_src_fpi_frame_t;
-typedef _fec_repair_frame_t * fec_repair_frame_t;
-
 
 typedef protoop_arg_t window_redundancy_controller_t;
 
