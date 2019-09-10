@@ -1,2 +1,11 @@
 schedule_frames_on_path pre protoops/check_for_available_slot.o
+schedule_frames_on_path post protoops/after_schedule_frames.o
 available_slot replace protoops/available_slot.o
+skip_frame pre protoops/pre_skip_frame.o
+skip_frame post protoops/post_skip_frame.o
+available_slot replace protoops/available_slot.o
+incoming_encrypted pre protoops/pre_incoming_encrypted.o
+incoming_encrypted post protoops/after_incoming_encrypted.o
+
+write_frame param 0x29 post protoops/post_write_fpi_frame.o
+write_frame param 0x2a post protoops/post_write_repair_frame.o
