@@ -117,7 +117,7 @@ typedef struct fec_repair_frame {
 typedef protoop_arg_t window_redundancy_controller_t;
 
 
-typedef struct repair_frame {
+typedef struct window_repair_frame {
     window_fec_scheme_specific_t fss;
     window_source_symbol_id_t first_protected_symbol;
     uint16_t n_protected_symbols;
@@ -125,7 +125,7 @@ typedef struct repair_frame {
     repair_symbol_t **symbols;
 } window_repair_frame_t;
 
-static __attribute__((always_inline)) window_repair_frame_t *create_repair_frame(picoquic_cnx_t *cnx) {
+static __attribute__((always_inline)) window_repair_frame_t *create_repair_frame_without_symbols(picoquic_cnx_t *cnx) {
     window_repair_frame_t *rf = my_malloc(cnx, sizeof(window_repair_frame_t));
     if (!rf)
         return NULL;
@@ -199,18 +199,16 @@ static __attribute__((always_inline)) int serialize_window_fpi_frame(uint8_t *ou
     return serialize_window_source_symbol_id(out_buffer, buffer_length, id, consumed);
 }
 
-static __attribute__((always_inline)) window_repair_frame_t *parse_window_repair_frame(picoquic_cnx_t *cnx, uint8_t *bytes, uint8_t *bytes_max,
-        window_repair_frame_t *repair_frame, uint16_t symbol_size, size_t *consumed, bool skip_repair_payload) {
-    if (bytes_max - bytes < REPAIR_FRAME_HEADER_SIZE + repair_frame->n_repair_symbols*symbol_size)
-        return NULL;
+static __attribute__((always_inline)) window_repair_frame_t *parse_window_repair_frame(picoquic_cnx_t *cnx, uint8_t *bytes, const uint8_t *bytes_max,
+        uint16_t symbol_size, size_t *consumed, bool skip_repair_payload) {
     *consumed = 0;
-    window_repair_frame_t *rf = create_repair_frame(cnx);
+    window_repair_frame_t *rf = create_repair_frame_without_symbols(cnx);
     if (!rf)
         return NULL;
     // encode fec-scheme-specific
 
-    my_memcpy(repair_frame->fss.val, bytes, sizeof(repair_frame->fss.val));
-    *consumed += sizeof(repair_frame->fss.val);
+    my_memcpy(rf->fss.val, bytes, sizeof(rf->fss.val));
+    *consumed += sizeof(rf->fss.val);
     size_t tmp = 0;
     // decode symbol id
     int err = decode_window_source_symbol_id(bytes + *consumed, bytes_max - bytes - *consumed, &rf->first_protected_symbol, &tmp);
@@ -218,20 +216,23 @@ static __attribute__((always_inline)) window_repair_frame_t *parse_window_repair
         return NULL;
     *consumed += tmp;
     // encode number of repair symbols (the symbol size is implicitly negociated so we don't need to encode it)
-    repair_frame->n_protected_symbols = decode_un(bytes + *consumed, sizeof(repair_frame->n_protected_symbols));
-    *consumed += sizeof(repair_frame->n_protected_symbols);
-    repair_frame->n_repair_symbols = decode_un(bytes + *consumed, sizeof(repair_frame->n_repair_symbols));
-    *consumed += sizeof(repair_frame->n_repair_symbols);
+    rf->n_protected_symbols = decode_un(bytes + *consumed, sizeof(rf->n_protected_symbols));
+    *consumed += sizeof(rf->n_protected_symbols);
+    rf->n_repair_symbols = decode_un(bytes + *consumed, sizeof(rf->n_repair_symbols));
+    *consumed += sizeof(rf->n_repair_symbols);
+
+    if (bytes_max - bytes - *consumed < rf->n_repair_symbols*symbol_size)
+        return NULL;
     if (!skip_repair_payload) {
-        rf->symbols = my_malloc(cnx, repair_frame->n_repair_symbols*sizeof(window_repair_symbol_t *));
+        rf->symbols = my_malloc(cnx, rf->n_repair_symbols*sizeof(window_repair_symbol_t *));
         if (!rf->symbols) {
             delete_repair_frame(cnx, rf);
             *consumed = 0;
             return NULL;
         }
-        my_memset(rf->symbols, 0, repair_frame->n_repair_symbols*sizeof(window_repair_symbol_t *));
+        my_memset(rf->symbols, 0, rf->n_repair_symbols*sizeof(window_repair_symbol_t *));
         // decode payload
-        for (int i = 0 ; i < repair_frame->n_repair_symbols ; i++) {
+        for (int i = 0 ; i < rf->n_repair_symbols ; i++) {
             // decoding the ith symbol
             rf->symbols[i] = create_repair_symbol(cnx, symbol_size);
             if (!rf->symbols[i]) {
@@ -240,11 +241,15 @@ static __attribute__((always_inline)) window_repair_frame_t *parse_window_repair
                 }
                 delete_repair_frame(cnx, rf);
                 *consumed = 0;
+                break;
             }
-            my_memcpy(repair_frame->symbols[i]->repair_payload, bytes + *consumed, symbol_size);
+            my_memcpy(rf->symbols[i]->repair_payload, bytes + *consumed, symbol_size);
             *consumed += symbol_size;
         }
 
+    } else {
+        // skip the payload, because of skip_frame...
+        *consumed += rf->n_repair_symbols*symbol_size;
     }
     return rf;
 }

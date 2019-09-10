@@ -205,11 +205,10 @@ static __attribute__((always_inline)) int reserve_repair_frames(picoquic_cnx_t *
         return -1;
     }
     while (wff->repair_symbols_queue_length != 0 && size_max >= REPAIR_FRAME_HEADER_SIZE + symbol_size) {
-        window_repair_frame_t *rf = create_repair_frame(cnx);
+        window_repair_frame_t *rf = create_repair_frame_without_symbols(cnx);
         if (!rf) {
             return PICOQUIC_ERROR_MEMORY;
         }
-        my_memset(rf, 0, sizeof(window_repair_frame_t));
         size_t predicted_size = 0;
         int err = get_repair_frame_to_send(cnx, wff, symbol_size, size_max - REPAIR_FRAME_TYPE_BYTE_SIZE,
                                            &predicted_size, rf);

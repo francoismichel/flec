@@ -16,6 +16,10 @@ typedef struct {
     bool has_written_repair_frame;
     bool is_incoming_packet_fec_protected;
     bool current_packet_is_lost;
+
+    // FIXME: remove this horrible booleans, necessary to handle corretly the skip_frame operation...
+    bool is_in_skip_frame;
+
     source_symbol_id_t current_id;
     uint64_t last_protected_slot;
     uint64_t last_fec_slot;

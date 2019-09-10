@@ -189,6 +189,13 @@ static __attribute__((always_inline)) int window_receive_repair_symbol(picoquic_
     return true;
 }
 
+//pre: the rss must have been created as an array of (window_repair_symbol_t *)
+static __attribute__((always_inline)) void window_receive_repair_symbols(picoquic_cnx_t *cnx, window_fec_framework_receiver_t *wff, repair_symbol_t **rss, uint16_t n_symbols) {
+    for (int i = 0 ; i < n_symbols ; i++) {
+        window_receive_repair_symbol(cnx, wff, (window_repair_symbol_t *) rss[i]);
+    }
+}
+
 
 // returns true if it succeeded, false otherwise
 static __attribute__((always_inline)) bool reassemble_packet_from_recovered_symbol(picoquic_cnx_t *cnx, window_fec_framework_receiver_t *wff, uint8_t *buffer,
