@@ -2,8 +2,16 @@ write_frame param 0x29 replace window_framework/protoops/window_write_src_fpi_fr
 parse_frame param 0x29 replace window_framework/protoops/window_parse_src_fpi_frame.o
 process_frame param 0x29 replace window_framework/protoops/window_process_src_fpi_frame.o
 notify_frame param 0x29 replace window_framework/protoops/window_notify_src_fpi_frame.o
+
 write_frame param 0x2a replace window_framework/protoops/window_write_repair_frame.o
-write_frame param 0x2a replace window_framework/protoops/window_notify_repair_frame.o
+parse_frame param 0x2a replace window_framework/protoops/parse_notify_repair_frame.o
+process_frame param 0x2a replace window_framework/protoops/process_notify_repair_frame.o
+notify_frame param 0x2a replace window_framework/protoops/window_notify_repair_frame.o
+
+write_frame param 0x2b replace window_framework/protoops/window_write_recovered_frame.o
+parse_frame param 0x2b replace window_framework/protoops/parse_notify_recovered_frame.o
+process_frame param 0x2b replace window_framework/protoops/process_notify_recovered_frame.o
+notify_frame param 0x2b replace window_framework/protoops/window_notify_recovered_frame.o
 
 
 protect_packet_payload replace window_framework/protoops/window_protect_packet_payload.o
