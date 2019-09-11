@@ -11,6 +11,8 @@
 #define MAX_QUEUED_REPAIR_SYMBOLS 6
 #define MAX_SLOT_VALUE 0x7FFFFF
 
+#define PROTOOP_GET_CURRENT_WINDOW_BOUNDS "fec_get_current_window_bounds"
+
 #define MIN(a, b) ((a < b) ? a : b)
 
 
@@ -199,7 +201,8 @@ static __attribute__((always_inline)) int get_repair_frame_to_send(picoquic_cnx_
 }
 
 
-static __attribute__((always_inline)) int reserve_repair_frames(picoquic_cnx_t *cnx, window_fec_framework_t *wff, size_t size_max, size_t symbol_size) {
+static __attribute__((always_inline)) int window_reserve_repair_frames(picoquic_cnx_t *cnx, window_fec_framework_t *wff,
+                                                                       size_t size_max, size_t symbol_size) {
     if (size_max < REPAIR_FRAME_HEADER_SIZE + symbol_size) {
         PROTOOP_PRINTF(cnx, "NOT ENOUGH SPACE TO RESERVE A REPAIR FRAME\n");
         return -1;
@@ -387,7 +390,7 @@ static __attribute__((always_inline)) int generate_and_queue_repair_symbols(pico
             // we don't free the repair symbols, they are queued and will be free afterwards
             // so we only free the fec block
 //            wff->highest_sent_id = MAX(last_id, wff->highest_sent_id);
-//            reserve_repair_frames(cnx, wff, PICOQUIC_MAX_PACKET_SIZE, symbol_size);
+//            window_reserve_repair_frames(cnx, wff, PICOQUIC_MAX_PACKET_SIZE, symbol_size);
         }
         my_free(cnx, repair_symbols);
     } else {
@@ -471,7 +474,7 @@ static __attribute__((always_inline)) int get_one_causal_packet(picoquic_cnx_t *
         // we don't free the repair symbols, they are queued and will be free afterwards
         // so we only free the fec block
 //            wff->highest_sent_id = MAX(last_id, wff->highest_sent_id);
-//            reserve_repair_frames(cnx, wff, PICOQUIC_MAX_PACKET_SIZE, symbol_size);
+//            window_reserve_repair_frames(cnx, wff, PICOQUIC_MAX_PACKET_SIZE, symbol_size);
     }
 
     my_free(cnx, symbols);
@@ -519,6 +522,14 @@ static __attribute__((always_inline)) int window_protect_packet_payload(picoquic
 static __attribute__((always_inline)) uint64_t window_sent_symbol(picoquic_cnx_t *cnx, window_fec_framework_t *wff, causal_packet_type_t type, rlnc_window_t *window) {
     sent_packet(wff->controller, type, wff->current_slot, window);
     return wff->current_slot++;
+}
+
+static __attribute__((always_inline)) void get_current_window_bounds(picoquic_cnx_t *cnx, window_fec_framework_t *wff, window_source_symbol_id_t *start, window_source_symbol_id_t *end) {
+    *start = *end = 0;
+    if (!is_fec_window_empty(wff)) {
+        *start = wff->smallest_in_transit;
+        *end = wff->highest_in_transit + 1;
+    }
 }
 
 static __attribute__((always_inline)) rlnc_window_t get_current_rlnc_window(picoquic_cnx_t *cnx, window_fec_framework_t *wff) {

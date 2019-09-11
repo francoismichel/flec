@@ -7,10 +7,9 @@
 #define FEC_PROTOOP_WHAT_TO_SEND   "fec_what_to_send"
 #define FEC_PROTOOP_HAS_PROTECTED_DATA_TO_SEND   "fec_has_protected_data_to_send"
 #define FEC_PROTOOP_GET_NEXT_SOURCE_SYMBOL_ID   "fec_next_sfpid"
-#define FEC_PROTOOP_PROTECT_SOURCE_SYMBOLS   "fec_protect_symbols"
-#define FEC_PROTOOP_RECEIVE_SOURCE_SYMBOLS   "fec_receive_symbols"
 #define FEC_RECEIVE_PACKET_PAYLOAD "fec_receive_packet_payload"
 #define FEC_PROTECT_PACKET_PAYLOAD "fec_protect_packet_payload"
+#define FEC_RESERVE_REPAIR_FRAMES "fec_reserve_repair_frames"
 
 
 // frames
@@ -25,6 +24,8 @@
 #define MAX_SRC_FPI_SIZE 16
 #define CHUNK_SIZE 199
 #define SYMBOL_SIZE (CHUNK_SIZE + 1)
+
+#define DEFAULT_SLOT_SIZE (PICOQUIC_MAX_PACKET_SIZE - 100)
 
 
 #define FEC_PKT_METADATA_SENT_SLOT 0
@@ -49,7 +50,8 @@ typedef enum available_slot_reason {
 
 typedef enum what_to_send {
     what_to_send_new_symbol,
-    what_to_send_repair_symbol
+    what_to_send_repair_symbol,
+    what_to_send_feedback_implied_repair_symbol
 } what_to_send_t;
 
 typedef protoop_arg_t source_symbol_id_t;   // defined by the underlying framework

@@ -95,6 +95,38 @@ static __attribute__((always_inline)) int protect_packet_payload(picoquic_cnx_t 
     return err;
 }
 
+
+static __attribute__((always_inline)) int reserve_repair_frames(picoquic_cnx_t *cnx, framework_sender_t sender, size_t size_max, size_t symbol_size) {
+    protoop_arg_t args[3];
+
+    args[0] = (protoop_arg_t) sender;
+    args[1] = (protoop_arg_t) size_max;
+    args[2] = (protoop_arg_t) symbol_size;
+
+    int err = (int) run_noparam(cnx, FEC_RESERVE_REPAIR_FRAMES, 3, args, NULL);
+    return err;
+}
+
+
+static __attribute__((always_inline)) int fec_what_to_send(picoquic_cnx_t *cnx, available_slot_reason_t reason, what_to_send_t *wts) {
+    protoop_arg_t args[1];
+    args[0] = (protoop_arg_t) reason;
+    protoop_arg_t out[1];
+
+    int err = (what_to_send_t) run_noparam(cnx, FEC_PROTOOP_WHAT_TO_SEND, 1, args, out);
+    *wts = out[0];
+    return err;
+}
+
+
+static __attribute__((always_inline)) what_to_send_t fec_available_slot(picoquic_cnx_t *cnx, picoquic_path_t *path, available_slot_reason_t reason) {
+    protoop_arg_t args[2];
+    args[0] = (protoop_arg_t) path;
+    args[1] = (protoop_arg_t) reason;
+    return (int) run_noparam(cnx, FEC_PROTOOP_AVAILABLE_SLOT, 2, args, NULL);
+}
+
+
 static __attribute__((always_inline)) int reserve_src_fpi_frame(picoquic_cnx_t *cnx, source_symbol_id_t id) {
     reserve_frame_slot_t *slot = (reserve_frame_slot_t *) my_malloc(cnx, sizeof(reserve_frame_slot_t));
     if (!slot)

@@ -18,12 +18,6 @@ typedef enum causal_packet_type {
     nothing,
 } causal_packet_type_t;
 
-typedef enum causal_feedback {
-    no_feedback,
-    ack_feedback,
-    nack_feedback,
-} causal_feedback_t;
-
 typedef struct {
     buffer_elem_t *elems;
     int max_size;
@@ -397,9 +391,9 @@ static __attribute__((always_inline)) void sent_packet(window_redundancy_control
 }
 
 // either acked or recovered
-static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, causal_redundancy_controller_t *controller, causal_feedback_t feedback, rlnc_window_t *current_window) {
-    if (feedback != no_feedback)    controller->n_received_feedbacks++;
-    if (feedback == nack_feedback)  {
+static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, causal_redundancy_controller_t *controller, available_slot_reason_t feedback, rlnc_window_t *current_window) {
+    if (feedback != available_slot_reason_none)    controller->n_received_feedbacks++;
+    if (feedback == available_slot_reason_nack)  {
         controller->n_lost_slots++;
     }
     // FIXME: experimental: set k according to the cwin, but bound it to the buffer length: we cannot store more than MAX_SENDING_WINDOW_SIZE, and sometimes the window length will be 2*k
@@ -417,7 +411,7 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, causal_
         } else {
             // remove all the acked slots in the window
             switch (feedback) {
-                case no_feedback:
+                case available_slot_reason_none:
                     if (false && EW(controller, current_window)) {
                         PROTOOP_PRINTF(cnx, "EW, SEND FEC\n");
                         for (i = 0; i < controller->m; i++) {
@@ -430,7 +424,7 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, causal_
                         add_elem_to_buffer(controller->what_to_send, new_rlnc_packet);
                     }
                     break;
-                case nack_feedback:
+                case available_slot_reason_nack:
                     if (false && (controller->d_times_granularity == -1 || threshold_exceeded(controller))) {
                         PROTOOP_PRINTF(cnx, "THRESHOLD EXCEEDED\n");
                         if (true || !EW(controller, current_window)) {
@@ -456,7 +450,7 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, causal_
                         }
                     }
                     break;
-                case ack_feedback:
+                case available_slot_reason_ack:
                     if (false && EW(controller, current_window)) {
                         PROTOOP_PRINTF(cnx, "EW, SEND FEC\n");
                         for (i = 0; i < controller->m; i++) {
@@ -490,18 +484,18 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, causal_
 static __attribute__((always_inline)) void slot_acked(picoquic_cnx_t *cnx, window_redundancy_controller_t c, uint64_t slot, rlnc_window_t *current_window) {
     causal_redundancy_controller_t *controller = (causal_redundancy_controller_t *) c;
     add_elem_to_buffer(controller->acked_slots, slot);
-    run_algo(cnx, controller, ack_feedback, current_window);
+    run_algo(cnx, controller, available_slot_reason_ack, current_window);
 }
 
 static __attribute__((always_inline)) void free_slot_without_feedback(picoquic_cnx_t *cnx, window_redundancy_controller_t c, rlnc_window_t *current_window) {
     causal_redundancy_controller_t *controller = (causal_redundancy_controller_t *) c;
-    run_algo(cnx, controller, no_feedback, current_window);
+    run_algo(cnx, controller, available_slot_reason_none, current_window);
 }
 
 static __attribute__((always_inline)) void slot_nacked(picoquic_cnx_t *cnx, window_redundancy_controller_t c, uint64_t slot, rlnc_window_t *current_window) {
     causal_redundancy_controller_t *controller = (causal_redundancy_controller_t *) c;
     // remove all the acked slots in the window
     add_elem_to_buffer(controller->nacked_slots, slot);
-    run_algo(cnx, controller, nack_feedback, current_window);
+    run_algo(cnx, controller, available_slot_reason_nack, current_window);
 }
 #endif

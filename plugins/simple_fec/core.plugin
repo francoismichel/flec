@@ -1,5 +1,6 @@
-schedule_frames_on_path pre protoops/check_for_available_slot.o
+###schedule_frames_on_path pre protoops/check_for_available_slot.o
 schedule_frames_on_path post protoops/after_schedule_frames.o
+check_for_available_slot replace protoops/check_for_available_slot.o
 available_slot replace protoops/available_slot.o
 skip_frame pre protoops/pre_skip_frame.o
 skip_frame post protoops/post_skip_frame.o

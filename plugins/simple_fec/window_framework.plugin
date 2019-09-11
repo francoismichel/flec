@@ -14,5 +14,6 @@ process_frame param 0x2b replace window_framework/protoops/process_notify_recove
 notify_frame param 0x2b replace window_framework/protoops/window_notify_recovered_frame.o
 
 
-protect_packet_payload replace window_framework/protoops/window_protect_packet_payload.o
-receive_packet_payload replace window_framework/protoops/window_receive_packet_payload.o
+fec_protect_packet_payload replace window_framework/protoops/window_protect_packet_payload.o
+fec_receive_packet_payload replace window_framework/protoops/window_receive_packet_payload.o
+fec_reserve_repair_frames replace window_framework/protoops/window_receive_packet_payload.o
