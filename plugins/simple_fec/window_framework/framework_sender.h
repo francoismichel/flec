@@ -586,102 +586,102 @@ static __attribute__((always_inline)) void process_recovered_packets(picoquic_cn
     }
 }
 
-
-static __attribute__((always_inline)) int window_detect_lost_protected_packets(picoquic_cnx_t *cnx, window_fec_framework_t *wff, uint64_t current_time, picoquic_packet_context_enum pc) {
-
-    char *reason = NULL;
-    int nb_paths = (int) get_cnx(cnx, AK_CNX_NB_PATHS, 0);
-    bool stop = false;
-    for (int i = 0; i < nb_paths; i++) {
-        picoquic_path_t *orig_path = (picoquic_path_t *) get_cnx(cnx, AK_CNX_PATH, i);
-        picoquic_packet_context_t *orig_pkt_ctx = (picoquic_packet_context_t *) get_path(orig_path, AK_PATH_PKT_CTX,
-                                                                                         pc);
-        picoquic_packet_t *p = (picoquic_packet_t *) get_pkt_ctx(orig_pkt_ctx, AK_PKTCTX_RETRANSMIT_OLDEST);
-        /* TODO: while packets are pure ACK, drop them from retransmit queue */
-        while (p != NULL) {
-            int should_retransmit = 0;
-            int timer_based_retransmit = 0;
-            uint64_t lost_packet_number = (uint64_t) get_pkt(p, AK_PKT_SEQUENCE_NUMBER);
-            picoquic_packet_t *p_next = (picoquic_packet_t *) get_pkt(p, AK_PKT_NEXT_PACKET);
-            picoquic_packet_type_enum ptype = (picoquic_packet_type_enum) get_pkt(p, AK_PKT_TYPE);
-
-            /* Get the packet type */
-
-            should_retransmit = helper_retransmit_needed_by_packet(cnx, p, current_time, &timer_based_retransmit,
-                                                                   &reason);
-
-            if (should_retransmit == 0) {
-                /*
-                * Always retransmit in order. If not this one, then nothing.
-                * But make an exception for 0-RTT packets.
-                */
-                if (ptype == picoquic_packet_0rtt_protected) {
-                    p = p_next;
-                    continue;
-                } else {
-                    stop = true;
-                    break;
-                }
-            } else {
-                /* check if this is an ACK only packet */
-//                int contains_crypto = (int) get_pkt(p, AK_PKT_CONTAINS_CRYPTO);
-                int packet_is_pure_ack = (int) get_pkt(p, AK_PKT_IS_PURE_ACK);
-                int do_not_detect_spurious = 1;
-                /* TODO: should be the path on which the packet was transmitted */
-                picoquic_path_t *old_path = (picoquic_path_t *) get_pkt(p, AK_PKT_SEND_PATH);
-
-                if (should_retransmit != 0) {
-
-                    /* Update the number of bytes in transit and remove old packet from queue */
-                    /* If not pure ack, the packet will be placed in the "retransmitted" queue,
-                    * in order to enable detection of spurious restransmissions */
-                    // if the pc is the application, we want to free the packet: indeed, we disable the retransmissions
-
-                    uint64_t slot = get_pkt_metadata(cnx, p, FEC_PKT_METADATA_SENT_SLOT);
-                    bool fec_protected = FEC_PKT_IS_FEC_PROTECTED(get_pkt_metadata(cnx, p, FEC_PKT_METADATA_FLAGS));
-                    bool fec_related = fec_protected || FEC_PKT_CONTAINS_REPAIR_FRAME(get_pkt_metadata(cnx, p, FEC_PKT_METADATA_FLAGS));
-                    uint32_t sfpid = get_pkt_metadata(cnx, p, FEC_PKT_METADATA_FIRST_SOURCE_SYMBOL_ID);
-                    plugin_state_t *state = NULL;
-                    if (fec_related) {
-                        state = get_plugin_state(cnx);
-                        if (!state)
-                            return PICOQUIC_ERROR_MEMORY;
-                        state->current_packet_is_lost = true;
-                        int err = 0;
-                        if (fec_protected &&
-                            (err = add_lost_packet(cnx, &state->lost_packets, lost_packet_number, slot, sfpid))) {
-                            return err;
-                        }
-                        helper_dequeue_retransmit_packet(cnx, p, (packet_is_pure_ack & do_not_detect_spurious) ||
-                                                                 (pc == picoquic_packet_context_application &&
-                                                                  !get_pkt(p, AK_PKT_IS_MTU_PROBE)));
-
-                        state->current_packet_is_lost = false;
-                        window_slot_nacked(cnx, wff, slot);
-                        helper_congestion_algorithm_notify(cnx, old_path,
-                                                           (timer_based_retransmit == 0)
-                                                           ? picoquic_congestion_notification_repeat
-                                                           : picoquic_congestion_notification_timeout,
-                                                           0, 0, lost_packet_number, current_time);
-                        stop = true;
-                        break;
-                    }
-                }
-                /*
-                * If the loop is continuing, this means that we need to look
-                * at the next candidate packet.
-                */
-                p = p_next;
-            }
-
-            if (stop) {
-                break;
-            }
-        }
-    }
-    return 0;
-}
-
+//
+//static __attribute__((always_inline)) int window_detect_lost_protected_packets(picoquic_cnx_t *cnx, window_fec_framework_t *wff, uint64_t current_time, picoquic_packet_context_enum pc) {
+//
+//    char *reason = NULL;
+//    int nb_paths = (int) get_cnx(cnx, AK_CNX_NB_PATHS, 0);
+//    bool stop = false;
+//    for (int i = 0; i < nb_paths; i++) {
+//        picoquic_path_t *orig_path = (picoquic_path_t *) get_cnx(cnx, AK_CNX_PATH, i);
+//        picoquic_packet_context_t *orig_pkt_ctx = (picoquic_packet_context_t *) get_path(orig_path, AK_PATH_PKT_CTX,
+//                                                                                         pc);
+//        picoquic_packet_t *p = (picoquic_packet_t *) get_pkt_ctx(orig_pkt_ctx, AK_PKTCTX_RETRANSMIT_OLDEST);
+//        /* TODO: while packets are pure ACK, drop them from retransmit queue */
+//        while (p != NULL) {
+//            int should_retransmit = 0;
+//            int timer_based_retransmit = 0;
+//            uint64_t lost_packet_number = (uint64_t) get_pkt(p, AK_PKT_SEQUENCE_NUMBER);
+//            picoquic_packet_t *p_next = (picoquic_packet_t *) get_pkt(p, AK_PKT_NEXT_PACKET);
+//            picoquic_packet_type_enum ptype = (picoquic_packet_type_enum) get_pkt(p, AK_PKT_TYPE);
+//
+//            /* Get the packet type */
+//
+//            should_retransmit = helper_retransmit_needed_by_packet(cnx, p, current_time, &timer_based_retransmit,
+//                                                                   &reason);
+//
+//            if (should_retransmit == 0) {
+//                /*
+//                * Always retransmit in order. If not this one, then nothing.
+//                * But make an exception for 0-RTT packets.
+//                */
+//                if (ptype == picoquic_packet_0rtt_protected) {
+//                    p = p_next;
+//                    continue;
+//                } else {
+//                    stop = true;
+//                    break;
+//                }
+//            } else {
+//                /* check if this is an ACK only packet */
+////                int contains_crypto = (int) get_pkt(p, AK_PKT_CONTAINS_CRYPTO);
+//                int packet_is_pure_ack = (int) get_pkt(p, AK_PKT_IS_PURE_ACK);
+//                int do_not_detect_spurious = 1;
+//                /* TODO: should be the path on which the packet was transmitted */
+//                picoquic_path_t *old_path = (picoquic_path_t *) get_pkt(p, AK_PKT_SEND_PATH);
+//
+//                if (should_retransmit != 0) {
+//
+//                    /* Update the number of bytes in transit and remove old packet from queue */
+//                    /* If not pure ack, the packet will be placed in the "retransmitted" queue,
+//                    * in order to enable detection of spurious restransmissions */
+//                    // if the pc is the application, we want to free the packet: indeed, we disable the retransmissions
+//
+//                    uint64_t slot = get_pkt_metadata(cnx, p, FEC_PKT_METADATA_SENT_SLOT);
+//                    bool fec_protected = FEC_PKT_IS_FEC_PROTECTED(get_pkt_metadata(cnx, p, FEC_PKT_METADATA_FLAGS));
+//                    bool fec_related = fec_protected || FEC_PKT_CONTAINS_REPAIR_FRAME(get_pkt_metadata(cnx, p, FEC_PKT_METADATA_FLAGS));
+//                    uint32_t sfpid = get_pkt_metadata(cnx, p, FEC_PKT_METADATA_FIRST_SOURCE_SYMBOL_ID);
+//                    plugin_state_t *state = NULL;
+//                    if (fec_related) {
+//                        state = get_plugin_state(cnx);
+//                        if (!state)
+//                            return PICOQUIC_ERROR_MEMORY;
+//                        state->current_packet_is_lost = true;
+//                        int err = 0;
+//                        if (fec_protected &&
+//                            (err = add_lost_packet(cnx, &state->lost_packets, lost_packet_number, slot, sfpid))) {
+//                            return err;
+//                        }
+//                        helper_dequeue_retransmit_packet(cnx, p, (packet_is_pure_ack & do_not_detect_spurious) ||
+//                                                                 (pc == picoquic_packet_context_application &&
+//                                                                  !get_pkt(p, AK_PKT_IS_MTU_PROBE)));
+//
+//                        state->current_packet_is_lost = false;
+//                        window_slot_nacked(cnx, wff, slot);
+//                        helper_congestion_algorithm_notify(cnx, old_path,
+//                                                           (timer_based_retransmit == 0)
+//                                                           ? picoquic_congestion_notification_repeat
+//                                                           : picoquic_congestion_notification_timeout,
+//                                                           0, 0, lost_packet_number, current_time);
+//                        stop = true;
+//                        break;
+//                    }
+//                }
+//                /*
+//                * If the loop is continuing, this means that we need to look
+//                * at the next candidate packet.
+//                */
+//                p = p_next;
+//            }
+//
+//            if (stop) {
+//                break;
+//            }
+//        }
+//    }
+//    return 0;
+//}
+//
 
 
 static __attribute__((always_inline)) void window_maybe_notify_recovered_packets_to_cc(picoquic_cnx_t *cnx, recovered_packets_buffer_t *b, uint64_t current_time) {

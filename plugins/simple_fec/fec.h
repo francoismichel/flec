@@ -20,6 +20,10 @@ typedef struct {
     // FIXME: remove this horrible booleans, necessary to handle corretly the skip_frame operation...
     bool is_in_skip_frame;
 
+    // TODO: see if we can get rid of this counter and boolean
+    int n_repair_frames_sent_before_handshake_finished;
+    bool handshake_finished;
+
     source_symbol_id_t current_id;
     uint64_t last_protected_slot;
     uint64_t last_fec_slot;
@@ -60,6 +64,7 @@ static __attribute__((always_inline)) plugin_state_t *initialize_plugin_state(pi
     }
     state->framework_receiver = (framework_receiver_t) frameworks[0];
     state->framework_sender = (framework_sender_t) frameworks[1];
+    state->handshake_finished = false;
 
     state->symbol_size = SYMBOL_SIZE;
     return state;

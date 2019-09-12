@@ -4,12 +4,15 @@
 
 // protoops
 #define FEC_PROTOOP_AVAILABLE_SLOT "fec_available_slot"
+#define FEC_PROTOOP_CHECK_FOR_AVAILABLE_SLOT "fec_check_for_available_slot"
 #define FEC_PROTOOP_WHAT_TO_SEND   "fec_what_to_send"
 #define FEC_PROTOOP_HAS_PROTECTED_DATA_TO_SEND   "fec_has_protected_data_to_send"
 #define FEC_PROTOOP_GET_NEXT_SOURCE_SYMBOL_ID   "fec_next_sfpid"
 #define FEC_RECEIVE_PACKET_PAYLOAD "fec_receive_packet_payload"
 #define FEC_PROTECT_PACKET_PAYLOAD "fec_protect_packet_payload"
 #define FEC_RESERVE_REPAIR_FRAMES "fec_reserve_repair_frames"
+#define FEC_PACKET_HAS_BEEN_LOST "fec_packet_lost"
+#define FEC_PACKET_HAS_BEEN_RECEIVED "fec_packet_received"
 
 
 // frames
