@@ -12,7 +12,7 @@
 #define FEC_PROTECT_PACKET_PAYLOAD "fec_protect_packet_payload"
 #define FEC_RESERVE_REPAIR_FRAMES "fec_reserve_repair_frames"
 #define FEC_PACKET_HAS_BEEN_LOST "fec_packet_lost"
-#define FEC_PACKET_HAS_BEEN_RECEIVED "fec_packet_received"
+#define FEC_PACKET_HAVE_BEEN_RECEIVED "fec_packet_received"
 
 
 // frames

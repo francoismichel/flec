@@ -151,14 +151,14 @@ static __attribute__((always_inline)) what_to_send_t fec_packet_has_been_lost(pi
     return (int) run_noparam(cnx, FEC_PACKET_HAS_BEEN_LOST, 6, args, NULL);
 }
 
-
-static __attribute__((always_inline)) what_to_send_t fec_packet_has_been_received(picoquic_cnx_t *cnx,
-                                                                                  uint64_t packet_number,
-                                                                                  uint64_t packet_slot,
-                                                                                  source_symbol_id_t id,
-                                                                                  uint16_t n_source_symbols_in_packet,
-                                                                                  bool fec_protected,
-                                                                                  bool contains_repair_Frame) {
+// the symbols have been received, meaning that it has either been received or recovered
+static __attribute__((always_inline)) what_to_send_t fec_packet_symbols_have_been_received(picoquic_cnx_t *cnx,
+                                                                                           uint64_t packet_number,
+                                                                                           uint64_t packet_slot,
+                                                                                           source_symbol_id_t id,
+                                                                                           uint16_t n_source_symbols_in_packet,
+                                                                                           bool fec_protected,
+                                                                                           bool contains_repair_Frame) {
     protoop_arg_t args[6];
     args[0] = (protoop_arg_t) packet_number;
     args[1] = (protoop_arg_t) packet_slot;
@@ -166,7 +166,7 @@ static __attribute__((always_inline)) what_to_send_t fec_packet_has_been_receive
     args[3] = (protoop_arg_t) n_source_symbols_in_packet;
     args[4] = (protoop_arg_t) fec_protected;
     args[5] = (protoop_arg_t) contains_repair_Frame;
-    return (int) run_noparam(cnx, FEC_PACKET_HAS_BEEN_RECEIVED, 6, args, NULL);
+    return (int) run_noparam(cnx, FEC_PACKET_HAVE_BEEN_RECEIVED, 6, args, NULL);
 }
 
 

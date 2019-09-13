@@ -173,9 +173,6 @@ protoop_arg_t retransmit_needed(picoquic_cnx_t *cnx)
                         if (!state)
                             return 0;
                         state->current_packet_is_lost = true;
-                        if (fec_protected && add_lost_packet(cnx, &state->lost_packets, lost_packet_number, slot, first_symbol_id, n_symbols)) {
-                            return 0;
-                        }
                     }
                     helper_dequeue_retransmit_packet(cnx, p, (packet_is_pure_ack & do_not_detect_spurious) || (pc == picoquic_packet_context_application && !get_pkt(p, AK_PKT_IS_MTU_PROBE)));
                     if (state)

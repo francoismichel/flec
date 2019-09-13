@@ -11,6 +11,7 @@ protoop_arg_t pre_packet_has_been_lost(picoquic_cnx_t *cnx) {
     plugin_state_t *state = get_plugin_state(cnx);
     if (!state)
         return -1;
+    // the packet is always fec-protected
     uint64_t lost_packet_number = get_cnx(cnx, AK_CNX_INPUT, 0);
     uint64_t slot = get_cnx(cnx, AK_CNX_INPUT, 1);
     source_symbol_id_t first_symbol_id = get_cnx(cnx, AK_CNX_INPUT, 2);

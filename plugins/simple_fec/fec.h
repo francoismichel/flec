@@ -34,6 +34,7 @@ typedef struct {
     framework_sender_t framework_sender;
     framework_receiver_t framework_receiver;
     lost_packet_queue_t lost_packets;
+    recovered_packets_buffer_t recovered_packets;
 
     uint16_t symbol_size;
 } plugin_state_t;
@@ -250,6 +251,64 @@ static __attribute__((always_inline)) source_symbol_t **packet_payload_to_source
     }
     set_ss_metadata_E(retval[*n_chunks-1], true);   // this is the last symbol of the packet
     return retval;
+}
+
+
+
+static __attribute__((always_inline)) int maybe_notify_recovered_packets_to_everybody(picoquic_cnx_t *cnx,
+                                                                                       recovered_packets_buffer_t *b,
+                                                                                       uint64_t current_time) {
+    // TODO: handle multipath
+    picoquic_path_t *path = (picoquic_path_t *) get_cnx(cnx, AK_CNX_PATH, 0);
+    picoquic_packet_context_t *pkt_ctx = (picoquic_packet_context_t *) get_path(path, AK_PATH_PKT_CTX, picoquic_packet_context_application);
+    picoquic_packet_t *current_packet = (picoquic_packet_t *) get_pkt_ctx(pkt_ctx, AK_PKTCTX_RETRANSMIT_OLDEST);
+    while(b->size > 0 && current_packet) {
+        picoquic_packet_t *pnext = (picoquic_packet_t *) get_pkt(current_packet, AK_PKT_NEXT_PACKET);
+        uint64_t current_pn64 = get_pkt(current_packet, AK_PKT_SEQUENCE_NUMBER);
+        if (current_pn64 == peek_first_recovered_packet_in_buffer(b)) {
+            int timer_based = 0;
+            if (!helper_retransmit_needed_by_packet(cnx, current_packet, current_time, &timer_based, NULL)) {
+                // we don't need to notify it now: the packet is not considered as lost
+                // don't try any subsequenc packets as they have been sent later
+                break;
+            }
+            //we need to remove this packet from the retransmit queue
+            uint64_t retrans_cc_notification_timer = get_pkt_ctx(pkt_ctx, AK_PKTCTX_LATEST_RETRANSMIT_CC_NOTIFICATION_TIME) + get_path(path, AK_PATH_SMOOTHED_RTT, 0);
+            bool packet_is_pure_ack = get_pkt(current_packet, AK_PKT_IS_PURE_ACK);
+            // notify everybody that this packet is lost
+            helper_packet_was_lost(cnx, current_packet, path);
+            helper_dequeue_retransmit_packet(cnx, current_packet, 1);
+            if (current_time >= retrans_cc_notification_timer && !packet_is_pure_ack) {    // do as in core: if is pure_ack or recently notified, do not notify cc
+                set_pkt_ctx(pkt_ctx, AK_PKTCTX_LATEST_RETRANSMIT_CC_NOTIFICATION_TIME, current_time);
+                helper_congestion_algorithm_notify(cnx, path, picoquic_congestion_notification_repeat, 0, 0,
+                                                   current_pn64, current_time);
+            }
+            PROTOOP_PRINTF(cnx, "[[PACKET RECOVERED]] %lu,%lu\n", current_pn64, current_time - get_pkt(current_packet, AK_PKT_SEND_TIME));
+            dequeue_recovered_packet_from_buffer(b);
+        } else if (current_pn64 > peek_first_recovered_packet_in_buffer(b)) {
+            // the packet to remove is already gone from the retransmit queue
+            uint64_t pn64 = dequeue_recovered_packet_from_buffer(b);
+            plugin_state_t *state = get_plugin_state(cnx);
+            if (!state)
+                return PICOQUIC_ERROR_MEMORY;
+            uint64_t slot;
+            source_symbol_id_t first_id;
+            uint16_t n_source_symbols;
+
+
+            // announce the reception of the source symbols
+            bool present = dequeue_lost_packet(cnx, &state->lost_packets, pn64, &slot, &first_id, &n_source_symbols);
+            if (present) {
+                fec_packet_symbols_have_been_received(cnx, pn64, slot, first_id, n_source_symbols, true, false);
+            } else {
+                // this is not normal
+                PROTOOP_PRINTF(cnx, "ERROR: THE RECOVERED PACKET IS NEITHER IN THE RETRANSMIT QUEUE, NEITHER IN THE LOST PACKETS\n");
+                return -1;
+            }
+        } // else, do nothing, try the next packet
+        current_packet = pnext;
+    }
+    return 0;
 }
 
 

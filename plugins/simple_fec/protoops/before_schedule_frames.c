@@ -22,6 +22,5 @@ protoop_arg_t schedule_frames_on_path(picoquic_cnx_t *cnx)
     // set the current fpid
     plugin_state_t *state = get_plugin_state(cnx);
 
-// TODO: call fec_packet_has_been_received for all recovered packets and replace what we currently do in process_ack_range
     return 0;
 }
