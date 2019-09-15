@@ -3,8 +3,10 @@
 #include "picoquic.h"
 #include "../fec.h"
 #include "../window_framework/types.h"
+#include "../window_framework/framework_sender.h"
 
 
+// TODO: 1 packet == 1 symbol here, or it is too complicated
 #define MAX_SLOTS 100
 
 #define GRANULARITY 1000000
@@ -26,15 +28,13 @@ typedef struct {
 } buffer_t;
 
 typedef union {
-    struct __attribute__((__packed__)) {
-        uint32_t start, end;
-    };
+    fec_window_t window;
     buffer_elem_t elem;
 } rlnc_window_t;
 
 typedef struct {
     int64_t slot;
-    rlnc_window_t window;
+    fec_window_t window;
 } history_entry_t;
 
 typedef struct {
@@ -111,22 +111,22 @@ static __attribute__((always_inline)) bool is_buffer_empty(buffer_t *buffer) {
 
 
 
-static __attribute__((always_inline)) bool is_symbol_in_window(rlnc_window_t *window, window_source_symbol_id_t id) {
+static __attribute__((always_inline)) bool is_symbol_in_window(fec_window_t *window, window_source_symbol_id_t id) {
     return window->start <= id && id < window->end;
 }
 
-static __attribute__((always_inline)) bool is_window_empty(rlnc_window_t *window) {
+static __attribute__((always_inline)) bool is_window_empty(fec_window_t *window) {
     return window->start >= window->end;
 }
 
-static __attribute__((always_inline)) int64_t window_size(rlnc_window_t *window) {
+static __attribute__((always_inline)) int64_t window_size(fec_window_t *window) {
     return window->end - window->start;
 }
 
 
 // returns true if the intersection of these  windows is not empty, false otherwise
-static __attribute__((always_inline)) bool window_intersects(rlnc_window_t *window1, rlnc_window_t *window2) {
-    rlnc_window_t *tmp = window1;
+static __attribute__((always_inline)) bool window_intersects(fec_window_t *window1, fec_window_t *window2) {
+    fec_window_t *tmp = window1;
     if (window1->start > window2->start) {
         window1 = window2;
         window2 = tmp;
@@ -135,7 +135,7 @@ static __attribute__((always_inline)) bool window_intersects(rlnc_window_t *wind
     return !is_window_empty(window1) && !is_window_empty(window2) && window1->end > window2->start;
 }
 
-static __attribute__((always_inline)) bool remove_symbol_from_window(rlnc_window_t *window, window_source_symbol_id_t id) {
+static __attribute__((always_inline)) bool remove_symbol_from_window(fec_window_t *window, window_source_symbol_id_t id) {
     if (!is_symbol_in_window(window, id) || is_window_empty(window) || window->start != id) return false;
     window->start++;
     return true;
@@ -166,7 +166,7 @@ static __attribute__((always_inline)) void destroy_history(picoquic_cnx_t *cnx, 
 
 
 
-static __attribute__((always_inline)) void add_elem_to_history(slots_history_t *history, int64_t slot, rlnc_window_t window) {
+static __attribute__((always_inline)) void add_elem_to_history(slots_history_t *history, int64_t slot, fec_window_t window) {
     history->sent_windows[((uint64_t)slot) % ((uint64_t)history->max_size)].slot = slot;
     history->sent_windows[((uint64_t)slot) % ((uint64_t)history->max_size)].window = window;
 }
@@ -188,7 +188,7 @@ static __attribute__((always_inline)) bool is_slot_in_history(slots_history_t *h
 }
 
 // returns NULL if the slot is not in the history
-static __attribute__((always_inline)) rlnc_window_t *get_window_sent_at_slot(slots_history_t *history, int64_t slot) {
+static __attribute__((always_inline)) fec_window_t *get_window_sent_at_slot(slots_history_t *history, int64_t slot) {
     if (!is_slot_in_history(history, slot)) return NULL;
     return &history->sent_windows[((uint64_t)slot) % ((uint64_t)history->max_size)].window;
 }
@@ -289,7 +289,7 @@ static __attribute__((always_inline)) void destroy_causal_redundancy_controller(
     my_free(cnx, controller);
 }
 
-static __attribute__((always_inline)) void sent_window(causal_redundancy_controller_t *controller, rlnc_window_t window, uint64_t slot) {
+static __attribute__((always_inline)) void sent_window(causal_redundancy_controller_t *controller, fec_window_t window, uint64_t slot) {
     add_elem_to_history(controller->slots_history, slot, window);
 }
 
@@ -297,7 +297,7 @@ static __attribute__((always_inline)) int64_t r_times_granularity(causal_redunda
     return GRANULARITY - ((uint64_t)(controller->n_lost_slots*GRANULARITY) / ((uint64_t)controller->n_received_feedbacks));
 }
 
-static __attribute__((always_inline)) bool EW(causal_redundancy_controller_t *controller, rlnc_window_t *current_window) {
+static __attribute__((always_inline)) bool EW(causal_redundancy_controller_t *controller, fec_window_t *current_window) {
     return !is_window_empty(current_window) && ((uint64_t)(current_window->end-1)) % ((uint64_t)controller->k) == 0 && ((int64_t) current_window->end - (int64_t) current_window->start >= controller->k) && (current_window->end-1) - controller->latest_symbol_protected_by_fec >= controller->k;
 }
 
@@ -321,26 +321,26 @@ static __attribute__((always_inline)) bool threshold_strictly_greater(causal_red
     return r_times_granularity(controller) - controller->d_times_granularity < controller->threshold_times_granularity;
 }
 
-static __attribute__((always_inline)) uint32_t compute_ad(causal_redundancy_controller_t *controller, rlnc_window_t *current_window) {
+static __attribute__((always_inline)) uint32_t compute_ad(causal_redundancy_controller_t *controller, fec_window_t *current_window) {
     uint32_t ad = 0;
     for (int i = 0 ; i < controller->fec_slots->current_size ; i++) {
         uint64_t slot = controller->fec_slots->elems[((uint64_t)(controller->fec_slots->start + i))  % ((uint64_t)controller->fec_slots->max_size)];
-        rlnc_window_t *sent_window = get_window_sent_at_slot(controller->slots_history, slot);
+        fec_window_t *sent_window = get_window_sent_at_slot(controller->slots_history, slot);
         if (sent_window && window_intersects(sent_window, current_window)) ad++;
     }
     for (int i = 0 ; i < controller->fb_fec_slots->current_size ; i++) {
         uint64_t slot = controller->fb_fec_slots->elems[((uint64_t)(controller->fb_fec_slots->start + i)) % ((uint64_t)controller->fb_fec_slots->max_size)];
-        rlnc_window_t *sent_window = get_window_sent_at_slot(controller->slots_history, slot);
+        fec_window_t *sent_window = get_window_sent_at_slot(controller->slots_history, slot);
         if (sent_window && window_intersects(sent_window, current_window)) ad++;
     }
     return ad;
 }
 
-static __attribute__((always_inline)) uint32_t compute_md(causal_redundancy_controller_t *controller, rlnc_window_t *current_window) {
+static __attribute__((always_inline)) uint32_t compute_md(causal_redundancy_controller_t *controller, fec_window_t *current_window) {
     uint32_t md = 0;
     for (int i = 0 ; i < controller->nacked_slots->current_size ; i++) {
         uint64_t slot = controller->nacked_slots->elems[((uint64_t)(controller->nacked_slots->start + i)) % ((uint64_t)controller->nacked_slots->max_size)];
-        rlnc_window_t *sent_window = get_window_sent_at_slot(controller->slots_history, slot);
+        fec_window_t *sent_window = get_window_sent_at_slot(controller->slots_history, slot);
         // see equation
         if (sent_window
             && !is_elem_in_buffer(controller->fec_slots, slot)
@@ -360,19 +360,8 @@ static __attribute__((always_inline)) causal_packet_type_t what_to_send(picoquic
     return type;
 }
 
-// either acked or recovered
-static __attribute__((always_inline)) void symbol_received(picoquic_cnx_t *cnx, window_redundancy_controller_t c, window_source_symbol_id_t symbol_id, uint64_t acked_slot, rlnc_window_t *current_window) {
-    causal_redundancy_controller_t *controller = (causal_redundancy_controller_t *) c;
-    // remove all the acked slots in the window
-    add_elem_to_buffer(controller->acked_slots, acked_slot);
-    add_elem_to_buffer(controller->received_symbols, symbol_id);
-    while(remove_symbol_from_window(current_window, symbol_id) && symbol_id++, is_elem_in_buffer(controller->received_symbols,
-                                                                                               symbol_id));
-    // TODO
-}
 
-
-static __attribute__((always_inline)) void sent_packet(window_redundancy_controller_t c, causal_packet_type_t type, uint64_t slot, rlnc_window_t *window) {
+static __attribute__((always_inline)) void sent_packet(window_redundancy_controller_t c, causal_packet_type_t type, uint64_t slot, fec_window_t *window) {
     causal_redundancy_controller_t *controller = (causal_redundancy_controller_t *) c;
     add_elem_to_history(controller->slots_history, slot, *window);
     if (!EW(controller, window)) {
@@ -391,7 +380,7 @@ static __attribute__((always_inline)) void sent_packet(window_redundancy_control
 }
 
 // either acked or recovered
-static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, causal_redundancy_controller_t *controller, available_slot_reason_t feedback, rlnc_window_t *current_window) {
+static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, causal_redundancy_controller_t *controller, available_slot_reason_t feedback, fec_window_t *current_window) {
     if (feedback != available_slot_reason_none)    controller->n_received_feedbacks++;
     if (feedback == available_slot_reason_nack)  {
         controller->n_lost_slots++;
@@ -481,21 +470,18 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, causal_
     }
 }
 
-static __attribute__((always_inline)) void slot_acked(picoquic_cnx_t *cnx, window_redundancy_controller_t c, uint64_t slot, rlnc_window_t *current_window) {
+static __attribute__((always_inline)) void slot_acked(picoquic_cnx_t *cnx, window_redundancy_controller_t c, uint64_t slot) {
     causal_redundancy_controller_t *controller = (causal_redundancy_controller_t *) c;
     add_elem_to_buffer(controller->acked_slots, slot);
-    run_algo(cnx, controller, available_slot_reason_ack, current_window);
 }
 
-static __attribute__((always_inline)) void free_slot_without_feedback(picoquic_cnx_t *cnx, window_redundancy_controller_t c, rlnc_window_t *current_window) {
+static __attribute__((always_inline)) void free_slot_without_feedback(picoquic_cnx_t *cnx, window_redundancy_controller_t c) {
     causal_redundancy_controller_t *controller = (causal_redundancy_controller_t *) c;
-    run_algo(cnx, controller, available_slot_reason_none, current_window);
 }
 
-static __attribute__((always_inline)) void slot_nacked(picoquic_cnx_t *cnx, window_redundancy_controller_t c, uint64_t slot, rlnc_window_t *current_window) {
+static __attribute__((always_inline)) void slot_nacked(picoquic_cnx_t *cnx, window_redundancy_controller_t c, uint64_t slot) {
     causal_redundancy_controller_t *controller = (causal_redundancy_controller_t *) c;
     // remove all the acked slots in the window
     add_elem_to_buffer(controller->nacked_slots, slot);
-    run_algo(cnx, controller, available_slot_reason_nack, current_window);
 }
 #endif

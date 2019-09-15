@@ -14,9 +14,11 @@ protoop_arg_t process_frame(picoquic_cnx_t *cnx) {
         return PICOQUIC_ERROR_MEMORY;
 
     window_source_symbol_id_t *id = (window_source_symbol_id_t *) get_cnx(cnx, AK_CNX_INPUT, 0);
-    if (!id)
+    if (!id) {
         return PICOQUIC_ERROR_MEMORY;
+    }
     state->current_packet_first_id = *id;
-    my_free(cnx, id);
+    // we don't need to free because the core will do it...
+//    my_free(cnx, id);
     return (protoop_arg_t) 0;
 }

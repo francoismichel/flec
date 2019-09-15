@@ -16,6 +16,7 @@ protoop_arg_t write_frame(picoquic_cnx_t *cnx) {
     const uint8_t* bytes_max = (const uint8_t *) get_cnx(cnx, AK_CNX_INPUT, 1);
     window_source_symbol_id_t id = (window_source_symbol_id_t) get_cnx(cnx, AK_CNX_INPUT, 2);
 
+    PROTOOP_PRINTF(cnx, "WRITE SRC FPI, ID = %u\n", id);
     my_memset(bytes, FRAME_FEC_SRC_FPI, bytes_max - bytes);
     bytes++;
 

@@ -22,8 +22,7 @@ protoop_arg_t causal_what_to_send(picoquic_cnx_t *cnx) {
         return PICOQUIC_ERROR_MEMORY;
     available_slot_reason_t reason = (available_slot_reason_t) get_cnx(cnx, AK_CNX_INPUT, 0);
     window_fec_framework_t *wff = (window_fec_framework_t *) state->framework_sender;
-    rlnc_window_t window;
-    int err = get_current_window_bounds_helper(cnx, &window.start, &window.end);
+    fec_window_t window = get_current_fec_window(cnx, wff);
     run_algo(cnx, (causal_redundancy_controller_t *) wff->controller, reason, &window);
     causal_packet_type_t ptype = what_to_send(cnx, wff->controller);
     what_to_send_t wts;
@@ -39,5 +38,5 @@ protoop_arg_t causal_what_to_send(picoquic_cnx_t *cnx) {
             break;
     }
     set_cnx(cnx, AK_CNX_OUTPUT, 0, wts);
-    return err;
+    return 0;
 }

@@ -10,6 +10,7 @@ protoop_arg_t notify_repair_frame(picoquic_cnx_t *cnx)
     /* int received = (int) get_cnx(cnx, AK_CNX_INPUT, 1); */
     // TODO: maybe free this before (i.e. just after writing) as it is never retransmitted
     delete_repair_frame(cnx, rfs->frame_ctx);
+    PROTOOP_PRINTF(cnx, "FREE RFS\n");
     my_free(cnx, rfs);
     return 0;
 }

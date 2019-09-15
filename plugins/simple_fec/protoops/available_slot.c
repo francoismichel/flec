@@ -16,15 +16,20 @@ protoop_arg_t available_slot(picoquic_cnx_t *cnx) {
     protoop_arg_t args[1];
     args[0] = reason;
     what_to_send_t wts = 0;
+    PROTOOP_PRINTF(cnx, "AVAILABLE SLOT !\n");
     int err = fec_what_to_send(cnx, reason, &wts);
-    if (err)
+    if (err) {
         return err;
+    }
+    PROTOOP_PRINTF(cnx, "WTS = %d!\n", wts);
     switch (wts) {
         case what_to_send_new_symbol:
             if (run_noparam(cnx, FEC_PROTOOP_HAS_PROTECTED_DATA_TO_SEND, 0, NULL, NULL)) {
                 source_symbol_id_t id;
                 get_next_source_symbol_id(cnx, state->framework_sender, &id);
                 err = reserve_src_fpi_frame(cnx, id);
+                if (!err)
+                    state->n_reserved_id_or_repair_frames++;
                 break;
             } // otherwise, we fallthrough and send a repair symbol
         case what_to_send_feedback_implied_repair_symbol:
@@ -32,7 +37,5 @@ protoop_arg_t available_slot(picoquic_cnx_t *cnx) {
             err = reserve_repair_frames(cnx, state->framework_sender, DEFAULT_SLOT_SIZE, state->symbol_size);
             break;
     }
-    // TODO: move this before schedule_frames_on_path
-    state->has_written_fpi_frame = false;
     return err;
 }

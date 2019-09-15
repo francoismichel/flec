@@ -12,8 +12,10 @@
 #define member_size(struct_type, member) (sizeof(((struct_type *) 0)->member))
 
 static __attribute__((always_inline)) uint64_t decode_un(uint8_t *bytes, int n) {
+    // we put 8 here instead of n because otherwise, we get an access to register 11 after compiling which is forbidden :'-)
+    // but don't worry I love my job
     uint64_t retval = 0;
-    uint8_t buffer[n];
+    uint8_t buffer[8];
     my_memcpy(buffer, bytes, n);
     int i;
     for (i = 0; i < n ; i++) {
@@ -24,13 +26,23 @@ static __attribute__((always_inline)) uint64_t decode_un(uint8_t *bytes, int n) 
 }
 
 static __attribute__((always_inline)) void encode_un(uint64_t to_encode, uint8_t *bytes, int n) {
-    uint8_t buffer[n];
+    // same as for decode_un
+    uint8_t buffer[8];
     int i;
     for (i = 0; i < n ; i++) {
         buffer[i] = (uint8_t) (to_encode >> 8*(n-i-1));
     }
     my_memcpy(bytes, buffer, n);
 }
+
+//static __attribute__((always_inline)) void encode_un(uint64_t to_encode, uint8_t *bytes, int n) {
+//    uint8_t buffer[n];
+//    int i;
+//    for (i = 0; i < n ; i++) {
+//        buffer[i] = (uint8_t) (to_encode >> 8*(n-i-1));
+//    }
+//    my_memcpy(bytes, buffer, n);
+//}
 
 static __attribute__((always_inline)) uint16_t decode_u16(uint8_t *bytes) {
     return (uint16_t) decode_un(bytes, 2);
@@ -59,6 +71,7 @@ static __attribute__((always_inline)) void encode_u64(uint64_t to_encode, uint8_
 static __attribute__((always_inline)) int get_next_source_symbol_id(picoquic_cnx_t *cnx, framework_sender_t sender, source_symbol_id_t *ret) {
     protoop_arg_t out = 0;
     int err = (int) run_noparam(cnx, FEC_PROTOOP_GET_NEXT_SOURCE_SYMBOL_ID, 1, &sender, &out);
+    *ret = out;
     return err;
 }
 
@@ -167,6 +180,16 @@ static __attribute__((always_inline)) what_to_send_t fec_packet_symbols_have_bee
     args[4] = (protoop_arg_t) fec_protected;
     args[5] = (protoop_arg_t) contains_repair_Frame;
     return (int) run_noparam(cnx, FEC_PACKET_HAVE_BEEN_RECEIVED, 6, args, NULL);
+}
+
+static __attribute__((always_inline)) what_to_send_t fec_sent_packet(picoquic_cnx_t *cnx, picoquic_packet_t *packet,
+                                                                     bool fec_protected, bool contains_repair_frame, bool is_fb_fec) {
+    protoop_arg_t args[4];
+    args[0] = (protoop_arg_t) packet;
+    args[1] = (protoop_arg_t) fec_protected;
+    args[2] = (protoop_arg_t) contains_repair_frame;
+    args[3] = (protoop_arg_t) is_fb_fec;
+    return (int) run_noparam(cnx, FEC_SENT_PACKET, 4, args, NULL);
 }
 
 

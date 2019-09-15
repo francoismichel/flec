@@ -8,6 +8,7 @@
 #define gf256_add(a, b) (a^b)
 #define gf256_sub gf256_add
 #include <stdbool.h>
+#include <stdint.h>
 
 static __attribute__((always_inline)) uint8_t gf256_mul(uint8_t a, uint8_t b, uint8_t **mul)
 { return mul[a][b]; }

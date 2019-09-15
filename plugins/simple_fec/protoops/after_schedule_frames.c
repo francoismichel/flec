@@ -41,19 +41,25 @@ protoop_arg_t schedule_frames_on_path(picoquic_cnx_t *cnx)
             return err;
 
         if (err == 0) {
+            PROTOOP_PRINTF(cnx, "THE PACKET HAS BEEN SUCCESSFULLY PROTECTED\n");
             // something has been protected
-            set_pkt_metadata(cnx, packet, FEC_PKT_METADATA_SENT_SLOT, state->last_protected_slot);
+            set_pkt_metadata(cnx, packet, FEC_PKT_METADATA_SENT_SLOT, state->current_slot++);
             set_pkt_metadata(cnx, packet, FEC_PKT_METADATA_FLAGS, packet_flags | FEC_PKT_METADATA_FLAG_IS_FEC_PROTECTED);
             set_pkt_metadata(cnx, packet, FEC_PKT_METADATA_FIRST_SOURCE_SYMBOL_ID, id);
             set_pkt_metadata(cnx, packet, FEC_PKT_METADATA_NUMBER_OF_SOURCE_SYMBOLS, n_symbols);
+            fec_sent_packet(cnx, packet, true, false, false);
         }
 
-    } else if (state->has_written_repair_frame) {
-        set_pkt_metadata(cnx, packet, FEC_PKT_METADATA_SENT_SLOT, state->last_fec_slot);
+    } else if (state->has_written_repair_frame || state->has_written_fb_fec_repair_frame) {
+        set_pkt_metadata(cnx, packet, FEC_PKT_METADATA_SENT_SLOT, state->current_slot++);
         set_pkt_metadata(cnx, packet, FEC_PKT_METADATA_FLAGS, packet_flags | FEC_PKT_METADATA_FLAG_CONTAINS_REPAIR_FRAME);
+        if (state->has_written_fb_fec_repair_frame)
+            set_pkt_metadata(cnx, packet, FEC_PKT_METADATA_FLAGS, packet_flags | FEC_PKT_METADATA_FLAG_IS_FB_FEC);
+        fec_sent_packet(cnx, packet, false, true, state->has_written_fb_fec_repair_frame);
     }
     state->has_written_fpi_frame = false;
     state->has_written_repair_frame = false;
+    state->has_written_fb_fec_repair_frame = false;
     // maybe wake now if slots are still available
 //    picoquic_path_t *path = (picoquic_path_t *) get_cnx(cnx, AK_CNX_PATH, 0);
 //    bool slot_available = get_path(path, AK_PATH_CWIN, 0) > get_path(path, AK_PATH_BYTES_IN_TRANSIT, 0);

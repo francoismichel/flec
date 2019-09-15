@@ -59,7 +59,7 @@ protoop_arg_t get_one_coded_symbol(picoquic_cnx_t *cnx)
 
 
 
-
+    uint32_t first_seed = fs->current_repair_symbol;
     for (int i = 0 ; i < n_symbols_to_generate ; i++) {
         uint32_t seed = fs->current_repair_symbol++;
 
@@ -73,6 +73,7 @@ protoop_arg_t get_one_coded_symbol(picoquic_cnx_t *cnx)
         }
         rs->metadata.n_protected_symbols = n_source_symbols;
         rs->metadata.first_id = source_symbols[0]->id;
+        rs->repair_symbol.payload_length = symbol_size;
         encode_u32(seed, rs->metadata.fss.val);
         repair_symbols[i] = rs;
 
@@ -84,5 +85,9 @@ protoop_arg_t get_one_coded_symbol(picoquic_cnx_t *cnx)
     }
     my_free(cnx, coefs);
     my_free(cnx, knowns);
+    // the fec-scheme specific is network-byte ordered
+    encode_u32(first_seed, (uint8_t *) &first_seed);
+    set_cnx(cnx, AK_CNX_OUTPUT, 0, first_seed);
+    set_cnx(cnx, AK_CNX_OUTPUT, 1, n_symbols_to_generate);
     return 0;
 }

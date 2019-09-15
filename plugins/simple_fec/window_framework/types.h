@@ -21,6 +21,9 @@
  * \return \b int Error code, 0 iff everything was fine
  */
 #define FEC_PROTOOP_WINDOW_FEC_SCHEME_RECOVER "window_fecscheme_recover"
+#define FEC_PROTOOP_WINDOW_CONTROLLER_SLOT_ACKED "fec_controller_slot_acked"
+#define FEC_PROTOOP_WINDOW_CONTROLLER_SLOT_NACKED "fec_controller_slot_nacked"
+#define FEC_PROTOOP_WINDOW_CONTROLLER_FREE_SLOT "fec_controller_free_slot"
 #define WINDOW_INITIAL_SYMBOL_ID 1
 
 #define MAX_SENDING_WINDOW_SIZE 100
@@ -118,6 +121,7 @@ typedef protoop_arg_t window_redundancy_controller_t;
 
 
 typedef struct window_repair_frame {
+    bool is_fb_fec;
     window_fec_scheme_specific_t fss;
     window_source_symbol_id_t first_protected_symbol;
     uint16_t n_protected_symbols;
@@ -134,9 +138,17 @@ static __attribute__((always_inline)) window_repair_frame_t *create_repair_frame
 }
 
 // if not null, will free rf->symbols but not the symbols themselves
-static __attribute__((always_inline)) window_repair_frame_t *delete_repair_frame(picoquic_cnx_t *cnx, window_repair_frame_t *rf) {
-    if (rf->symbols)
+static __attribute__((always_inline)) window_repair_frame_t *delete_repair_frame_symbols(picoquic_cnx_t *cnx, window_repair_frame_t *rf) {
+    if (rf->symbols) {
         my_free(cnx, rf->symbols);
+        rf->symbols = NULL;
+    }
+    return rf;
+}
+
+// if not null, will free rf->symbols but not the symbols themselves
+static __attribute__((always_inline)) window_repair_frame_t *delete_repair_frame(picoquic_cnx_t *cnx, window_repair_frame_t *rf) {
+    delete_repair_frame_symbols(cnx, rf);
     my_free(cnx, rf);
     return rf;
 }
@@ -168,13 +180,14 @@ static __attribute__((always_inline)) int serialize_window_repair_frame(picoquic
     *consumed += tmp;
     // encode number of repair symbols (the symbol size is implicitly negociated so we don't need to encode it)
     encode_un(repair_frame->n_protected_symbols, out_buffer + *consumed, sizeof(repair_frame->n_protected_symbols));
+    *consumed += sizeof(repair_frame->n_protected_symbols);
     encode_un(repair_frame->n_repair_symbols, out_buffer + *consumed, sizeof(repair_frame->n_repair_symbols));
     *consumed += sizeof(repair_frame->n_repair_symbols);
     // encode payload
     for (int i = 0 ; i < repair_frame->n_repair_symbols ; i++) {
         // FIXME: maybe should we remove the symbol size field from the repair symbols
         if (repair_frame->symbols[i]->payload_length != symbol_size) {
-            PROTOOP_PRINTF(cnx, "ERROR: INCONSISTENT REPAIR SYMBOL SIZE");
+            PROTOOP_PRINTF(cnx, "ERROR: INCONSISTENT REPAIR SYMBOL SIZE= RS LENGTH = %u, SYMBOL SIZE = %u\n", repair_frame->symbols[i]->payload_length, symbol_size);
             return -1;
         }
         // encoding the ith symbol
@@ -224,6 +237,7 @@ static __attribute__((always_inline)) window_repair_frame_t *parse_window_repair
     if (bytes_max - bytes - *consumed < rf->n_repair_symbols*symbol_size)
         return NULL;
     if (!skip_repair_payload) {
+        PROTOOP_PRINTF(cnx, "ENTER IN IF, N_RS = %d\n", rf->n_repair_symbols);
         rf->symbols = my_malloc(cnx, rf->n_repair_symbols*sizeof(window_repair_symbol_t *));
         if (!rf->symbols) {
             delete_repair_frame(cnx, rf);
@@ -236,6 +250,7 @@ static __attribute__((always_inline)) window_repair_frame_t *parse_window_repair
             // decoding the ith symbol
             rf->symbols[i] = create_repair_symbol(cnx, symbol_size);
             if (!rf->symbols[i]) {
+                PROTOOP_PRINTF(cnx, "BREAK\n");
                 for (int j = 0 ; j < i ; j++) {
                     delete_repair_symbol(cnx, rf->symbols[j]);
                 }
@@ -243,7 +258,9 @@ static __attribute__((always_inline)) window_repair_frame_t *parse_window_repair
                 *consumed = 0;
                 break;
             }
+            PROTOOP_PRINTF(cnx, "COPY RS %d\n", i);
             my_memcpy(rf->symbols[i]->repair_payload, bytes + *consumed, symbol_size);
+            PROTOOP_PRINTF(cnx, "COPIED\n");
             *consumed += symbol_size;
         }
 
@@ -251,6 +268,7 @@ static __attribute__((always_inline)) window_repair_frame_t *parse_window_repair
         // skip the payload, because of skip_frame...
         *consumed += rf->n_repair_symbols*symbol_size;
     }
+    PROTOOP_PRINTF(cnx, "RETURN\n");
     return rf;
 }
 

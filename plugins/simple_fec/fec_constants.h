@@ -13,6 +13,7 @@
 #define FEC_RESERVE_REPAIR_FRAMES "fec_reserve_repair_frames"
 #define FEC_PACKET_HAS_BEEN_LOST "fec_packet_lost"
 #define FEC_PACKET_HAVE_BEEN_RECEIVED "fec_packet_received"
+#define FEC_SENT_PACKET "fec_sent_packet"
 
 
 // frames
@@ -38,9 +39,11 @@
 
 #define FEC_PKT_METADATA_FLAG_IS_FEC_PROTECTED 1LU
 #define FEC_PKT_METADATA_FLAG_CONTAINS_REPAIR_FRAME 2LU
+#define FEC_PKT_METADATA_FLAG_IS_FB_FEC 4LU
 
 #define FEC_PKT_IS_FEC_PROTECTED(val) ((val & FEC_PKT_METADATA_FLAG_IS_FEC_PROTECTED) != 0)
 #define FEC_PKT_CONTAINS_REPAIR_FRAME(val) ((val & FEC_PKT_METADATA_FLAG_CONTAINS_REPAIR_FRAME) != 0)
+#define FEC_PKT_IS_FB_FEC(val) ((val & FEC_PKT_METADATA_FLAG_IS_FB_FEC) != 0)
 
 
 

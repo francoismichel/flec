@@ -22,6 +22,7 @@ protoop_arg_t parse_frame(picoquic_cnx_t *cnx) {
     uint8_t* bytes_protected = (uint8_t *) get_cnx(cnx, AK_CNX_INPUT, 0);
     const uint8_t* bytes_max = (uint8_t *) get_cnx(cnx, AK_CNX_INPUT, 1);
 
+    PROTOOP_PRINTF(cnx, "PARSE SRC FPI\n");
     // type byte
     bytes_protected++;
 
@@ -30,5 +31,6 @@ protoop_arg_t parse_frame(picoquic_cnx_t *cnx) {
     set_cnx(cnx, AK_CNX_OUTPUT, 0, (protoop_arg_t) id);
     set_cnx(cnx, AK_CNX_OUTPUT, 1, false);
     set_cnx(cnx, AK_CNX_OUTPUT, 2, false);
+    PROTOOP_PRINTF(cnx, "CONSUMED = %d\n", consumed);
     return (protoop_arg_t) bytes_protected + consumed;
 }

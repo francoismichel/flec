@@ -21,6 +21,8 @@ protoop_arg_t write_frame(picoquic_cnx_t *cnx) {
 
     size_t consumed = 0;
     int err = serialize_window_repair_frame(cnx, bytes, bytes_max - bytes, rf, state->symbol_size, &consumed);
+    state->has_written_fb_fec_repair_frame = rf->is_fb_fec;
+    state->has_written_repair_frame = !rf->is_fb_fec;
     set_cnx(cnx, AK_CNX_OUTPUT, 0, (protoop_arg_t) 1 + consumed);
     set_cnx(cnx, AK_CNX_OUTPUT, 1, (protoop_arg_t) 0);
     return err;

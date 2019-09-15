@@ -9,11 +9,12 @@
 #include "fec_constants.h"
 #include "utils.h"
 
-#define SIMPLE_FEC_OPAQUE_ID 42
+#define SIMPLE_FEC_OPAQUE_ID 10
 
 typedef struct {
     bool has_written_fpi_frame;
     bool has_written_repair_frame;
+    bool has_written_fb_fec_repair_frame;
     bool is_incoming_packet_fec_protected;
     bool current_packet_is_lost;
 
@@ -25,8 +26,15 @@ typedef struct {
     bool handshake_finished;
 
     source_symbol_id_t current_id;
-    uint64_t last_protected_slot;
-    uint64_t last_fec_slot;
+
+    uint64_t current_slot;
+
+    // TODO: remove these slots
+//    uint64_t last_protected_slot;
+//    uint64_t last_fec_slot;
+
+    uint64_t n_reserved_id_or_repair_frames;
+
     uint8_t *current_packet;
     source_symbol_id_t current_packet_first_id;
     uint16_t current_packet_length;
@@ -152,6 +160,7 @@ static __attribute__((always_inline)) void delete_source_symbol(picoquic_cnx_t *
 }
 
 typedef struct repair_symbol {
+    bool is_fb_fec;
     uint16_t payload_length;
     uint8_t *repair_payload;
 } repair_symbol_t;
@@ -176,19 +185,23 @@ static __attribute__((always_inline)) void delete_repair_symbol(picoquic_cnx_t *
     my_free(cnx, rs);
 }
 
-static __attribute__((always_inline)) int preprocess_packet_payload(picoquic_cnx_t *cnx, const uint8_t *packet_payload, size_t payload_length, uint8_t *output_payload, size_t *total_size) {
+static __attribute__((always_inline)) int preprocess_packet_payload(picoquic_cnx_t *cnx, uint8_t *packet_payload, size_t payload_length, uint8_t *output_payload, size_t *total_size) {
     size_t offset_in_packet_payload = 0;
     size_t offset_in_output = 0;
     size_t consumed = 0;
     int pure_ack = 0;
     uint8_t type_byte;
     while(offset_in_packet_payload < payload_length) {
-        type_byte = packet_payload[offset_in_packet_payload];
+        my_memcpy(&type_byte, &packet_payload[offset_in_packet_payload], sizeof(uint8_t));
+        // TODO: voir pk consumed fait 1400 bytes, printer e type byte
+//        type_byte = packet_payload[offset_in_packet_payload];
         bool to_ignore = type_byte == picoquic_frame_type_ack || type_byte == picoquic_frame_type_padding || type_byte == picoquic_frame_type_crypto_hs || type_byte == FRAME_FEC_SRC_FPI;
-        int err = helper_skip_frame(cnx, output_payload + offset_in_packet_payload, payload_length - offset_in_packet_payload, &consumed, &pure_ack);
+        int err = helper_skip_frame(cnx, packet_payload + offset_in_packet_payload, payload_length - offset_in_packet_payload, &consumed, &pure_ack);
         if (err)
             return err;
+        PROTOOP_PRINTF(cnx, "CONSUMED = %lu, TYPE = %u\n", consumed, type_byte);
         if (!to_ignore) {
+            PROTOOP_PRINTF(cnx, "NOT IGNORE, CONSUMED = %lu\n", consumed);
             my_memcpy(output_payload + offset_in_output, packet_payload + offset_in_packet_payload, consumed);
             offset_in_output += consumed;
         }
@@ -214,13 +227,16 @@ static __attribute__((always_inline)) source_symbol_t **packet_payload_to_source
     size_t processed_length = sizeof(packet_number);
     size_t temp_length = 0;
     // remove the useless frames from the payload
+    PROTOOP_PRINTF(cnx, "BEFORE PREPROCESS\n");
     int err = preprocess_packet_payload(cnx, payload, payload_length, processed_payload + processed_length, &temp_length);
     if (err)
         return NULL;
+    PROTOOP_PRINTF(cnx, "AFTER PREPROCESS, PAYLOAD LENGTH = %u, TEMP LENGTH = %u\n", payload_length, temp_length);
     processed_length += temp_length;
     uint16_t padded_length = (processed_length % chunk_size == 0) ? processed_length : (chunk_size * (processed_length/chunk_size + 1));
     uint16_t padding_length = padded_length - processed_length;
     *n_chunks = padded_length / chunk_size;
+    PROTOOP_PRINTF(cnx, "PROCESSED LENGTH = %u, PADDED LENGTH = %u, CHUNK SIZE = %u, N_CHUNKS = %u\n", processed_length, padded_length, chunk_size, *n_chunks);
     source_symbol_t **retval = (source_symbol_t **) my_malloc(cnx, MAX(*n_chunks, 1)*sizeof(source_symbol_t *));
     if (!retval)
         return NULL;

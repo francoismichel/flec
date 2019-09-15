@@ -27,7 +27,7 @@ typedef struct {
     
 } window_fec_framework_receiver_t;
 
-static __attribute__((always_inline)) window_fec_framework_receiver_t *create_framework_receiver(picoquic_cnx_t *cnx, fec_scheme_t fs, uint16_t symbol_size) {
+static __attribute__((always_inline)) window_fec_framework_receiver_t *create_framework_receiver(picoquic_cnx_t *cnx, fec_scheme_t fs) {
     window_fec_framework_receiver_t *wff = my_malloc(cnx, sizeof(window_fec_framework_receiver_t));
     if (!wff)
         return NULL;
@@ -89,7 +89,6 @@ static __attribute__((always_inline)) window_fec_framework_receiver_t *create_fr
         my_free(cnx, wff);
         return NULL;
     }
-    wff->symbol_size = symbol_size;
     return wff;
 }
 
@@ -180,7 +179,7 @@ static __attribute__((always_inline)) int window_receive_packet_payload(picoquic
 static __attribute__((always_inline)) int window_receive_repair_symbol(picoquic_cnx_t *cnx, window_fec_framework_receiver_t *wff, window_repair_symbol_t *rs) {
     if (rs->metadata.first_id + rs->metadata.n_protected_symbols - 1 <= get_highest_contiguous_received_source_symbol(wff->symbols_tracker))
         return false;
-    // TODO: encode fec/fb-fec information
+    // TODO: encode fec/fb-fec information: maybe not needed in the end
 //    rs->fec_scheme_specific &= 0x7FFFFFFFU;
     repair_symbol_t *removed = add_repair_symbol(cnx, wff->received_repair_symbols, rs);
     if (removed)
@@ -192,8 +191,14 @@ static __attribute__((always_inline)) int window_receive_repair_symbol(picoquic_
 //pre: the rss must have been created as an array of (window_repair_symbol_t *)
 static __attribute__((always_inline)) void window_receive_repair_symbols(picoquic_cnx_t *cnx, window_fec_framework_receiver_t *wff, repair_symbol_t **rss, uint16_t n_symbols) {
     for (int i = 0 ; i < n_symbols ; i++) {
-        window_receive_repair_symbol(cnx, wff, (window_repair_symbol_t *) rss[i]);
+        PROTOOP_PRINTF(cnx, "BEFORE RECEIVE RS %d\n", i);
+        if (!window_receive_repair_symbol(cnx, wff, (window_repair_symbol_t *) rss[i])) {
+            delete_repair_symbol(cnx, rss[i]);
+            rss[i] = NULL;
+        }
+        PROTOOP_PRINTF(cnx, "AFTER RECEIVE RS\n");
     }
+    PROTOOP_PRINTF(cnx, "RETURN\n");
 }
 
 
