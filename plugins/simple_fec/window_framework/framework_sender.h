@@ -165,7 +165,7 @@ static __attribute__((always_inline)) repair_symbol_t *dequeue_repair_symbol(pic
 static __attribute__((always_inline)) void queue_repair_symbols(picoquic_cnx_t *cnx, window_fec_framework_t *wff, repair_symbol_t *rss[], uint16_t n_repair_symbols,
         uint16_t n_protected_symbols, window_source_symbol_id_t first_protected_symbol, window_fec_scheme_specific_t fss){
     for (int i = 0 ; i < n_repair_symbols ; i++) {
-        queue_repair_symbol(cnx, wff, rss[i], n_protected_symbols, first_protected_symbol, fss);
+        queue_repair_symbol(cnx, wff, rss[i], n_protected_symbols, first_protected_symbol, ((window_repair_symbol_t *) rss[i])->metadata.fss);
     }
 }
 
@@ -183,16 +183,15 @@ static __attribute__((always_inline)) int get_repair_symbols_from_queue(picoquic
 
     *added_symbols = 0;
     *consumed = REPAIR_FRAME_HEADER_SIZE;
-    PROTOOP_PRINTF(cnx, "BEFORE WHILE\n");
-
+    window_fec_scheme_specific_t tmp;
     while (wff->repair_symbols_queue_length > 0 && *consumed + symbol_size <= bytes_max && *added_symbols < symbols_max) {
         uint16_t current_protected_symbols = 0;
         window_source_symbol_id_t current_first_protected;
-        repair_symbol_t *rs = peek_repair_symbol(cnx, wff, &current_protected_symbols, &current_first_protected, fss);
-        PROTOOP_PRINTF(cnx, "DEQUEUED RS = %p, SYMBOLS = %p\n", (protoop_arg_t) rs, (protoop_arg_t) symbols);
+        repair_symbol_t *rs = peek_repair_symbol(cnx, wff, &current_protected_symbols, &current_first_protected, &tmp);
         if (*added_symbols == 0) {
             *n_protected_symbols = current_protected_symbols;
             *first_protected_symbol = current_first_protected;
+            *fss = tmp;
         } else if (current_protected_symbols != *n_protected_symbols || current_first_protected != *first_protected_symbol) {
             // we bulk-enqueue repair symbols that protect exactly the same source symbols
             break;
@@ -200,13 +199,9 @@ static __attribute__((always_inline)) int get_repair_symbols_from_queue(picoquic
 
         *contains_fb_fec |= rs->is_fb_fec;
         symbols[*added_symbols] = rs;
-        PROTOOP_PRINTF(cnx, "SET SYMBOLS[%d] WITH LENGTH %u\n", *added_symbols, rs->payload_length);
         *added_symbols += 1;
         *consumed += symbol_size;
-        dequeue_repair_symbol(cnx, wff, &current_protected_symbols, &current_first_protected, fss, false);
-    }
-    for (int i = 0 ; i < *added_symbols ; i++) {
-        PROTOOP_PRINTF(cnx, "ENQUEUED SYMBOLS[%d] WITH LENGTH %u\n", i, symbols[i]->payload_length);
+        dequeue_repair_symbol(cnx, wff, &current_protected_symbols, &current_first_protected, &tmp, false);
     }
     return 0;
 }
@@ -266,10 +261,7 @@ static __attribute__((always_inline)) int window_reserve_repair_frames(picoquic_
         slot->nb_bytes = REPAIR_FRAME_TYPE_BYTE_SIZE + predicted_size;
         slot->frame_ctx = rf;
         slot->is_congestion_controlled = true;
-        PROTOOP_PRINTF(cnx, "RESERVE REPAIR FRAMES\n");
-        for (int i = 0 ; i < rf->n_repair_symbols ; i++) {
-            PROTOOP_PRINTF(cnx, "SYMBOL %d LENGTH = %u\n", i, rf->symbols[i]->payload_length);
-        }
+        PROTOOP_PRINTF(cnx, "RESERVE REPAIR FRAME, FSS = %u, FIRST ID = %i\n", decode_u32(rf->fss.val), rf->first_protected_symbol);
         size_t reserved_size = reserve_frames(cnx, 1, slot);
         if (reserved_size < slot->nb_bytes) {
             PROTOOP_PRINTF(cnx, "Unable to reserve frame slot\n");
@@ -277,6 +269,7 @@ static __attribute__((always_inline)) int window_reserve_repair_frames(picoquic_
             my_free(cnx, slot);
             return 1;
         }
+        size_max -= slot->nb_bytes;
     }
 
     return 0;
@@ -311,8 +304,9 @@ static __attribute__((always_inline)) bool remove_source_symbol_from_window(pico
 
         while(!is_fec_window_empty(wff) && wff->fec_window[wff->smallest_in_transit % MAX_SENDING_WINDOW_SIZE].received) {
 
-            if (!_remove_source_symbol_from_window(cnx, wff, wff->fec_window[wff->smallest_in_transit % MAX_SENDING_WINDOW_SIZE].symbol, id))
+            if (!_remove_source_symbol_from_window(cnx, wff, wff->fec_window[wff->smallest_in_transit % MAX_SENDING_WINDOW_SIZE].symbol, wff->smallest_in_transit)) {
                 return false;
+            }
             wff->smallest_in_transit++;
         }
 

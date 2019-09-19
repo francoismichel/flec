@@ -20,6 +20,8 @@ protoop_arg_t stream_bytes_max(picoquic_cnx_t* cnx) {
         // TODO: check if needed
 //        size_t overhead = 1 + (1 + sizeof(uint64_t)) + sizeof(fec_frame_header_t);
 //        bytes_max = (bytes_max && bytes_max > overhead) ? bytes_max-overhead : bytes_max;
+        size_t overhead = 50;
+        bytes_max = (bytes_max && bytes_max > SYMBOL_SIZE - overhead) ? SYMBOL_SIZE-overhead : bytes_max;
     }
     set_cnx(cnx, AK_CNX_OUTPUT, 0, bytes_max);
     return 0;

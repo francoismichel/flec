@@ -322,18 +322,26 @@ static __attribute__((always_inline)) void * pq_pop_min(min_max_pq_t pq) {
 
 
 static __attribute__((always_inline)) void * pq_get_max(min_max_pq_t pq) {
+    if (pq->size == 1)
+        return pq->buffer[ROOT].value;
     // the max is the largest child of the root
     return pq->buffer[largest_child_idx(pq, ROOT)].value;
 }
 
 // pre: the queue must not be empty
 static __attribute__((always_inline)) uint64_t pq_get_max_key(min_max_pq_t pq) {
+    if (pq->size == 1)
+        return pq->buffer[ROOT].key;
     // the max is the largest child of the root
     return pq->buffer[largest_child_idx(pq, ROOT)].key;
 }
 
 // pre: the queue must not be empty
 static __attribute__((always_inline)) void pq_get_max_key_val(min_max_pq_t pq, uint64_t *key, void **val) {
+    if (pq->size == 1) {
+        *key = pq->buffer[ROOT].key;
+        *val = pq->buffer[ROOT].value;
+    }
     // the max is the largest child of the root
     *key = pq->buffer[largest_child_idx(pq, ROOT)].key;
     *val = pq->buffer[largest_child_idx(pq, ROOT)].value;
@@ -379,11 +387,28 @@ static __attribute__((always_inline)) void *pq_insert_and_pop_min_if_full(min_ma
 // pre: values has at lease size max - min
 // max is excluded
 // returns the number of elements that were present in the tree
-// the values are inserted at index key - min in the array
+// the values are inserted contiguously in the array
 static __attribute__((always_inline)) int pq_get_between_bounds(min_max_pq_t pq, uint64_t min, uint64_t max, void **values) {
     queue_item_t current;
     int added = 0;
-    for (int i = 0 ; i < pq->size ; i++) {
+    for (int i = 1 ; i <= pq->size ; i++) {
+        current = pq->buffer[i];
+        // unordered version, but guarantee to have no hole in the array
+        if (min <= current.key && current.key < max) {
+            values[added++] = current.value;
+        }
+    }
+    return added;
+}
+
+// pre: values has at lease size max - min
+// max is excluded
+// returns the number of elements that were present in the tree
+// the values are inserted at index key - min in the array
+static __attribute__((always_inline)) int pq_get_between_bounds_ordered(min_max_pq_t pq, uint64_t min, uint64_t max, void **values) {
+    queue_item_t current;
+    int added = 0;
+    for (int i = 1 ; i <= pq->size ; i++) {
         current = pq->buffer[i];
         if (min <= current.key && current.key < max) {
             values[current.key - min] = current.value;

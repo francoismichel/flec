@@ -17,7 +17,9 @@ protoop_arg_t process_frame(picoquic_cnx_t *cnx) {
     if (!id) {
         return PICOQUIC_ERROR_MEMORY;
     }
+    PROTOOP_PRINTF(cnx, "PROCESS SRC FPI FRAME, IN SKIP FRAME = %d\n", state->is_in_skip_frame);
     state->current_packet_first_id = *id;
+    state->is_incoming_packet_fec_protected = true;
     // we don't need to free because the core will do it...
 //    my_free(cnx, id);
     return (protoop_arg_t) 0;

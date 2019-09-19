@@ -17,7 +17,7 @@ protoop_arg_t incoming_encrypted(picoquic_cnx_t *cnx)
     picoquic_packet_header* ph = (picoquic_packet_header *) get_cnx(cnx, AK_CNX_INPUT, 1); //cnx->protoop_inputv[1];
     plugin_state_t *state = get_plugin_state(cnx);
 
-    state->current_packet = bytes_protected;
+    state->current_packet = bytes_protected + get_ph(ph, AK_PH_OFFSET);
     state->current_packet_length = get_ph(ph, AK_PH_PAYLOAD_LENGTH);
     state->current_packet_number = get_ph(ph, AK_PH_SEQUENCE_NUMBER);
     state->is_incoming_packet_fec_protected = false;

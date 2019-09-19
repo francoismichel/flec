@@ -170,6 +170,7 @@ protoop_arg_t fec_recover(picoquic_cnx_t *cnx)
     window_source_symbol_id_t smallest_protected = (window_source_symbol_id_t) get_cnx(cnx, AK_CNX_INPUT, 6);
     uint16_t symbol_size = (uint16_t) get_cnx(cnx, AK_CNX_INPUT, 7);
 
+    window_repair_symbol_t *rs;
 
 
 
@@ -226,7 +227,6 @@ protoop_arg_t fec_recover(picoquic_cnx_t *cnx)
     tinymt32_init(shuffle_prng, picoquic_current_time());
     shuffle_repair_symbols(cnx, repair_symbols, n_repair_symbols, shuffle_prng);
     my_free(cnx, shuffle_prng);
-    window_repair_symbol_t *rs;
     for_each_window_repair_symbol(repair_symbols, rs, n_repair_symbols) {
         if (rs && i < n_eq) {
             window_source_symbol_id_t smallest_protected_by_rs = rs->metadata.first_id;
@@ -270,7 +270,7 @@ protoop_arg_t fec_recover(picoquic_cnx_t *cnx)
     if (can_recover)
         gaussElimination(cnx, n_effective_equations, n_missing_source_symbols, system_coefs, constant_terms, unknowns, undetermined, symbol_size, mul, fs->table_inv);
     else
-        PROTOOP_PRINTF(cnx, "CANNOT RECOVER\n");
+        PROTOOP_PRINTF(cnx, "CANNOT RECOVER, %d EQUATIONS, %d MISSING SYMBOLS\n", n_effective_equations, n_missing_source_symbols);
     int current_unknown = 0;
     int err = 0;
     for (int j = 0 ; j < n_source_symbols ; j++) {

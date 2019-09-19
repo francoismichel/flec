@@ -192,6 +192,11 @@ static __attribute__((always_inline)) what_to_send_t fec_sent_packet(picoquic_cn
     return (int) run_noparam(cnx, FEC_SENT_PACKET, 4, args, NULL);
 }
 
+static __attribute__((always_inline)) what_to_send_t fec_after_incoming_packet(picoquic_cnx_t *cnx) {
+
+    return (int) run_noparam(cnx, FEC_AFTER_INCOMING_PACKET, 0, NULL, NULL);
+}
+
 
 static __attribute__((always_inline)) int reserve_src_fpi_frame(picoquic_cnx_t *cnx, source_symbol_id_t id) {
     reserve_frame_slot_t *slot = (reserve_frame_slot_t *) my_malloc(cnx, sizeof(reserve_frame_slot_t));

@@ -14,6 +14,7 @@
 #define FEC_PACKET_HAS_BEEN_LOST "fec_packet_lost"
 #define FEC_PACKET_HAVE_BEEN_RECEIVED "fec_packet_received"
 #define FEC_SENT_PACKET "fec_sent_packet"
+#define FEC_AFTER_INCOMING_PACKET "fec_after_incoming"
 
 
 // frames
@@ -26,7 +27,7 @@
 
 // values
 #define MAX_SRC_FPI_SIZE 16
-#define CHUNK_SIZE 199
+#define CHUNK_SIZE 1199
 #define SYMBOL_SIZE (CHUNK_SIZE + 1)
 
 #define DEFAULT_SLOT_SIZE (PICOQUIC_MAX_PACKET_SIZE - 100)

@@ -248,9 +248,9 @@ static __attribute__((always_inline)) window_repair_frame_t *parse_window_repair
         // decode payload
         for (int i = 0 ; i < rf->n_repair_symbols ; i++) {
             // decoding the ith symbol
-            rf->symbols[i] = create_repair_symbol(cnx, symbol_size);
+            window_repair_symbol_t *rs = create_window_repair_symbol(cnx, symbol_size);
+            rf->symbols[i] = (repair_symbol_t *) rs;
             if (!rf->symbols[i]) {
-                PROTOOP_PRINTF(cnx, "BREAK\n");
                 for (int j = 0 ; j < i ; j++) {
                     delete_repair_symbol(cnx, rf->symbols[j]);
                 }
@@ -258,9 +258,11 @@ static __attribute__((always_inline)) window_repair_frame_t *parse_window_repair
                 *consumed = 0;
                 break;
             }
-            PROTOOP_PRINTF(cnx, "COPY RS %d\n", i);
+            rs->metadata.first_id = rf->first_protected_symbol;
+            rs->metadata.n_protected_symbols = rf->n_protected_symbols;
+            encode_u32(decode_u32(rf->fss.val) + i, rs->metadata.fss.val);
+
             my_memcpy(rf->symbols[i]->repair_payload, bytes + *consumed, symbol_size);
-            PROTOOP_PRINTF(cnx, "COPIED\n");
             *consumed += symbol_size;
         }
 
@@ -399,6 +401,8 @@ static __attribute__((always_inline)) uint8_t *parse_window_recovered_frame(pico
     first_recovered_packet = decode_u64(bytes);
     bytes += sizeof(uint64_t);
     uint8_t *size_and_packets = my_malloc(cnx, sizeof(uint64_t) + number_of_packets*(sizeof(uint64_t) + sizeof(window_source_symbol_id_t))); // sadly, we must place everything in one single malloc, because skip_frame will free our output
+    if (!size)
+        return NULL;
     my_memset(size_and_packets, 0, sizeof(uint64_t) + number_of_packets*(sizeof(uint64_t) + sizeof(window_source_symbol_id_t)));
     ((uint64_t *) size_and_packets)[0] = number_of_packets;
     uint64_t *packets =&(((uint64_t *) size_and_packets)[1]);
@@ -459,7 +463,7 @@ static __attribute__((always_inline)) uint8_t *parse_window_recovered_frame(pico
         return NULL;
     }
 
-    return bytes;
+    return size_and_packets;
 }
 
 #endif //PICOQUIC_TYPES_H

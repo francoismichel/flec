@@ -110,14 +110,14 @@ static __attribute__((always_inline)) void set_ss_metadata_S(source_symbol_t *ss
     if (val)
         ss->_whole_data[0] |= 0b010U;
     else
-        ss->_whole_data[0] &= 0x101U;
+        ss->_whole_data[0] &= 0b101U;
 }
 
 static __attribute__((always_inline)) void set_ss_metadata_E(source_symbol_t *ss, bool val) {
     if (val)
         ss->_whole_data[0] |= 0b001U;
     else
-        ss->_whole_data[0] &= 0x110U;
+        ss->_whole_data[0] &= 0b110U;
 }
 
 static __attribute__((always_inline)) bool get_ss_metadata_N(source_symbol_t *ss) {
@@ -244,16 +244,20 @@ static __attribute__((always_inline)) source_symbol_t **packet_payload_to_source
     if (*n_chunks == 0)
         return retval;
     size_t offset_in_payload = 0;
+    // TODO: print the first bytes of the symbol to see if we badly encode the metadata byte
     for (int current_symbol = 0 ; current_symbol < *n_chunks ; current_symbol++) {
         source_symbol_t *symbol = create_larger_source_symbol(cnx, chunk_size, source_symbol_memory_size);    // chunk size == symbol size - 1
         if (!symbol)
             return NULL;
         switch (current_symbol) {
             case 0:
-                // first symbol, copy including the padding
-                my_memcpy(symbol->chunk_data + padding_length, processed_payload + offset_in_payload, chunk_size - padding_length);
                 set_ss_metadata_N(symbol, true);    // this symbol contains the packet number
                 set_ss_metadata_S(symbol, true);    // this is the first symbol of the packet
+                // copy the packet payload
+                my_memcpy(symbol->chunk_data, processed_payload, sizeof(uint64_t));
+                offset_in_payload += sizeof(uint64_t);
+                // first symbol, copy including the padding
+                my_memcpy(symbol->chunk_data + sizeof(uint64_t) + padding_length, processed_payload + offset_in_payload, chunk_size - padding_length - sizeof(uint64_t));
                 offset_in_payload += chunk_size - padding_length;
                 break;
             default:

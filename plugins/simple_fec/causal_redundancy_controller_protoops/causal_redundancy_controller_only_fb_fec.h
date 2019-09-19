@@ -381,10 +381,11 @@ static __attribute__((always_inline)) void sent_packet(window_redundancy_control
 
 // either acked or recovered
 static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, causal_redundancy_controller_t *controller, available_slot_reason_t feedback, fec_window_t *current_window) {
-    if (feedback != available_slot_reason_none)    controller->n_received_feedbacks++;
-    if (feedback == available_slot_reason_nack)  {
-        controller->n_lost_slots++;
-    }
+    // TODO: see if this is a good idea to comment this and put it in the slot_acked/slot_nacked functions
+//    if (feedback != available_slot_reason_none)    controller->n_received_feedbacks++;
+//    if (feedback == available_slot_reason_nack)  {
+//        controller->n_lost_slots++;
+//    }
     // FIXME: experimental: set k according to the cwin, but bound it to the buffer length: we cannot store more than MAX_SENDING_WINDOW_SIZE, and sometimes the window length will be 2*k
     controller->k = MIN(MAX_SENDING_WINDOW_SIZE/2 - 1, 1 + (get_path((picoquic_path_t *) get_cnx(cnx, AK_CNX_PATH, 0), AK_PATH_CWIN, 0)/PICOQUIC_MAX_PACKET_SIZE));
     controller->md = compute_md(controller, current_window);
@@ -395,6 +396,7 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, causal_
     if (true || is_buffer_empty(controller->what_to_send)) {
 //        PROTOOP_PRINTF(cnx, "WHAT TO SEND SIZE = %d\n", controller->what_to_send->current_size);
         if (controller->flush_dof_mode) {
+            PROTOOP_PRINTF(cnx, "FLUSH DOF !!\n");
             add_elem_to_buffer(controller->what_to_send, fec_packet);
             controller->ad++;
         } else {
@@ -472,6 +474,7 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, causal_
 
 static __attribute__((always_inline)) void slot_acked(picoquic_cnx_t *cnx, window_redundancy_controller_t c, uint64_t slot) {
     causal_redundancy_controller_t *controller = (causal_redundancy_controller_t *) c;
+    controller->n_received_feedbacks++;
     add_elem_to_buffer(controller->acked_slots, slot);
 }
 
@@ -481,6 +484,8 @@ static __attribute__((always_inline)) void free_slot_without_feedback(picoquic_c
 
 static __attribute__((always_inline)) void slot_nacked(picoquic_cnx_t *cnx, window_redundancy_controller_t c, uint64_t slot) {
     causal_redundancy_controller_t *controller = (causal_redundancy_controller_t *) c;
+    controller->n_received_feedbacks++;
+    controller->n_lost_slots++;
     // remove all the acked slots in the window
     add_elem_to_buffer(controller->nacked_slots, slot);
 }

@@ -45,15 +45,13 @@ protoop_arg_t get_one_coded_symbol(picoquic_cnx_t *cnx)
         return 1;
     }
 
-    uint16_t max_length = 0;
-
 
     uint8_t *coefs = my_malloc(cnx, n_source_symbols*sizeof(uint8_t));
     uint8_t **knowns = my_malloc(cnx, n_source_symbols*sizeof(uint8_t));
 
     for (int i = 0 ; i < n_source_symbols ; i++) {
-        knowns[i] = my_malloc(cnx, max_length);
-        my_memset(knowns[i], 0, max_length);
+        knowns[i] = my_malloc(cnx, symbol_size);
+        my_memset(knowns[i], 0, symbol_size);
         my_memcpy(knowns[i], source_symbols[i]->source_symbol._whole_data, symbol_size);
     }
 
@@ -69,7 +67,7 @@ protoop_arg_t get_one_coded_symbol(picoquic_cnx_t *cnx)
         if (!rs)
             return PICOQUIC_ERROR_MEMORY;
         for (int j = 0 ; j < n_source_symbols ; j++) {
-            symbol_add_scaled(rs->repair_symbol.repair_payload, coefs[j], knowns[j], max_length, mul);
+            symbol_add_scaled(rs->repair_symbol.repair_payload, coefs[j], knowns[j], symbol_size, mul);
         }
         rs->metadata.n_protected_symbols = n_source_symbols;
         rs->metadata.first_id = source_symbols[0]->id;
