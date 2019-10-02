@@ -2988,7 +2988,7 @@ protoop_arg_t schedule_frames_on_path(picoquic_cnx_t *cnx)
                     length += consumed;
                     /* FIXME: Sorry, I'm lazy, this could be easily fixed by making this a PO.
                         * This is needed by the way the cwin is now handled. */
-                    if (path_x == cnx->path[0] && (header_length != length || picoquic_is_ack_needed(cnx, current_time, pc, path_x))) {
+                    if (path_x == cnx->path[0] && (picoquic_is_ack_needed(cnx, current_time, pc, path_x))) {
                         if (picoquic_prepare_ack_frame(cnx, current_time, pc, &bytes[length], send_buffer_min_max - checksum_overhead - length, &data_bytes) == 0) {
                             length += (uint32_t)data_bytes;
                         }
