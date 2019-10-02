@@ -1,5 +1,5 @@
 #include "picoquic.h"
-#include "causal_redundancy_controller.h"
+#include "causal_redundancy_controller_only_fb_fec.h"
 #include "../fec_protoops.h"
 
 // sets as output the pointer towards the controller's state

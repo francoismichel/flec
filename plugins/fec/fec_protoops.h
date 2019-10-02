@@ -1,20 +1,21 @@
 #ifndef FEC_BPF_H
 #define FEC_BPF_H
+
+#define MAX_RECOVERED_PACKETS_IN_BUFFER 50
+#define RECEIVE_BUFFER_MAX_LENGTH 110
+#define MIN(a, b) ((a < b) ? a : b)
+#define FEC_PKT_METADATA_SENT_SLOT 0
+#define FEC_PKT_METADATA_IS_FEC_PROTECTED 1
+#define FEC_PKT_METADATA_CONTAINS_FEC_PACKET 2
+#define FEC_PKT_METADATA_FIRST_SOURCE_SYMBOL_ID 3
+#define MAX_FEC_FRAMES_SENT_BEFORE_HANDSHAKE_FINISHED 2
 #include <picoquic_logger.h>
 #include <picoquic.h>
 #include "../helpers.h"
 #include "fec.h"
-#define MAX_RECOVERED_PACKETS_IN_BUFFER 50
-#define RECEIVE_BUFFER_MAX_LENGTH 100
-#define MIN(a, b) ((a < b) ? a : b)
+#include "../simple_fec/utils.h"
 
 typedef void * fec_framework_t;
-
-typedef struct {
-    uint32_t start;
-    uint32_t size;
-    uint64_t packet_numbers[MAX_RECOVERED_PACKETS_IN_BUFFER];
-} recovered_packets_buffer_t;
 
 typedef struct {
     bool has_sent_stream_data;
@@ -37,9 +38,12 @@ typedef struct {
     bool cancel_sfpid_in_current_packet;     // set to true when no SFPID frame should be written in the current packet
     bool in_recovery;                        // set to true when the plugin is currently in the process of a packet recovery
     bool has_ready_stream;                   // set to true when there is a ready stream in the current packet loop
+    bool handshake_finished;
     uint8_t *written_sfpid_frame;            // set by write_sfpid_frame to the address of the sfpid frame written in the packet, used to undo a packet protection
+    lost_packet_queue_t lost_packets;
     fec_block_t *fec_blocks[MAX_FEC_BLOCKS]; // ring buffer
     uint64_t last_protected_slot;
+    uint64_t last_fec_slot;
     recovered_packets_buffer_t recovered_packets;
     protoop_id_t    protect_id;
     protoop_id_t    packet_to_source_symbol_id;
@@ -47,6 +51,7 @@ typedef struct {
     protoop_id_t    should_send_recovered_id;
     protoop_id_t    receive_source_symbol_id;
     protoop_id_t    get_source_fpid_id;
+    uint64_t        n_fec_frames_sent_before_handshake_finished;
 
     // FIXME: horrible hack to work around the fact that in dequeue_retransmit_packet, "should_free" is equivalent to "received", so we add the "received" signal using this...
     bool current_packet_is_lost;
@@ -133,37 +138,9 @@ static __attribute__((always_inline)) int get_redundancy_parameters(picoquic_cnx
     return 0;
 }
 
-
-static __attribute__((always_inline)) void enqueue_recovered_packet_to_buffer(recovered_packets_buffer_t *b, uint64_t packet) {
-    b->packet_numbers[(b->start + b->size) % MAX_RECOVERED_PACKETS_IN_BUFFER] = packet;
-    if (b->size < MAX_RECOVERED_PACKETS_IN_BUFFER) b->size++;
-    else {
-        // we just removed the first enqueued packet, so shift the start
-        b->start = (b->start + 1) % MAX_RECOVERED_PACKETS_IN_BUFFER;
-    }
-}
-
-// pre: size > 0
-static __attribute__((always_inline)) uint64_t peek_first_recovered_packet_in_buffer(recovered_packets_buffer_t *b) {
-    return b->packet_numbers[b->start];
-}
-
-// pre: size > 0
-static __attribute__((always_inline)) uint64_t dequeue_recovered_packet_from_buffer(recovered_packets_buffer_t *b) {
-    if (b->size == 0) return -1;
-    uint64_t packet = peek_first_recovered_packet_in_buffer(b);
-    b->size--;
-    b->start = (b->start + 1) % MAX_RECOVERED_PACKETS_IN_BUFFER;
-    return packet;
-}
-
-static __attribute__((always_inline)) void enqueue_recovered_packets(recovered_packets_buffer_t *b, recovered_packets_t *rp) {
-    for(int i = 0 ; i < rp->number_of_packets ; i++) {
-        enqueue_recovered_packet_to_buffer(b, rp->packets[i]);
-    }
-}
-
-static __attribute__((always_inline)) void maybe_notify_recovered_packets_to_cc(picoquic_cnx_t *cnx, recovered_packets_buffer_t *b, uint64_t current_time) {
+static __attribute__((always_inline)) void maybe_notify_recovered_packets_to_everybody(picoquic_cnx_t *cnx,
+                                                                                       recovered_packets_buffer_t *b,
+                                                                                       uint64_t current_time) {
     // TODO: handle multipath
     picoquic_path_t *path = (picoquic_path_t *) get_cnx(cnx, AK_CNX_PATH, 0);
     picoquic_packet_context_t *pkt_ctx = (picoquic_packet_context_t *) get_path(path, AK_PATH_PKT_CTX, picoquic_packet_context_application);
@@ -178,17 +155,26 @@ static __attribute__((always_inline)) void maybe_notify_recovered_packets_to_cc(
                 // don't try any subsequenc packets as they have been sent later
                 break;
             }
+            uint64_t slot = (uint64_t) get_pkt_metadata(cnx, current_packet, FEC_PKT_METADATA_SENT_SLOT);
+            source_symbol_id_t first_id = (source_symbol_id_t) get_pkt_metadata(cnx, current_packet, FEC_PKT_METADATA_FIRST_SOURCE_SYMBOL_ID);
+            uint16_t n_symbols = (uint16_t) get_pkt_metadata(cnx, current_packet, FEC_PKT_METADATA_NUMBER_OF_SOURCE_SYMBOLS);
+            bool fec_protected = (bool) FEC_PKT_IS_FEC_PROTECTED(get_pkt_metadata(cnx, current_packet, FEC_PKT_METADATA_FLAGS));
+            bool contains_repair_frame = (bool) FEC_PKT_CONTAINS_REPAIR_FRAME(get_pkt_metadata(cnx, current_packet, FEC_PKT_METADATA_FLAGS));
             //we need to remove this packet from the retransmit queue
             uint64_t retrans_cc_notification_timer = get_pkt_ctx(pkt_ctx, AK_PKTCTX_LATEST_RETRANSMIT_CC_NOTIFICATION_TIME) + get_path(path, AK_PATH_SMOOTHED_RTT, 0);
             bool packet_is_pure_ack = get_pkt(current_packet, AK_PKT_IS_PURE_ACK);
-            // notify to everybody that this packet is lost
+            // notify everybody that this packet is officially lost
             helper_packet_was_lost(cnx, current_packet, path);
+            // it has been lost, but recovered, thus the symbol contained in the packet have been received
+            fec_packet_symbols_have_been_received(cnx, current_pn64, slot, first_id, n_symbols, fec_protected,
+                                                  contains_repair_frame);
             helper_dequeue_retransmit_packet(cnx, current_packet, 1);
             if (current_time >= retrans_cc_notification_timer && !packet_is_pure_ack) {    // do as in core: if is pure_ack or recently notified, do not notify cc
                 set_pkt_ctx(pkt_ctx, AK_PKTCTX_LATEST_RETRANSMIT_CC_NOTIFICATION_TIME, current_time);
                 helper_congestion_algorithm_notify(cnx, path, picoquic_congestion_notification_repeat, 0, 0,
                                                    current_pn64, current_time);
             }
+            PROTOOP_PRINTF(cnx, "[[PACKET RECOVERED]] %lu,%lu\n", current_pn64, current_time - get_pkt(current_packet, AK_PKT_SEND_TIME));
             dequeue_recovered_packet_from_buffer(b);
         } else if (current_pn64 > peek_first_recovered_packet_in_buffer(b)) {
             // the packet to remove is already gone from the retransmit queue
@@ -232,12 +218,34 @@ static __attribute__((always_inline)) bool should_send_recovered_frames(picoquic
     return (bool) run_noparam_with_pid(cnx, "should_send_recovered_frames", 1, (protoop_arg_t *) &rp, NULL, &state->should_send_recovered_id);
 }
 
+
+
+static __attribute__((always_inline)) int receive_source_symbol_helper(picoquic_cnx_t *cnx, source_symbol_t *ss){
+    bpf_state *state = get_bpf_state(cnx);
+    if (!state) {
+        return PICOQUIC_ERROR_MEMORY;
+    }
+    protoop_arg_t  inputs[2];
+    inputs[0] = (protoop_arg_t) ss;
+    inputs[1] = true;
+    int err = (int) run_noparam_with_pid(cnx, "receive_source_symbol", 2, inputs, NULL, &state->receive_source_symbol_id);
+    if (err)
+        return err;
+    if (!state->in_recovery) {
+        inputs[0] = (protoop_arg_t) state->framework_receiver;
+        err = run_noparam(cnx, "try_to_recover", 1, inputs, NULL);
+    }
+    return err;
+
+}
+
 #define MAX_RECOVERED_IN_ONE_ROW 5
 #define MIN_DECODED_SYMBOL_TO_PARSE 20
 
 static __attribute__((always_inline)) int recover_block(picoquic_cnx_t *cnx, bpf_state *state, fec_block_t *block){
-
+    PROTOOP_PRINTF(cnx, "RECOVER BLOCK\n");
     fec_block_t *fb = malloc_fec_block(cnx, block->fec_block_number);
+    PROTOOP_PRINTF(cnx, "MALLOCED %p\n", (protoop_arg_t) fb);
     // we copy the FEC block to avoid any impact on the internal state of the underlying framework
     my_memcpy(fb, block, sizeof(fec_block_t));
 
@@ -272,6 +280,7 @@ static __attribute__((always_inline)) int recover_block(picoquic_cnx_t *cnx, bpf
                 }
             }
         }
+        PROTOOP_PRINTF(cnx, "START RECOVERY\n");
         ret = (int) run_noparam(cnx, "fec_recover", 2, args, outs);
         int idx = 0;
         int i = 0;
@@ -294,6 +303,7 @@ static __attribute__((always_inline)) int recover_block(picoquic_cnx_t *cnx, bpf
                     state->current_symbol = fb->source_symbols[i]->data;
                     state->current_symbol_length = fb->source_symbols[i]->data_length;
                     state->in_recovery = true;
+                    receive_source_symbol_helper(cnx, fb->source_symbols[i]);
                     ret = picoquic_decode_frames_without_current_time(cnx, fb->source_symbols[i]->data + sizeof(uint64_t) + 1, (size_t) payload_length, 3, path);
 
                     state->in_recovery = false;
@@ -362,6 +372,7 @@ static __attribute__((always_inline)) int recover_block(picoquic_cnx_t *cnx, bpf
 static __attribute__((always_inline)) int process_fec_frame_helper(picoquic_cnx_t *cnx, fec_frame_t *frame) {
     repair_symbol_t *rs = malloc_repair_symbol_with_data(cnx, frame->header.repair_fec_payload_id, frame->data,
                                                          frame->header.data_length);
+    PROTOOP_PRINTF(cnx, "MALLOCED %p, frame = %p\n", (protoop_arg_t) rs, (protoop_arg_t) frame);
     if (!rs) {
         return PICOQUIC_ERROR_MEMORY;
     }
@@ -412,16 +423,5 @@ static __attribute__((always_inline)) int set_source_fpid(picoquic_cnx_t *cnx, s
 }
 
 
-
-static __attribute__((always_inline)) int receive_source_symbol_helper(picoquic_cnx_t *cnx, source_symbol_t *ss){
-    bpf_state *state = get_bpf_state(cnx);
-    if (!state) {
-        return PICOQUIC_ERROR_MEMORY;
-    }
-    protoop_arg_t  inputs[2];
-    inputs[0] = (protoop_arg_t) ss;
-    inputs[1] = true;
-    return (int) run_noparam_with_pid(cnx, "receive_source_symbol", 2, inputs, NULL, &state->receive_source_symbol_id);
-}
 
 #endif

@@ -9,9 +9,12 @@
  */
 protoop_arg_t skip_frame(picoquic_cnx_t *cnx)
 {
-    bpf_state *state = get_bpf_state(cnx);
-    if (!state)
-        return PICOQUIC_ERROR_MEMORY;
-    state->is_in_skip_frame = true;
+    picoquic_state_enum cnx_state = (picoquic_state_enum) get_cnx(cnx, AK_CNX_STATE, 0);
+    if (cnx_state == picoquic_state_client_ready || cnx_state == picoquic_state_server_ready) {
+        bpf_state *state = get_bpf_state(cnx);
+        if (!state)
+            return PICOQUIC_ERROR_MEMORY;
+        state->is_in_skip_frame = true;
+    }
     return (protoop_arg_t) 0;
 }

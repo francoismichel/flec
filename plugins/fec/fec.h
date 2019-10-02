@@ -57,10 +57,10 @@ typedef struct __attribute__((__packed__)) {
 
 typedef struct {
     uint64_t *packets;
-    uint8_t number_of_packets;
+    uint16_t number_of_packets;
     source_fpid_t *recovered_sfpids;
     // with the new draft, there can be more than one sfpid per packet
-    uint8_t number_of_sfpids;
+    uint16_t number_of_sfpids;
 } recovered_packets_t;
 
 
@@ -141,6 +141,82 @@ typedef struct __attribute__((__packed__)) {
     source_symbol_t *source_symbols[MAX_SYMBOLS_PER_FEC_BLOCK];
     repair_symbol_t *repair_symbols[MAX_SYMBOLS_PER_FEC_BLOCK];
 } fec_block_t;
+
+typedef struct lost_packet {
+    uint64_t pn;
+    uint64_t slot;
+    uint32_t id;
+    struct lost_packet *next;
+    struct lost_packet *previous;
+} lost_packet_t;
+
+// we use a queue because it is more likely that we dequeue the packets in the order we inserted them
+typedef struct lost_packet_queue {
+    lost_packet_t *head;
+    lost_packet_t *tail;
+} lost_packet_queue_t;
+
+// pre: queue != NULL
+static __attribute__((always_inline)) int add_lost_packet(picoquic_cnx_t *cnx, lost_packet_queue_t *queue, uint64_t pn, uint64_t slot, uint32_t sfpid) {
+    PROTOOP_PRINTF(cnx, "ADD LOST %x, SFPID = %u\n", pn, sfpid);
+    lost_packet_t *lp = my_malloc(cnx, sizeof(lost_packet_t));
+    if (!lp) {
+        return PICOQUIC_ERROR_MEMORY;
+    }
+    my_memset(lp, 0, sizeof(lost_packet_t));
+    lp->pn = pn;
+    lp->slot = slot;
+    lp->id = sfpid;
+    if (!queue->head && !queue->tail) {
+        queue->head = queue->tail = lp;
+        return 0;
+    }
+    queue->tail->next = lp;
+    lp->previous = queue->tail;
+    queue->tail = lp;
+    return 0;
+}
+
+// sets *slot to the slot when the packet was sent, dequeues the packet from the queue and returns true if this packet was present
+// if the packet was not present, does nothing and returns false
+static __attribute__((always_inline)) bool dequeue_lost_packet(picoquic_cnx_t *cnx, lost_packet_queue_t *queue, uint64_t pn, uint64_t *slot, uint32_t *sfpid) {
+    if (!queue->head && !queue->tail)
+        return false;
+    lost_packet_t *previous = NULL;
+    lost_packet_t *current = queue->head;
+    while (current) {
+        if (current->pn == pn) {
+            PROTOOP_PRINTF(cnx, "FOUND LOST PACKET %x, SFPID = %u\n", pn, current->id);
+            *slot = current->slot;
+            *sfpid = current->id;
+            if (!previous) {
+                // head == current
+                queue->head = current->next;
+                queue->head->previous = NULL;
+            } else {
+                previous->next = current->next;
+                current->next->previous = previous;
+            }
+            if (queue->tail == current) {
+                queue->tail = previous;
+            }
+            my_free(cnx, current);
+            return true;
+        }
+        previous = current;
+        current = current->next;
+    }
+    return false;
+}
+
+
+// returns the packet number at first position of the queue (i.e. the oldest enqueued packet)
+// returns -1 if the queue is empty
+static __attribute__((always_inline)) int64_t get_first_lost_packet(picoquic_cnx_t *cnx, lost_packet_queue_t *queue) {
+    if (!queue->head && !queue->tail)
+        return -1;
+    return queue->head->pn;
+}
 
 
 static __attribute__((always_inline)) uint64_t decode_un(uint8_t *bytes, int n) {

@@ -39,6 +39,15 @@ static __attribute__((always_inline)) void sort_system(picoquic_cnx_t *cnx, uint
     }
 }
 
+// shuffles an array of repair symbols
+static __attribute__((always_inline)) void shuffle_repair_symbols(picoquic_cnx_t *cnx, repair_symbol_t **rss, int size, tinymt32_t *prng) {
+    for (int i = 0 ; i < size - 1 ; i++) {
+        int j = tinymt32_generate_uint32(prng) % size;
+        repair_symbol_t *tmp = rss[i];
+        rss[i] = rss[j];
+        rss[j] = tmp;
+    }
+}
 
 
 /*******
@@ -49,8 +58,19 @@ There are two options to do this in C.
 This program uses the first option.
 ********/
 static __attribute__((always_inline)) void gaussElimination(picoquic_cnx_t *cnx, int n_eq, int n_unknowns, uint8_t **a, uint8_t *constant_terms[n_eq], uint8_t *x[n_eq], bool undetermined[n_unknowns], uint32_t symbol_size, uint8_t **mul, uint8_t *inv){
-    PROTOOP_PRINTF(cnx, "N_EQ = %d, n_unknowns = %d a = %p, ct = %p, x = %p\n", n_eq, n_unknowns, (protoop_arg_t) a, (protoop_arg_t) constant_terms, (protoop_arg_t) x);
+//    PROTOOP_PRINTF(cnx, "N_EQ = %d, n_unknowns = %d a = %p, ct = %p, x = %p\n", n_eq, n_unknowns, (protoop_arg_t) a, (protoop_arg_t) constant_terms, (protoop_arg_t) x);
+
     sort_system(cnx, a, constant_terms, n_eq, n_unknowns);
+
+    PROTOOP_PRINTF(cnx, "BEFORE SORTED\n");
+    for (int i = 0 ; i < n_eq ; i++) {
+        PROTOOP_PRINTF(cnx, "BEGIN EQ %d\n", i);
+        for (int j = 0 ; j < n_unknowns ; j++) {
+            PROTOOP_PRINTF(cnx, "%d\n", a[i][j]);
+        }
+        PROTOOP_PRINTF(cnx, "END EQ\n");
+    }
+
     int i,j,k;
     for(i=0;i<n_eq-1;i++){
         for(k=i+1;k<n_eq;k++){
@@ -73,6 +93,7 @@ static __attribute__((always_inline)) void gaussElimination(picoquic_cnx_t *cnx,
             }
         }
     }
+    sort_system(cnx, a, constant_terms, n_eq, n_unknowns);
     for (int i = 0 ; i < n_eq ; i++) {
         PROTOOP_PRINTF(cnx, "BEGIN EQ %d\n", i);
         for (int j = 0 ; j < n_unknowns ; j++) {
@@ -83,42 +104,51 @@ static __attribute__((always_inline)) void gaussElimination(picoquic_cnx_t *cnx,
     int candidate = n_unknowns - 1;
     //Begin Back-substitution
     for(i=n_eq-1;i>=0;i--){
-        while(a[i][candidate] == 0 && candidate >= 0) {
-            undetermined[candidate--] = true;
-        }
-        PROTOOP_PRINTF(cnx, "BEFORE MEMCPY, CANDIDATE = %d, i = %d, SIZE = %d\n", candidate, i, symbol_size);
-        my_memcpy(x[candidate], constant_terms[i], symbol_size);
-        for (int j = 0 ; j < candidate ; j++) {
+        bool only_zeroes = true;
+        for (int j = 0 ; j < n_unknowns ; j++) {
             if (a[i][j] != 0) {
-                // if this variable depends on another one with a smaller index, it is undefined, as we don't know the value of the one with a smaller index
-                undetermined[candidate] = true;
+                only_zeroes = false;
                 break;
             }
         }
-        for(j=candidate+1;j<n_unknowns;j++){
-//             x[i]=x[i]-a[i][j]*x[j];
-            if (a[i][j] != 0) {
-                if (undetermined[j]) {
-                    // if the unknown depends on an undetermined unknown, this unknown is undetermined
+        if (!only_zeroes) {
+            while(a[i][candidate] == 0 && candidate >= 0) {
+                undetermined[candidate--] = true;
+            }
+            PROTOOP_PRINTF(cnx, "BEFORE MEMCPY, CANDIDATE = %d, i = %d, SIZE = %d\n", candidate, i, symbol_size);
+            my_memcpy(x[candidate], constant_terms[i], symbol_size);
+            for (int j = 0 ; j < candidate ; j++) {
+                if (a[i][j] != 0) {
+                    // if this variable depends on another one with a smaller index, it is undefined, as we don't know the value of the one with a smaller index
                     undetermined[candidate] = true;
-                } else {
-                    symbol_sub_scaled(x[candidate], a[i][j], x[j], symbol_size, mul);
-                    a[i][j] = 0;
+                    break;
                 }
             }
+            for(j=candidate+1;j<n_unknowns;j++){
+//             x[i]=x[i]-a[i][j]*x[j];
+                if (a[i][j] != 0) {
+                    if (undetermined[j]) {
+                        // if the unknown depends on an undetermined unknown, this unknown is undetermined
+                        undetermined[candidate] = true;
+                    } else {
+                        symbol_sub_scaled(x[candidate], a[i][j], x[j], symbol_size, mul);
+                        a[i][j] = 0;
+                    }
+                }
+            }
+            // i < n_eq <= n_unknowns, so a[i][i] is small
+            if (symbol_is_zero(x[candidate], symbol_size) || a[i][candidate] == 0) {
+                // this solution is undetermined
+                undetermined[candidate] = true;
+                PROTOOP_PRINTF(cnx, "UNDETERMINED SOL\n");
+                // TODO
+            } else if (!undetermined[candidate]) {
+                // x[i] = x[i]/a[i][i]
+                symbol_mul(x[candidate], inv[a[i][candidate]], symbol_size, mul);
+                a[i][candidate] = gf256_mul(a[i][candidate], inv[a[i][candidate]], mul);
+            }
+            candidate--;
         }
-        // i < n_eq <= n_unknowns, so a[i][i] is small
-        if (symbol_is_zero(x[candidate], symbol_size) || a[i][candidate] == 0) {
-            // this solution is undetermined
-            undetermined[candidate] = true;
-            PROTOOP_PRINTF(cnx, "UNDETERMINED SOL\n");
-            // TODO
-        } else if (!undetermined[candidate]) {
-            // x[i] = x[i]/a[i][i]
-            symbol_mul(x[candidate], inv[a[i][candidate]], symbol_size, mul);
-            a[i][candidate] = gf256_mul(a[i][candidate], inv[a[i][candidate]], mul);
-        }
-        candidate--;
     }
     // it marks all the variables with an index <= candidate as undetermined
     // we use a my_memset although it is harder to understand because with a for loop, the compiler will translate it into a call to memset
@@ -205,22 +235,32 @@ protoop_arg_t fec_recover(picoquic_cnx_t *cnx)
     }
 
     // building the system, equation by equation
+    bool *protected_symbols = my_malloc(cnx, fec_block->total_source_symbols);
+    my_memset(protected_symbols, 0, fec_block->total_source_symbols);
     i = 0;
+    tinymt32_t *shuffle_prng = my_malloc(cnx, sizeof(tinymt32_t));
+    shuffle_prng->mat1 = 0x8f7011ee;
+    shuffle_prng->mat2 = 0xfc78ff1f;
+    shuffle_prng->tmat = 0x3793fdff;
+    tinymt32_init(shuffle_prng, picoquic_current_time());
+    shuffle_repair_symbols(cnx, fec_block->repair_symbols, fec_block->current_repair_symbols, shuffle_prng);
+    my_free(cnx, shuffle_prng);
     for_each_repair_symbol(fec_block, rs) {
 //        PROTOOP_PRINTF(cnx, "I = %d\n", i);
         if (rs && i < n_eq) {
             uint32_t smallest_protected_by_rs = rs->repair_fec_payload_id.source_fpid.raw;
             PROTOOP_PRINTF(cnx, "TRY RS, [%u, ...]\n", smallest_protected_by_rs);
-            bool protects_at_least_one_source_symbol = false;
+            bool protects_at_least_one_new_source_symbol = false;
             for (int k = smallest_protected_by_rs - smallest_protected ; k < smallest_protected_by_rs + rs->nss - smallest_protected ; k++) {
                 // this source symbol is protected by this repair symbol
-                if (!fec_block->source_symbols[k]) {
-                    protects_at_least_one_source_symbol = true;
+                if (!fec_block->source_symbols[k] && !protected_symbols[k]) {
+                    protects_at_least_one_new_source_symbol = true;
+                    protected_symbols[k] = true;
                     PROTOOP_PRINTF(cnx, "PROTECTS AT LEAST SS %d\n", smallest_protected + k);
                     break;
                 }
             }
-            if (protects_at_least_one_source_symbol) {
+            if (protects_at_least_one_new_source_symbol) {
                 PROTOOP_PRINTF(cnx, "ADD CONSTANT TERM %d\n", i);
                 constant_terms[i] = my_malloc(cnx, max_length);
                 if (!constant_terms[i]) {
@@ -248,7 +288,7 @@ protoop_arg_t fec_recover(picoquic_cnx_t *cnx)
             }
         }
     }
-
+    my_free(cnx, protected_symbols);
     int n_effective_equations = i;
 
     PROTOOP_PRINTF(cnx, "BEFORE GAUSSIAN, LENGTH = %d\n", max_length);

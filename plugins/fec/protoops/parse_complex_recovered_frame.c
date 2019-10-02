@@ -25,31 +25,32 @@ protoop_arg_t parse_recovered_frame(picoquic_cnx_t *cnx) {
         return (protoop_arg_t) NULL;
     }
     bytes_protected += sizeof(uint8_t);  // skip the type byte
-    uint8_t number_of_packets;
-    uint8_t number_of_sfpids;
     uint64_t first_recovered_packet;
-    my_memcpy(&number_of_packets, bytes_protected, sizeof(uint8_t));
-    bytes_protected += sizeof(uint8_t);
 
-    my_memcpy(&number_of_sfpids, bytes_protected, sizeof(uint8_t));
-    bytes_protected += sizeof(uint8_t);
+    uint64_t number_of_packets;
+    uint64_t number_of_sfpids;
+    ssize_t size = picoquic_varint_decode(bytes_protected, bytes_max - bytes_protected, &number_of_packets);
+    bytes_protected += size;
+    size = picoquic_varint_decode(bytes_protected, bytes_max - bytes_protected, &number_of_sfpids);
+    bytes_protected += size;
 
     first_recovered_packet = decode_u64(bytes_protected);
     bytes_protected += sizeof(uint64_t);
-    uint8_t *size_and_packets = my_malloc(cnx, sizeof(uint8_t) + sizeof(uint8_t) + number_of_packets*sizeof(uint64_t) + number_of_sfpids*sizeof(source_fpid_t)); // sadly, we must place everything in one single malloc, because skip_frame will free our output
-    my_memset(size_and_packets, 0, sizeof(uint8_t) + number_of_packets*sizeof(uint64_t));
-    size_and_packets[0] = number_of_packets;
-    size_and_packets[1] = number_of_sfpids;
-    uint64_t *packets =(uint64_t *) (size_and_packets+2);
+    uint8_t *size_and_packets = my_malloc(cnx, sizeof(uint64_t) + sizeof(uint64_t) + number_of_packets*sizeof(uint64_t) + number_of_sfpids*sizeof(source_fpid_t)); // sadly, we must place everything in one single malloc, because skip_frame will free our output
+    my_memset(size_and_packets, 0, sizeof(uint64_t) + sizeof(uint64_t) + number_of_packets*sizeof(uint64_t) + number_of_sfpids*sizeof(source_fpid_t));
+    ((uint64_t *) size_and_packets)[0] = number_of_packets;
+    ((uint64_t *) size_and_packets)[1] = number_of_sfpids;
+    uint64_t *packets =&(((uint64_t *) size_and_packets)[2]);
     packets[0] = first_recovered_packet;
     int currently_parsed_recovered_packets = 1;
     uint64_t last_recovered_packet = first_recovered_packet;
     PROTOOP_PRINTF(cnx, "PACKET %lx HAS BEEN RECOVERED BY THE PEER\n", last_recovered_packet);
     bool range_is_gap = false;
     while(currently_parsed_recovered_packets < number_of_packets && bytes_protected < bytes_max - 1) {  // - 1 because there is the number of sfpid afterwards
-        uint8_t range;
-        my_memcpy(&range, bytes_protected, sizeof(uint8_t));
-        bytes_protected += sizeof(uint8_t);
+        uint64_t range;
+        size = picoquic_varint_decode(bytes_protected, bytes_max - bytes_protected, &range);
+        PROTOOP_PRINTF(cnx, "READ RANGE %lu\n", range);
+        bytes_protected += size;
         if (!range_is_gap) {
             // this is a range of recovered packets
             if (currently_parsed_recovered_packets + range > number_of_packets) {
@@ -69,9 +70,8 @@ protoop_arg_t parse_recovered_frame(picoquic_cnx_t *cnx) {
             range_is_gap = true; // after a range of recovered packets, there must be a gap or nothing
         } else {
             // this range is a gap of recovered packets
-            uint8_t n_packets_to_skip = range + 1;
             // it implicitly announces the recovery of the packet just after this gap
-            last_recovered_packet += n_packets_to_skip + 1;
+            last_recovered_packet += range + 1;
             packets[currently_parsed_recovered_packets] = last_recovered_packet;
             currently_parsed_recovered_packets++;
             range_is_gap = false; // after a gap of recovered packets, there must be a range or nothing
@@ -93,8 +93,9 @@ protoop_arg_t parse_recovered_frame(picoquic_cnx_t *cnx) {
     uint8_t currently_parsed_sfpids = 0;
     source_fpid_t *sfpids = (source_fpid_t *) (packets + currently_parsed_recovered_packets);
     while(currently_parsed_sfpids < number_of_sfpids && bytes_protected < bytes_max) {
+        PROTOOP_PRINTF(cnx, "DECODING %u\n", decode_u32(bytes_protected));
         sfpids[currently_parsed_sfpids++].raw = decode_u32(bytes_protected);
-        PROTOOP_PRINTF(cnx, "SFPID %u RECOVERED, INSERTED AT %p\n", sfpids[currently_parsed_recovered_packets-1].raw, (protoop_arg_t) &sfpids[currently_parsed_sfpids-1]);
+        PROTOOP_PRINTF(cnx, "SFPID %u RECOVERED, INSERTED AT %p\n", sfpids[currently_parsed_sfpids-1].raw, (protoop_arg_t) &sfpids[currently_parsed_sfpids-1]);
         bytes_protected += sizeof(source_fpid_t);
     }
 

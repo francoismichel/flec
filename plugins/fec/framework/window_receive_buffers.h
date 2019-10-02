@@ -1,4 +1,4 @@
-#ifndef PICOQUIC_WINDOW_RECEIVE_BUFFERS_OLD_H
+#ifndef PICOQUIC_WINDOW_RECEIVE_BUFFERS_H
 #define PICOQUIC_WINDOW_RECEIVE_BUFFERS_OLD_H
 
 #include "../fec.h"
@@ -283,4 +283,4 @@ static __attribute__((always_inline)) int get_repair_symbols(picoquic_cnx_t *cnx
     return added;
 }
 
-#endif //PICOQUIC_WINDOW_RECEIVE_BUFFERS_OLD_H
+#endif //PICOQUIC_WINDOW_RECEIVE_BUFFERS_H

@@ -33,11 +33,5 @@ protoop_arg_t incoming_encrypted(picoquic_cnx_t *cnx)
     state->current_symbol = bytes;
     state->current_symbol_length = symbol_length;
 
-    void *ret = (void *) run_noparam(cnx, "find_ready_stream", 0, NULL, NULL);
-    if (!ret) {
-        PROTOOP_PRINTF(cnx, "no stream data to send, do not send SFPID frame\n");
-        flush_repair_symbols(cnx);
-        return 0;
-    }
     return 0;
 }

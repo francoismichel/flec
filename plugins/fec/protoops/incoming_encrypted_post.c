@@ -15,5 +15,13 @@ protoop_arg_t incoming_encrypted(picoquic_cnx_t *cnx)
     if (state->current_symbol)
         my_free(cnx, state->current_symbol);
     state->current_symbol = NULL;
+    picoquic_path_t *path = (picoquic_path_t *) get_cnx(cnx, AK_CNX_PATH, 0);
+    bool slot_available = get_path(path, AK_PATH_CWIN, 0) > get_path(path, AK_PATH_BYTES_IN_TRANSIT, 0);
+    void *ret = (void *) run_noparam(cnx, "find_ready_stream", 0, NULL, NULL);
+    if (!ret && slot_available) {
+        PROTOOP_PRINTF(cnx, "no stream data to send, FLUSH RS BY WAKING NOW\n");
+        set_cnx(cnx, AK_CNX_WAKE_NOW, 0, 1);
+        return 0;
+    }
     return 0;
 }

@@ -33,25 +33,30 @@ protoop_arg_t write_recovered_frame(picoquic_cnx_t *cnx) {
     bytes += sizeof(uint8_t);
     consumed += sizeof(uint8_t);
 
-    my_memcpy(bytes, &rp->number_of_packets, sizeof(uint8_t));
-    bytes += sizeof(uint8_t);
-    consumed += sizeof(uint8_t);
+    ssize_t size = 0;
 
-    my_memcpy(bytes, &rp->number_of_sfpids, sizeof(uint8_t));
-    consumed += sizeof(uint8_t);
-    bytes += sizeof(uint8_t);
+    size = picoquic_varint_encode(bytes, bytes_max - bytes, rp->number_of_packets);
+    bytes += size;
+    consumed += size;
+
+    size = picoquic_varint_encode(bytes, bytes_max - bytes, rp->number_of_sfpids);
+    bytes += size;
+    consumed += size;
 
     encode_u64(rp->packets[0], bytes);
     bytes += sizeof(uint64_t);
     consumed += sizeof(uint64_t);
 
-    uint8_t range_length = 0;
+    uint64_t range_length = 0;
+    PROTOOP_PRINTF(cnx, "FIRST PACKET ID %u\n", rp->packets[0]);
     for (int i = 1 ; i < rp->number_of_packets ; i++) {
+        PROTOOP_PRINTF(cnx, "WRITE PACKET %u\n", rp->packets[i]);
         // FIXME: handle gaps of more than 0xFF
-        if (rp->packets[i] <= rp->packets[i-1] || rp->packets[i] - rp->packets[i-1] > 0xFF) {
+        if (rp->packets[i] <= rp->packets[i-1]) {
             // error
             set_cnx(cnx, AK_CNX_OUTPUT, 0, (protoop_arg_t) 0);
             set_cnx(cnx, AK_CNX_OUTPUT, 1, (protoop_arg_t) 0);
+            PROTOOP_PRINTF(cnx, "ERROR: THE PACKETS ARE NOT IN ORDER IN THE RECOVERED FRAME\n");
             free_rp(cnx, rp);
             return -1;
         }
@@ -61,17 +66,20 @@ protoop_arg_t write_recovered_frame(picoquic_cnx_t *cnx) {
             if (bytes_max - bytes < 2*sizeof(uint8_t)) {
                 set_cnx(cnx, AK_CNX_OUTPUT, 0, (protoop_arg_t) 0);
                 set_cnx(cnx, AK_CNX_OUTPUT, 1, (protoop_arg_t) 0);
+                PROTOOP_PRINTF(cnx, "ERROR TOO FEW AVAILABLE BYTES\n");
                 free_rp(cnx, rp);
                 return -1;
             }
             // write range
-            my_memcpy(bytes, &range_length, sizeof(uint8_t));
-            bytes += sizeof(uint8_t);
-            consumed += sizeof(uint8_t);
+            size = picoquic_varint_encode(bytes, bytes_max - bytes, range_length);
+            bytes += size;
+            consumed += size;
+            PROTOOP_PRINTF(cnx, "WRITE RANGE %lu\n", range_length);
             // write gap
-            my_memset(bytes, (uint8_t) (rp->packets[i] - rp->packets[i-1]), sizeof(uint8_t));
-            bytes += sizeof(uint8_t);
-            consumed += sizeof(uint8_t);
+            size = picoquic_varint_encode(bytes, bytes_max - bytes, (rp->packets[i] - rp->packets[i-1]) - 1);
+            bytes += size;
+            consumed += size;
+            PROTOOP_PRINTF(cnx, "WRITE GAP RANGE %lu\n", (rp->packets[i] - rp->packets[i-1]));
             range_length = 0;
         }
     }
@@ -80,12 +88,13 @@ protoop_arg_t write_recovered_frame(picoquic_cnx_t *cnx) {
         if (bytes_max - bytes < 2*sizeof(uint8_t)) {
             set_cnx(cnx, AK_CNX_OUTPUT, 0, (protoop_arg_t) 0);
             set_cnx(cnx, AK_CNX_OUTPUT, 1, (protoop_arg_t) 0);
+            PROTOOP_PRINTF(cnx, "ERROR TOO FEW AVAILABLE BYTES 2\n");
             free_rp(cnx, rp);
             return -1;
         }
-        my_memcpy(bytes, &range_length, sizeof(uint8_t));
-        bytes += sizeof(uint8_t);
-        consumed += sizeof(uint8_t);
+        size = picoquic_varint_encode(bytes, bytes_max - bytes, range_length);
+        bytes += size;
+        consumed += size;
     }
     // bulk-encode the sfpids
     for (int i = 0 ; i < rp->number_of_sfpids ; i++) {

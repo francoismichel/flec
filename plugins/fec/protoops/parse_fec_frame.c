@@ -32,7 +32,7 @@ protoop_arg_t parse_fec_frame(picoquic_cnx_t *cnx)
         return PICOQUIC_ERROR_MEMORY;
     set_cnx(cnx, AK_CNX_OUTPUT, 0, (protoop_arg_t) frame);
     parse_fec_frame_header(&frame->header, bytes_header+1);
-    PROTOOP_PRINTF(cnx, "FRAME LENGTH = %u, FIN = %u, nss = %u, nrs = %u, block_number = %u, offset = %u\n",
+    PROTOOP_PRINTF(cnx, "FRAME LENGTH = %u, FIN = %u, n_protected_symbols = %u, nrs = %u, block_number = %u, offset = %u\n",
             frame->header.data_length, frame->header.fin_bit, frame->header.nss, frame->header.nrs,
             frame->header.repair_fec_payload_id.fec_block_number, frame->header.repair_fec_payload_id.symbol_number);
     my_free(cnx, bytes_header);
@@ -46,8 +46,14 @@ protoop_arg_t parse_fec_frame(picoquic_cnx_t *cnx)
         // return directly: we are in skip_frame, so the payload of the FEC Frame will never be handled
         return (protoop_arg_t) bytes_protected +  1 + sizeof(fec_frame_header_t) + frame->header.data_length;
     }
-    uint8_t *bytes = my_malloc(cnx, (unsigned int) (bytes_max - bytes_protected - (1 + sizeof(fec_frame_header_t))));
-    my_memcpy(bytes, bytes_protected + 1 + sizeof(fec_frame_header_t), (bytes_max - bytes_protected - (1 + sizeof(fec_frame_header_t))));
-    frame->data = bytes;
+    bpf_state *state = get_bpf_state(cnx);
+    if (!state)
+        return PICOQUIC_ERROR_MEMORY;
+    // FIXME: ugly: if we allocate the data in skip_frame, it will never be freed...
+    if (!state->is_in_skip_frame) {
+        uint8_t *bytes = my_malloc(cnx, (unsigned int) (bytes_max - bytes_protected - (1 + sizeof(fec_frame_header_t))));
+        my_memcpy(bytes, bytes_protected + 1 + sizeof(fec_frame_header_t), (bytes_max - bytes_protected - (1 + sizeof(fec_frame_header_t))));
+        frame->data = bytes;
+    }
     return (protoop_arg_t) bytes_protected +  1 + sizeof(fec_frame_header_t) + frame->header.data_length;
 }

@@ -15,15 +15,12 @@ protoop_arg_t retransmit_needed(picoquic_cnx_t *cnx)
     picoquic_packet_t* packet = (picoquic_packet_t *) get_cnx(cnx, AK_CNX_INPUT, 3);
     size_t send_buffer_max = (size_t) get_cnx(cnx, AK_CNX_INPUT, 4);
     int is_cleartext_mode = (int) get_cnx(cnx, AK_CNX_INPUT, 5);
-    uint32_t header_length = (uint32_t) get_cnx(cnx, AK_CNX_INPUT, 6);
+    uint16_t header_length = (uint32_t) get_cnx(cnx, AK_CNX_INPUT, 6);
 
-    uint32_t length = 0;
+    uint16_t length = 0;
     bool stop = false;
     char *reason = NULL;
 
-    bpf_state *state = get_bpf_state(cnx);
-    if (!state)
-        return 0;
 
     int nb_paths = (int) get_cnx(cnx, AK_CNX_NB_PATHS, 0);
 
@@ -40,6 +37,7 @@ protoop_arg_t retransmit_needed(picoquic_cnx_t *cnx)
             picoquic_packet_type_enum ptype = (picoquic_packet_type_enum) get_pkt(p, AK_PKT_TYPE);
             uint8_t * new_bytes = (uint8_t *) get_pkt(packet, AK_PKT_BYTES);
             int ret = 0;
+
 
             length = 0;
             /* Get the packet type */
@@ -59,7 +57,7 @@ protoop_arg_t retransmit_needed(picoquic_cnx_t *cnx)
                 }
             } else {
                 /* check if this is an ACK only packet */
-                int contains_crypto = (int) get_pkt(p, AK_PKT_CONTAINS_CRYPTO);
+//                int contains_crypto = (int) get_pkt(p, AK_PKT_CONTAINS_CRYPTO);
                 int packet_is_pure_ack = (int) get_pkt(p, AK_PKT_IS_PURE_ACK);
                 int do_not_detect_spurious = 1;
                 int frame_is_pure_ack = 0;
@@ -78,7 +76,6 @@ protoop_arg_t retransmit_needed(picoquic_cnx_t *cnx)
                     /* Only retransmit as 0-RTT if contains crypto data */
                     int contains_crypto = 0;
                     byte_index = poffset;
-                    uint8_t frame_type;
 
                     picoquic_state_enum cnx_state = (picoquic_state_enum) get_cnx(cnx, AK_CNX_STATE, 0);
 
@@ -100,6 +97,7 @@ protoop_arg_t retransmit_needed(picoquic_cnx_t *cnx)
                 }
 
                 if (should_retransmit != 0) {
+//                    PROTOOP_PRINTF(cnx, "SHOULD RETRANSMIT PACKET OF CONTEXT %d, PN = %lu\n", pc, get_pkt(p, AK_PKT_SEQUENCE_NUMBER));
                     picoquic_packet_context_t *pkt_ctx = (picoquic_packet_context_t *) get_path(path_x, AK_PATH_PKT_CTX, pc);
                     set_pkt(packet, AK_PKT_SEQUENCE_NUMBER, (uint64_t) get_pkt_ctx(pkt_ctx, AK_PKTCTX_SEND_SEQUENCE));
                     set_pkt(packet, AK_PKT_SEND_PATH, (protoop_arg_t) path_x);
@@ -161,13 +159,32 @@ protoop_arg_t retransmit_needed(picoquic_cnx_t *cnx)
                     * in order to enable detection of spurious restransmissions */
                     // if the pc is the application, we want to free the packet: indeed, we disable the retransmissions
 
-                    uint64_t slot = get_pkt_metadata(cnx, p, 0);
-                    state->current_packet_is_lost = true;
+                    uint64_t slot = get_pkt_metadata(cnx, p, FEC_PKT_METADATA_SENT_SLOT);
+                    bool fec_protected = get_pkt_metadata(cnx, p, FEC_PKT_METADATA_IS_FEC_PROTECTED);
+                    bool fec_related = fec_protected || get_pkt_metadata(cnx, p, FEC_PKT_METADATA_CONTAINS_FEC_PACKET);
+                    uint32_t sfpid = get_pkt_metadata(cnx, p, FEC_PKT_METADATA_FIRST_SOURCE_SYMBOL_ID);
+                    bpf_state *state = NULL;
+                    // ugly but by doing so, we avoid initializing the state before we enter in the application state
+                    if (fec_related || get_pkt(p, AK_PKT_CONTEXT) == picoquic_packet_context_application) {
+                        state = get_bpf_state(cnx);
+                        if (!state)
+                            return 0;
+                        state->current_packet_is_lost = true;
+                        if (fec_protected && add_lost_packet(cnx, &state->lost_packets, lost_packet_number, slot, sfpid)) {
+                            return 0;
+                        }
+                    }
                     helper_dequeue_retransmit_packet(cnx, p, (packet_is_pure_ack & do_not_detect_spurious) || (pc == picoquic_packet_context_application && !get_pkt(p, AK_PKT_IS_MTU_PROBE)));
-
-                    state->current_packet_is_lost = false;
+                    if (state)
+                        state->current_packet_is_lost = false;
                     /* If we have a good packet, return it */
-                    if (pc == picoquic_packet_context_application || packet_is_pure_ack) {
+                    if (fec_related || packet_is_pure_ack) {
+                        if (!packet_is_pure_ack) {
+                            window_slot_nacked(cnx, state->framework_sender, slot);
+                            helper_congestion_algorithm_notify(cnx, old_path,
+                                                               (timer_based_retransmit == 0) ? picoquic_congestion_notification_repeat : picoquic_congestion_notification_timeout,
+                                                               0, 0, lost_packet_number, current_time);
+                        }
                         length = 0;
                     } else {
                         if (timer_based_retransmit != 0) {
@@ -189,18 +206,26 @@ protoop_arg_t retransmit_needed(picoquic_cnx_t *cnx)
                         }
 
                         if (should_retransmit != 0) {
+                            if (pc != picoquic_packet_context_application) {
+                                // if we retransmit a handshake packet, we allow the stack to send FEC Frames, because the
+                                // previous ones might not have been decrypted by the peer
+                                state = get_bpf_state(cnx);
+                                if (!state)
+                                    return 0;
+                                state->n_fec_frames_sent_before_handshake_finished = 0;
+                            }
                             int client_mode = (int) get_cnx(cnx, AK_CNX_CLIENT_MODE, 0);
                             /* special case for the client initial */
                             if (ptype == picoquic_packet_initial && client_mode != 0) {
                                 my_memset(&new_bytes[length], 0, (send_buffer_max - checksum_length) - length);
                             }
+                            length = (send_buffer_max - checksum_length);
                             set_pkt(packet, AK_PKT_LENGTH, length);
                             set_cnx(cnx, AK_CNX_NB_RETRANSMISSION_TOTAL, 0, get_cnx(cnx, AK_CNX_NB_RETRANSMISSION_TOTAL, 0) + 1);
 
                             helper_congestion_algorithm_notify(cnx, old_path,
                                 (timer_based_retransmit == 0) ? picoquic_congestion_notification_repeat : picoquic_congestion_notification_timeout,
                                 0, 0, lost_packet_number, current_time);
-                            window_slot_nacked(cnx, state->framework_sender, slot);
                             stop = true;
 
                             break;

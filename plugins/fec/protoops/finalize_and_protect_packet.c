@@ -95,6 +95,7 @@ protoop_arg_t finalize_and_protect_packet(picoquic_cnx_t *cnx) {
         my_free(cnx, payload_with_pn);
         if (err)
             return (protoop_arg_t) err;
+
     }
     return 0;
 }

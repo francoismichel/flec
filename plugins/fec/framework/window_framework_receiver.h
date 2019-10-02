@@ -1,4 +1,4 @@
-
+#include "../fec_protoops.h"
 #include "../../helpers.h"
 #include "window_receive_buffers.h"
 
@@ -60,13 +60,15 @@ static __attribute__((always_inline)) window_fec_framework_receiver_t *create_fr
 static __attribute__((always_inline)) bool update_highest_contiguous_received(picoquic_cnx_t *cnx, window_fec_framework_receiver_t *wff) {
     if (wff->received_source_symbols->size > 0 && ((int64_t) get_last_source_symbol_id(cnx, wff->received_source_symbols).raw) - (int64_t) wff->received_source_symbols->max_size > wff->highest_contiguous_received)
         wff->highest_contiguous_received = get_last_source_symbol_id(cnx, wff->received_source_symbols).raw - wff->received_source_symbols->max_size;
-
-    if (wff->highest_contiguous_received > 0 && wff->received_source_symbols->size > 0 && wff->highest_contiguous_received < get_first_source_symbol_id(cnx, wff->received_source_symbols).raw)
+    if (wff->highest_contiguous_received > 0 && wff->received_source_symbols->size > 0 && wff->highest_contiguous_received < get_first_source_symbol_id(cnx, wff->received_source_symbols).raw) {
+        PROTOOP_PRINTF(cnx, "RETURN; FIRST SYMBOL ID = %u\n", get_first_source_symbol_id(cnx, wff->received_source_symbols).raw);
         return false;
+    }
 
     uint32_t old_val = wff->highest_contiguous_received;
     while(buffer_contains_source_symbol(cnx, wff->received_source_symbols, wff->highest_contiguous_received + 1))
         wff->highest_contiguous_received++;
+    PROTOOP_PRINTF(cnx, "UPDATE HIGHEST RECEIVED, OLD = %u, NEW = %d, FIRST SYMBOL = ?\n", old_val, wff->highest_contiguous_received);
     return old_val != wff->highest_contiguous_received;
 }
 
@@ -107,6 +109,7 @@ static __attribute__((always_inline)) int window_receive_repair_symbol(picoquic_
     PROTOOP_PRINTF(cnx, "%u + %u - 1 <= ? %u\n", rs->repair_fec_payload_id.source_fpid.raw, rs->nss, wff->highest_contiguous_received);
     if (rs->repair_fec_payload_id.source_fpid.raw + rs->nss - 1 <= wff->highest_contiguous_received)
         return false;
+    rs->fec_scheme_specific &= 0x7FFFFFFFU;
     repair_symbol_t *removed = add_repair_symbol(cnx, wff->received_repair_symbols, rs, nss);
     if (removed)
         free_repair_symbol(cnx, removed);
@@ -141,17 +144,17 @@ static __attribute__((always_inline)) bool window_receive_source_symbol(picoquic
     source_symbol_t *removed = add_source_symbol(cnx, wff->received_source_symbols, ss);
     if (removed) {
         wff->highest_removed = MAX(removed->source_fec_payload_id.raw, wff->highest_removed);
+        PROTOOP_PRINTF(cnx, "FREED OLD SS %u FOR %u\n", removed->source_fec_payload_id.raw, ss->source_fec_payload_id.raw);
         free_source_symbol(cnx, removed);
     }
-    PROTOOP_PRINTF(cnx, "FREED OLD SS\n");
     // let's find all the blocks protecting this symbol to see if we can recover the remaining
     // we don't recover symbols if we already are in recovery mode
-    if (!state->in_recovery && recover) {
-        try_to_recover(cnx, state, wff);
-    } else {
+//    if (!state->in_recovery && recover) {
+//        try_to_recover(cnx, state, wff);
+//    } else {
         if (update_highest_contiguous_received(cnx, wff))
             remove_and_free_unused_repair_symbols(cnx, wff->received_repair_symbols, wff->highest_contiguous_received + 1);
         PROTOOP_PRINTF(cnx, "RECEIVED SYMBOL %u BUT DIDN'T TRY TO RECOVER\n", ss->source_fec_payload_id.raw);
-    }
+//    }
     return true;
 }

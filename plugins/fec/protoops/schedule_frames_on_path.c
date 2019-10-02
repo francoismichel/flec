@@ -2,13 +2,6 @@
 #include "../fec_protoops.h"
 #include "../framework/window_framework_sender.h"
 
-#define MIN_BYTES_TO_RETRANSMIT_PROTECT 20
-
-static __attribute__((always_inline)) bool is_mtu_probe(picoquic_packet_t *p, picoquic_path_t *path) {
-    if (!p || !path) return false;
-    // it is mtu if p->length + p->checksum_overhead > send_path->send_mtu
-    return get_pkt(p, AK_PKT_LENGTH) + get_pkt(p, AK_PKT_CHECKSUM_OVERHEAD) > get_path(path, AK_PATH_SEND_MTU, 0);
-}
 
 /**
  * Select the path on which the next packet will be sent.
@@ -66,13 +59,22 @@ protoop_arg_t schedule_frames_on_path(picoquic_cnx_t *cnx)
                 encode_u32(state->current_sfpid_frame->source_fpid.raw, state->written_sfpid_frame+1);
             }
             PROTOOP_PRINTF(cnx, "SET LAST CC CONTROLLED TO %lu\n", state->last_protected_slot);
-            set_pkt_metadata(cnx, packet, 0, state->last_protected_slot);
-            PROTOOP_PRINTF(cnx, "GET LAST CC CONTROLLED %lu\n", get_pkt_metadata(cnx, packet, 0));
+            set_pkt_metadata(cnx, packet, FEC_PKT_METADATA_SENT_SLOT, state->last_protected_slot);
+            set_pkt_metadata(cnx, packet, FEC_PKT_METADATA_IS_FEC_PROTECTED, true);
+            set_pkt_metadata(cnx, packet, FEC_PKT_METADATA_FIRST_SOURCE_SYMBOL_ID, current_sfpid.raw);
+            PROTOOP_PRINTF(cnx, "SET PKT %x METADATA SFPID %u, GET %u\n", get_pkt(packet, AK_PKT_SEQUENCE_NUMBER), current_sfpid.raw, get_pkt_metadata(cnx, packet, FEC_PKT_METADATA_FIRST_SOURCE_SYMBOL_ID));
         }
 
+    } else if (state->current_packet_contains_fec_frame) {
+        set_pkt_metadata(cnx, packet, FEC_PKT_METADATA_SENT_SLOT, state->last_fec_slot);
+        set_pkt_metadata(cnx, packet, FEC_PKT_METADATA_CONTAINS_FEC_PACKET, true);
     }
     state->current_sfpid_frame = NULL;
-
-
+    picoquic_path_t *path = (picoquic_path_t *) get_cnx(cnx, AK_CNX_PATH, 0);
+    bool slot_available = get_path(path, AK_PATH_CWIN, 0) > get_path(path, AK_PATH_BYTES_IN_TRANSIT, 0);
+    if (!is_buffer_empty(((window_fec_framework_t *) state->framework_sender)->controller->what_to_send) && slot_available) {
+        set_cnx(cnx, AK_CNX_WAKE_NOW, 0, 1);
+    }
+    PROTOOP_PRINTF(cnx, "END SCHEDULE\n");
     return 0;
 }

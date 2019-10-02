@@ -31,7 +31,7 @@ protoop_arg_t get_one_coded_symbol(picoquic_cnx_t *cnx)
     rlc_gf256_fec_scheme_t *fs = (rlc_gf256_fec_scheme_t *) get_cnx(cnx, AK_CNX_INPUT, 1);
     int64_t seed = (int64_t) get_cnx(cnx, AK_CNX_INPUT, 2);
     uint8_t **mul = fs->table_mul;
-    PROTOOP_PRINTF(cnx, "GENERATING SYMBOLS WITH RLC GF256\n");
+    PROTOOP_PRINTF(cnx, "GENERATING SYMBOLS WITH RLC GF256, BLOCK = %p\n", (protoop_arg_t) fec_block);
     if (fec_block->total_source_symbols < 1
         || fec_block->current_source_symbols != fec_block->total_source_symbols) {
         PROTOOP_PRINTF(cnx, "IMPOSSIBLE TO GENERATE\n");
@@ -63,7 +63,6 @@ protoop_arg_t get_one_coded_symbol(picoquic_cnx_t *cnx)
     get_coefs(cnx, &prng, seed, fec_block->total_source_symbols, coefs);
     repair_symbol_t *rs = malloc_repair_symbol(cnx, rfpid, max_length);
     for (j = 0 ; j < fec_block->total_source_symbols ; j++) {
-
         symbol_add_scaled(rs->data, coefs[j], knowns[j], max_length, mul);
     }
     fec_block->repair_symbols[0] = rs;

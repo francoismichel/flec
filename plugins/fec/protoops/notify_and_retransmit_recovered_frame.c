@@ -23,6 +23,7 @@ protoop_arg_t notify_recovered_frame(picoquic_cnx_t *cnx)
             retval = -1;
         }
     } else {
+        PROTOOP_PRINTF(cnx, "RECEIVED = %d, CURRENT_IS_LOST = %d\n");
         free_rp(cnx, rp);
         my_free(cnx, rfs);
     }

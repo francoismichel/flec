@@ -2,7 +2,7 @@
 
 #include <picoquic.h>
 #include "../fec_protoops.h"
-#include "../causal_redundancy_controller_protoops/causal_redundancy_controller.h"
+#include "../causal_redundancy_controller_protoops/causal_redundancy_controller_only_fb_fec.h"
 #include "../framework/window_framework_sender.h"
 
 protoop_arg_t write_fec_frame(picoquic_cnx_t *cnx) {
@@ -37,13 +37,14 @@ protoop_arg_t write_fec_frame(picoquic_cnx_t *cnx) {
     // copy the frame payload
     my_memcpy(bytes + 1 + sizeof(fec_frame_header_t), ff->data, bytes_max - (bytes + 1 + sizeof(fec_frame_header_t)));
     bool is_fb_fec = (ff->header.repair_fec_payload_id.fec_scheme_specific & (1UL << 31U)) != 0;
-    rlnc_window_t window = get_current_rlnc_window(cnx, state->framework_sender);
+    fec_window_t window = get_current_rlnc_window(cnx, state->framework_sender);
     causal_packet_type_t type = is_fb_fec ? fb_fec_packet : fec_packet;
+    state->last_fec_slot = ((window_fec_framework_t *) state->framework_sender)->current_slot;
     window_sent_symbol(cnx, state->framework_sender, type, &window);
     my_free(cnx, ff->data);
     set_cnx(cnx, AK_CNX_OUTPUT, 0, (protoop_arg_t) (1 + sizeof(fec_frame_header_t) + ff->header.data_length));
     set_cnx(cnx, AK_CNX_OUTPUT, 1, (protoop_arg_t) 0);
+    PROTOOP_PRINTF(cnx, "WRITTEN FRAME %p OF LEN %u, TOTAL %u BYTES, FSS = %u\n", (protoop_arg_t) ff, ff->header.data_length, (1 + sizeof(fec_frame_header_t) + ff->header.data_length), ff->header.repair_fec_payload_id.fec_scheme_specific);
     my_free(cnx, ff);
-    PROTOOP_PRINTF(cnx, "WRITTEN FRAME OF LEN %u, TOTAL %u BYTES\n", ff->header.data_length, (1 + sizeof(fec_frame_header_t) + ff->header.data_length));
     return 0;
 }

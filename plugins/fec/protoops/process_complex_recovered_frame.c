@@ -9,10 +9,10 @@ protoop_arg_t process_recovered_frame(picoquic_cnx_t *cnx)
     if (!state) return PICOQUIC_ERROR_MEMORY;
     uint8_t *size_and_packets = (uint8_t *) get_cnx(cnx, AK_CNX_INPUT, 0);
     recovered_packets_t rp;
-    rp.number_of_packets = *size_and_packets;           // |X| |     |     |
-    rp.number_of_sfpids = *(size_and_packets + 1);      // | |X|     |     |
-    rp.packets = (uint64_t *) (size_and_packets+2);     // | | |  X  |     |
-    rp.recovered_sfpids = (source_fpid_t *) (size_and_packets + 2 + rp.number_of_packets*sizeof(uint64_t));  // | | |     |  X  |
+    rp.number_of_packets = ((uint64_t *) (size_and_packets))[0];           // |X| |     |     |
+    rp.number_of_sfpids = ((uint64_t *) (size_and_packets))[1];      // | |X|     |     |
+    rp.packets = &(((uint64_t *) (size_and_packets))[2]);     // | | |  X  |     |
+    rp.recovered_sfpids = (source_fpid_t *) (rp.packets + rp.number_of_packets);  // | | |     |  X  |
 
     PROTOOP_PRINTF(cnx, "PROCESS RECOVERED FRAME NUMBER OF PACKETS = %d, NUMBER OF SFPIDs = %d\n", rp.number_of_packets, rp.number_of_sfpids);
 

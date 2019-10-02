@@ -7,3 +7,4 @@ receive_repair_symbol replace framework_protoops/window_receive_repair_symbol.o
 notify_frame param 0x29 pre framework_protoops/window_pre_notify_sfpid_frame.o
 write_frame param 0x29 post framework_protoops/window_post_write_sfpid_frame.o
 stream_bytes_max replace protoops/stream_bytes_max_no_stream_frame_with_repair_frame.o
+try_to_recover replace framework_protoops/window_try_to_recover.o
