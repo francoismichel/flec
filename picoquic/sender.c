@@ -2936,7 +2936,8 @@ protoop_arg_t schedule_frames_on_path(picoquic_cnx_t *cnx)
             && picoquic_is_ack_needed(cnx, current_time, pc, path_x) == 0
             && path_x->challenge_response_to_send == 0
             && (path_x->challenge_verified == 1 || current_time < path_x->challenge_time + path_x->retransmit_timer)
-            && queue_peek(cnx->reserved_frames) == NULL
+            // do a mtu probe if we have no reserved frames or a reserved frame that would not fit in a packet given this MTU
+            && (queue_peek(cnx->reserved_frames) == NULL || ((reserve_frame_slot_t *) queue_peek(cnx->reserved_frames))->nb_bytes >= path_x->send_mtu - length - checksum_overhead)
             && queue_peek(cnx->retry_frames) == NULL) {
             if (ret == 0 && send_buffer_max > path_x->send_mtu
                 && path_x->cwin > path_x->bytes_in_transit && picoquic_is_mtu_probe_needed(cnx, path_x)) {
