@@ -15,6 +15,7 @@ typedef struct {
     bool has_written_fpi_frame;
     bool has_written_repair_frame;
     bool has_written_fb_fec_repair_frame;
+    bool has_written_recovered_frame;
     bool is_incoming_packet_fec_protected;
     bool current_packet_is_lost;
 
@@ -22,8 +23,12 @@ typedef struct {
     bool is_in_skip_frame;
 
     // TODO: see if we can get rid of this counter and boolean
-    int n_repair_frames_sent_before_handshake_finished;
+    int n_repair_frames_sent_since_last_feedback;
     bool handshake_finished;
+
+    source_symbol_id_t current_repair_frame_first_protected_id;
+    uint16_t current_repair_frame_n_protected_symbols;
+    uint16_t current_repair_frame_n_repair_symbols;
 
     source_symbol_id_t current_id;
 
@@ -195,11 +200,11 @@ static __attribute__((always_inline)) int preprocess_packet_payload(picoquic_cnx
         my_memcpy(&type_byte, &packet_payload[offset_in_packet_payload], sizeof(uint8_t));
         // TODO: voir pk consumed fait 1400 bytes, printer e type byte
 //        type_byte = packet_payload[offset_in_packet_payload];
-        bool to_ignore = type_byte == picoquic_frame_type_ack || type_byte == picoquic_frame_type_padding || type_byte == picoquic_frame_type_crypto_hs || type_byte == FRAME_FEC_SRC_FPI;
+//        bool to_ignore = type_byte == picoquic_frame_type_ack || type_byte == picoquic_frame_type_padding || type_byte == picoquic_frame_type_crypto_hs || type_byte == FRAME_FEC_SRC_FPI;
+        bool to_ignore = !PICOQUIC_IN_RANGE(type_byte, picoquic_frame_type_stream_range_min, picoquic_frame_type_stream_range_max);
         int err = helper_skip_frame(cnx, packet_payload + offset_in_packet_payload, payload_length - offset_in_packet_payload, &consumed, &pure_ack);
         if (err)
             return err;
-        PROTOOP_PRINTF(cnx, "CONSUMED = %lu, TYPE = %u\n", consumed, type_byte);
         if (!to_ignore) {
             PROTOOP_PRINTF(cnx, "NOT IGNORE, CONSUMED = %lu\n", consumed);
             my_memcpy(output_payload + offset_in_output, packet_payload + offset_in_packet_payload, consumed);
@@ -322,7 +327,7 @@ static __attribute__((always_inline)) int maybe_notify_recovered_packets_to_ever
                 fec_packet_symbols_have_been_received(cnx, pn64, slot, first_id, n_source_symbols, true, false);
             } else {
                 // this is not normal
-                PROTOOP_PRINTF(cnx, "ERROR: THE RECOVERED PACKET IS NEITHER IN THE RETRANSMIT QUEUE, NEITHER IN THE LOST PACKETS\n");
+                PROTOOP_PRINTF(cnx, "ERROR: THE RECOVERED PACKET %lx (%lu) IS NEITHER IN THE RETRANSMIT QUEUE, NEITHER IN THE LOST PACKETS\n", pn64, pn64);
                 return -1;
             }
         } // else, do nothing, try the next packet

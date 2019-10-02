@@ -29,7 +29,7 @@ protoop_arg_t parse_frame(picoquic_cnx_t *cnx) {
     size_t consumed = 0;
     int err = decode_window_source_symbol_id(bytes_protected, bytes_max - bytes_protected, id, &consumed);
     set_cnx(cnx, AK_CNX_OUTPUT, 0, (protoop_arg_t) id);
-    set_cnx(cnx, AK_CNX_OUTPUT, 1, false);
+    set_cnx(cnx, AK_CNX_OUTPUT, 1, true);
     set_cnx(cnx, AK_CNX_OUTPUT, 2, false);
     return (protoop_arg_t) bytes_protected + consumed;
 }

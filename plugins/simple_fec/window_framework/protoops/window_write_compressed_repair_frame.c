@@ -1,12 +1,8 @@
 #include <picoquic.h>
 #include <getset.h>
 #include "../../../helpers.h"
-#include "../../fec_constants.h"
-#include "../../fec.h"
-#include "../types.h"
-#include "../framework_sender.h"
+#include "compressed_repair_frame.h"
 
-// we here assume a single-path context
 
 protoop_arg_t write_frame(picoquic_cnx_t *cnx) {
     plugin_state_t *state = get_plugin_state(cnx);
@@ -22,7 +18,7 @@ protoop_arg_t write_frame(picoquic_cnx_t *cnx) {
     bytes++;
 
     size_t consumed = 0;
-    int err = serialize_window_repair_frame(cnx, bytes, bytes_max - bytes, rf, state->symbol_size, &consumed);
+    int err = serialize_compress_padding_window_repair_frame(cnx, bytes, bytes_max - bytes, rf, state->symbol_size, &consumed);
     if (!err) {
         state->has_written_fb_fec_repair_frame = rf->is_fb_fec;
         state->has_written_repair_frame = !rf->is_fb_fec;
@@ -31,7 +27,7 @@ protoop_arg_t write_frame(picoquic_cnx_t *cnx) {
         state->current_repair_frame_n_repair_symbols = rf->n_repair_symbols;
     }
     set_cnx(cnx, AK_CNX_OUTPUT, 0, (protoop_arg_t) 1 + consumed);
-    set_cnx(cnx, AK_CNX_OUTPUT, 1, (protoop_arg_t) true);   // FIXME we make it retransmittable but we disable the retransmissions afterwards  but otherwise we can't process it
-    PROTOOP_PRINTF(cnx, "WRITTEN REPAIR FRAME\n");
+    set_cnx(cnx, AK_CNX_OUTPUT, 1, (protoop_arg_t) true);
+    PROTOOP_PRINTF(cnx, "WRITTEN COMPRESSED REPAIR FRAME\n");
     return err;
 }

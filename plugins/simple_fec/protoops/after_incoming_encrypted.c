@@ -20,6 +20,7 @@ protoop_arg_t incoming_encrypted(picoquic_cnx_t *cnx)
     if (state->is_incoming_packet_fec_protected) {
         err = receive_packet_payload(cnx, state->current_packet, state->current_packet_length,
                                          state->current_packet_number, state->current_packet_first_id);
+        PROTOOP_PRINTF(cnx, "RECEIVE PACKET PAYLOAD RETURNED %d\n", err);
     }
     fec_after_incoming_packet(cnx);
     return err;

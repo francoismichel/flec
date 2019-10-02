@@ -5,8 +5,9 @@ parse_frame param 0x29 replace window_framework/protoops/window_parse_src_fpi_fr
 process_frame param 0x29 replace window_framework/protoops/window_process_src_fpi_frame.o
 notify_frame param 0x29 replace window_framework/protoops/window_notify_src_fpi_frame.o
 
-write_frame param 0x2a replace window_framework/protoops/window_write_repair_frame.o
-parse_frame param 0x2a replace window_framework/protoops/window_parse_repair_frame.o
+write_frame param 0x2a replace window_framework/protoops/window_write_compressed_repair_frame.o
+parse_frame param 0x2a replace window_framework/protoops/window_parse_compressed_repair_frame.o
+window_predict_repair_frame_length replace window_framework/protoops/window_predict_compressed_repair_frame_length.o
 process_frame param 0x2a replace window_framework/protoops/window_process_repair_frame.o
 notify_frame param 0x2a replace window_framework/protoops/window_notify_repair_frame.o
 

@@ -19,7 +19,7 @@ protoop_arg_t retransmit_needed(picoquic_cnx_t *cnx)
     uint16_t header_length = (uint32_t) get_cnx(cnx, AK_CNX_INPUT, 6);
 
     uint16_t length = 0;
-    bool stop = false;
+    int stop = false;
     char *reason = NULL;
 
 
@@ -39,7 +39,7 @@ protoop_arg_t retransmit_needed(picoquic_cnx_t *cnx)
             uint8_t * new_bytes = (uint8_t *) get_pkt(packet, AK_PKT_BYTES);
             int ret = 0;
 
-
+//            PROTOOP_PRINTF(cnx, "CONSIDER LOST PACKET %lx\n", lost_packet_number);
             length = 0;
             /* Get the packet type */
 
@@ -57,6 +57,8 @@ protoop_arg_t retransmit_needed(picoquic_cnx_t *cnx)
                     break;
                 }
             } else {
+
+//                PROTOOP_PRINTF(cnx, "PACKET %lx LOST, MAYBE RETRANSMIT\n", lost_packet_number);
                 /* check if this is an ACK only packet */
 //                int contains_crypto = (int) get_pkt(p, AK_PKT_CONTAINS_CRYPTO);
                 int packet_is_pure_ack = (int) get_pkt(p, AK_PKT_IS_PURE_ACK);
@@ -160,36 +162,107 @@ protoop_arg_t retransmit_needed(picoquic_cnx_t *cnx)
                     * in order to enable detection of spurious restransmissions */
                     // if the pc is the application, we want to free the packet: indeed, we disable the retransmissions
 
-                    uint64_t slot = get_pkt_metadata(cnx, p, FEC_PKT_METADATA_SENT_SLOT);
-                    bool fec_protected = FEC_PKT_IS_FEC_PROTECTED(get_pkt_metadata(cnx, p, FEC_PKT_METADATA_FLAGS));
-                    bool contains_repair_frame = FEC_PKT_CONTAINS_REPAIR_FRAME(get_pkt_metadata(cnx, p, FEC_PKT_METADATA_FLAGS));
-                    bool fec_related = fec_protected || contains_repair_frame;
+                    uint64_t *vals_fec = my_malloc(cnx, 8*sizeof(uint64_t));
+                    if (!vals_fec)
+                        return -1;
+                    uint64_t *vals = my_malloc(cnx, 8*sizeof(uint64_t));
+                    if (!vals)
+                        return -1;
+
+
+
+#define orig_smoothed_rtt (vals[0])
+#define orig_time_stamp_largest_received (vals[1])
+#define orig_latest_retransmit_time (vals[2])
+#define orig_latest_progress_time (vals[3])
+#define retrans_cc_notification_timer (vals[4])
+#define nb_retransmit (vals[5])
+#define retrans_timer (vals[6])
+#define is_timer_based (vals[7])
+
+                    orig_smoothed_rtt = get_path(orig_path, AK_PATH_SMOOTHED_RTT, 0);
+                    orig_time_stamp_largest_received = get_pkt_ctx(orig_pkt_ctx, AK_PKTCTX_TIME_STAMP_LARGEST_RECEIVED);
+                    orig_latest_retransmit_time = get_pkt_ctx(orig_pkt_ctx, AK_PKTCTX_LATEST_RETRANSMIT_TIME);
+                    orig_latest_progress_time = get_pkt_ctx(orig_pkt_ctx, AK_PKTCTX_LATEST_PROGRESS_TIME);
+                    retrans_cc_notification_timer = get_pkt_ctx(orig_pkt_ctx, AK_PKTCTX_LATEST_RETRANSMIT_CC_NOTIFICATION_TIME) + orig_smoothed_rtt;
+                    nb_retransmit = get_pkt_ctx(orig_pkt_ctx, AK_PKTCTX_NB_RETRANSMIT);
+
+
+
+
+
+#define slot (vals_fec[0])
+#define fec_protected (vals_fec[1])
+#define contains_repair_frame (vals_fec[2])
+#define contains_recovered_frame (vals_fec[3])
+#define fec_related (vals_fec[4])
+                    slot = get_pkt_metadata(cnx, p, FEC_PKT_METADATA_SENT_SLOT);
+                    fec_protected = FEC_PKT_IS_FEC_PROTECTED(get_pkt_metadata(cnx, p, FEC_PKT_METADATA_FLAGS));
+                    contains_repair_frame = FEC_PKT_CONTAINS_REPAIR_FRAME(get_pkt_metadata(cnx, p, FEC_PKT_METADATA_FLAGS));
+                    contains_recovered_frame = FEC_PKT_CONTAINS_RECOVERED_FRAME(get_pkt_metadata(cnx, p, FEC_PKT_METADATA_FLAGS));
+                    fec_related = fec_protected || contains_repair_frame;
+
+
+
                     source_symbol_id_t first_symbol_id = get_pkt_metadata(cnx, p, FEC_PKT_METADATA_FIRST_SOURCE_SYMBOL_ID);
                     uint16_t n_symbols = get_pkt_metadata(cnx, p, FEC_PKT_METADATA_NUMBER_OF_SOURCE_SYMBOLS);
                     plugin_state_t *state = NULL;
+//                    PROTOOP_PRINTF(cnx, "DISABLE RETRANSMISSIONS, CONTAINS RECOVERED = %d\n", contains_recovered_frame);
                     // ugly but by doing so, we avoid initializing the state before we enter in the application state
-                    if (fec_related || get_pkt(p, AK_PKT_CONTEXT) == picoquic_packet_context_application) {
+                    if (fec_related || contains_recovered_frame || get_pkt(p, AK_PKT_CONTEXT) == picoquic_packet_context_application) {
                         state = get_plugin_state(cnx);
                         if (!state)
-                            return 0;
+                            return -1;
                         state->current_packet_is_lost = true;
                     }
+
+
                     helper_dequeue_retransmit_packet(cnx, p, (packet_is_pure_ack & do_not_detect_spurious) || (pc == picoquic_packet_context_application && !get_pkt(p, AK_PKT_IS_MTU_PROBE)));
                     if (state)
                         state->current_packet_is_lost = false;
                     /* If we have a good packet, return it */
                     if (fec_related || packet_is_pure_ack) {
-                        if (!packet_is_pure_ack) {
-                            helper_congestion_algorithm_notify(cnx, old_path,
-                                                               (timer_based_retransmit == 0) ? picoquic_congestion_notification_repeat : picoquic_congestion_notification_timeout,
-                                                               0, 0, lost_packet_number, current_time);
+                        if (fec_related) {
+
+                            is_timer_based = false;
+                            if (timer_based_retransmit != 0 && current_time >= retrans_timer) {
+                                is_timer_based = true;
+                            }
+
+                            PROTOOP_PRINTF(cnx, "RETRANS TIMER = %lu, CURRENT TIME = %lu\n", retrans_cc_notification_timer, current_time);
+                            if (current_time >= retrans_cc_notification_timer) {
+                                set_pkt_ctx(orig_pkt_ctx, AK_PKTCTX_LATEST_RETRANSMIT_CC_NOTIFICATION_TIME, current_time);
+                                helper_congestion_algorithm_notify(cnx, old_path,
+                                                                   (is_timer_based) ? picoquic_congestion_notification_timeout : picoquic_congestion_notification_repeat,
+                                                                   0, 0, lost_packet_number, current_time);
+                            }
                             if (fec_packet_has_been_lost(cnx, lost_packet_number, slot, first_symbol_id, n_symbols, fec_protected, contains_repair_frame))
-                                return 0;
+                                return -1;
                         }
                         length = 0;
                     } else {
-                        if (timer_based_retransmit != 0) {
-                            uint64_t nb_retransmit = (uint64_t) get_pkt_ctx(orig_pkt_ctx, AK_PKTCTX_NB_RETRANSMIT);
+
+
+
+//                        uint64_t orig_smoothed_rtt = get_path(orig_path, AK_PATH_SMOOTHED_RTT, 0);
+//                        uint64_t orig_time_stamp_largest_received = get_pkt_ctx(orig_pkt_ctx, AK_PKTCTX_TIME_STAMP_LARGEST_RECEIVED);
+//                        uint64_t orig_latest_retransmit_time = get_pkt_ctx(orig_pkt_ctx, AK_PKTCTX_LATEST_RETRANSMIT_TIME);
+//                        uint64_t orig_latest_progress_time = get_pkt_ctx(orig_pkt_ctx, AK_PKTCTX_LATEST_PROGRESS_TIME);
+
+                        /* We should also consider if some action was recently observed to consider that it is actually a RTO... */
+                        retrans_timer = orig_time_stamp_largest_received + orig_smoothed_rtt;
+                        if (orig_latest_retransmit_time >= orig_time_stamp_largest_received) {
+                            retrans_timer = orig_latest_retransmit_time + orig_smoothed_rtt;
+                        }
+                        /* Or any packet acknowledged */
+                        if (orig_latest_progress_time + orig_smoothed_rtt > retrans_timer) {
+                            retrans_timer = orig_latest_progress_time + orig_smoothed_rtt;
+                        }
+                        is_timer_based = false;
+//                        uint64_t retrans_cc_notification_timer = get_pkt_ctx(orig_pkt_ctx, AK_PKTCTX_LATEST_RETRANSMIT_CC_NOTIFICATION_TIME);
+                        if (timer_based_retransmit != 0 && current_time >= retrans_timer) {
+                            is_timer_based = true;
+//                            uint64_t nb_retransmit = (uint64_t) get_pkt_ctx(orig_pkt_ctx, AK_PKTCTX_NB_RETRANSMIT);
                             if (nb_retransmit > 4) {
                                 /*
                                 * Max retransmission count was exceeded. Disconnect.
@@ -201,8 +274,10 @@ protoop_arg_t retransmit_needed(picoquic_cnx_t *cnx)
                                 stop = true;
                                 break;
                             } else {
-                                set_pkt_ctx(orig_pkt_ctx, AK_PKTCTX_NB_RETRANSMIT, nb_retransmit + 1);
                                 set_pkt_ctx(orig_pkt_ctx, AK_PKTCTX_LATEST_RETRANSMIT_TIME, current_time);
+                                if (current_time >= retrans_cc_notification_timer) {
+                                    set_pkt_ctx(orig_pkt_ctx, AK_PKTCTX_NB_RETRANSMIT, nb_retransmit + 1);
+                                }
                             }
                         }
 
@@ -213,25 +288,30 @@ protoop_arg_t retransmit_needed(picoquic_cnx_t *cnx)
                                 state = get_plugin_state(cnx);
                                 if (!state)
                                     return 0;
-                                state->n_repair_frames_sent_before_handshake_finished = 0;
                             }
                             int client_mode = (int) get_cnx(cnx, AK_CNX_CLIENT_MODE, 0);
                             /* special case for the client initial */
                             if (ptype == picoquic_packet_initial && client_mode != 0) {
                                 my_memset(&new_bytes[length], 0, (send_buffer_max - checksum_length) - length);
+                                length = (send_buffer_max - checksum_length);
                             }
-                            length = (send_buffer_max - checksum_length);
                             set_pkt(packet, AK_PKT_LENGTH, length);
                             set_cnx(cnx, AK_CNX_NB_RETRANSMISSION_TOTAL, 0, get_cnx(cnx, AK_CNX_NB_RETRANSMISSION_TOTAL, 0) + 1);
 
-                            helper_congestion_algorithm_notify(cnx, old_path,
-                                (timer_based_retransmit == 0) ? picoquic_congestion_notification_repeat : picoquic_congestion_notification_timeout,
-                                0, 0, lost_packet_number, current_time);
+//                            PROTOOP_PRINTF(cnx, "CURRENT TIME = %lu, RETRANS TIMER = %lu\n", retrans_cc_notification_timer);
+                            if (current_time >= retrans_cc_notification_timer) {
+                                set_pkt_ctx(orig_pkt_ctx, AK_PKTCTX_LATEST_RETRANSMIT_CC_NOTIFICATION_TIME, current_time);
+                                helper_congestion_algorithm_notify(cnx, old_path,
+                                                                   (is_timer_based) ? picoquic_congestion_notification_timeout : picoquic_congestion_notification_repeat,
+                                                                   0, 0, lost_packet_number, current_time);
+                            }
                             stop = true;
 
                             break;
                         }
                     }
+                    my_free(cnx, vals);
+                    my_free(cnx, vals_fec);
                 }
             }
             /*

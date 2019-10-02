@@ -19,10 +19,10 @@ protoop_arg_t process_ack_range(picoquic_cnx_t *cnx)
         return PICOQUIC_ERROR_MEMORY;
     picoquic_packet_t* p = ppacket;
     int ret = 0;
-    int64_t first_lost;
+    lost_packet_t *closest_lost = NULL;
     /* Compare the range to the retransmit queue */
-    while ((p != NULL || ((first_lost = get_first_lost_packet(cnx, &state->lost_packets)) <= highest && first_lost >= 0)) && range > 0) {
-
+    while ((p != NULL || ((closest_lost = get_lost_packet_equal_or_smaller(cnx, &state->lost_packets, highest)) && closest_lost->pn >= 0)) && range > 0) {
+        // if p is not nul, p is not in the lost packets and vice-versa
         if (p != NULL) {
             uint64_t sequence_number = get_pkt(p, AK_PKT_SEQUENCE_NUMBER);
             if (sequence_number > highest) {
@@ -35,6 +35,7 @@ protoop_arg_t process_ack_range(picoquic_cnx_t *cnx)
 
                     uint32_t length = (uint32_t) get_pkt(p, AK_PKT_LENGTH);
                     if ((picoquic_congestion_algorithm_t *) get_cnx(cnx, AK_CNX_CONGESTION_CONTROL_ALGORITHM, 0) != NULL) {
+                        PROTOOP_PRINTF(cnx, "NOTIFY ACK FOR ÄCKED %lu\n", highest);
                         helper_congestion_algorithm_notify(cnx, old_path,
                                                            picoquic_congestion_notification_acknowledgement, 0, length, 0, current_time);
                     }
@@ -80,14 +81,18 @@ protoop_arg_t process_ack_range(picoquic_cnx_t *cnx)
                 range--;
                 highest--;
             }
-        } else if (get_first_lost_packet(cnx, &state->lost_packets) <= highest) {
-
+        } else if (closest_lost->pn <= highest) { // closest_lost is always not null as p == NULL
+            if (closest_lost->pn == highest)
+                fec_packet_symbols_have_been_received(cnx, closest_lost->pn, closest_lost->slot, closest_lost->id, closest_lost->n_source_symbols, true, false);
             range--;
             highest--;
-        }
+        } else if (closest_lost) PROTOOP_PRINTF(cnx, " ELSE, first lost = %lx, highest = %lx\n", closest_lost->pn, highest);
     }
 
+
     ppacket = p;
+
+    PROTOOP_PRINTF(cnx, "END PROCESS ACK RANGE, CURRENT TIME = %lu\n", current_time);
 
     set_cnx(cnx, AK_CNX_OUTPUT, 0, (protoop_arg_t) ppacket);
     return (protoop_arg_t) ret;

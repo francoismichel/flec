@@ -23,8 +23,12 @@ protoop_arg_t causal_what_to_send(picoquic_cnx_t *cnx) {
     available_slot_reason_t reason = (available_slot_reason_t) get_cnx(cnx, AK_CNX_INPUT, 0);
     window_fec_framework_t *wff = (window_fec_framework_t *) state->framework_sender;
     fec_window_t window = get_current_fec_window(cnx, wff);
-    run_algo(cnx, (causal_redundancy_controller_t *) wff->controller, reason, &window);
-    causal_packet_type_t ptype = what_to_send(cnx, wff->controller);
+    if (window_size(&window) > 0) {
+        run_algo(cnx, (causal_redundancy_controller_t *) wff->controller, reason, &window);
+    }
+    window_source_symbol_id_t first_id_to_protect;
+    uint16_t number_of_symbols_to_protect;
+    causal_packet_type_t ptype = what_to_send(cnx, wff->controller, &first_id_to_protect, &number_of_symbols_to_protect);
     what_to_send_t wts;
     switch(ptype) {
         case fec_packet:
@@ -38,5 +42,7 @@ protoop_arg_t causal_what_to_send(picoquic_cnx_t *cnx) {
             break;
     }
     set_cnx(cnx, AK_CNX_OUTPUT, 0, wts);
+    set_cnx(cnx, AK_CNX_OUTPUT, 1, first_id_to_protect);
+    set_cnx(cnx, AK_CNX_OUTPUT, 2, number_of_symbols_to_protect);
     return 0;
 }
