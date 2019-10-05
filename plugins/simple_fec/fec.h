@@ -274,6 +274,7 @@ static __attribute__((always_inline)) source_symbol_t **packet_payload_to_source
 
         retval[current_symbol] = symbol;
     }
+    my_free(cnx, processed_payload);
     set_ss_metadata_E(retval[*n_chunks-1], true);   // this is the last symbol of the packet
     return retval;
 }
