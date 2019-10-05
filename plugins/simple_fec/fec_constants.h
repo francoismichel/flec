@@ -27,7 +27,11 @@
 
 // values
 #define MAX_SRC_FPI_SIZE 16
+
+#ifndef CHUNK_SIZE
 #define CHUNK_SIZE 1404
+#endif
+
 #define SYMBOL_SIZE (CHUNK_SIZE + 1)
 
 #define DEFAULT_SLOT_SIZE (PICOQUIC_MAX_PACKET_SIZE - 100)
