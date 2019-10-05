@@ -29,3 +29,4 @@ fec_sent_packet post window_framework/protoops/window_packet_sent.o
 window_select_symbols_to_protect replace window_framework/protoops/window_select_symbols_to_protect.o
 
 fec_after_incoming post window_framework/protoops/window_try_to_recover_after_incoming_packet.o
+stream_bytes_max replace window_framework/protoops/stream_bytes_max_no_stream_frame_with_repair_frame.o
