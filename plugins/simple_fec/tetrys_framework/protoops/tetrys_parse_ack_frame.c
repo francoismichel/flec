@@ -11,7 +11,6 @@
  */
 protoop_arg_t parse_tetrys_ack_frame(picoquic_cnx_t *cnx)
 {
-    PROTOOP_PRINTF(cnx, "Parse TETRYS ACK FRAME\n");
     uint8_t *bytes_protected = (uint8_t *) get_cnx(cnx, AK_CNX_INPUT, 0);
     const uint8_t* bytes_max = (uint8_t *) get_cnx(cnx, AK_CNX_INPUT, 1);
     if (bytes_protected + 1 > bytes_max)

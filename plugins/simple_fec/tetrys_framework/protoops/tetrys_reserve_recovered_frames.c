@@ -39,7 +39,6 @@ protoop_arg_t schedule_frames_on_path(picoquic_cnx_t *cnx)
             if (reserve_frames(cnx, 1, slot) != slot->nb_bytes) {
                 return PICOQUIC_ERROR_MEMORY;
             }
-            PROTOOP_PRINTF(cnx, "RESERVED RECOVERED FRAME\n");
         } else {
             PROTOOP_PRINTF(cnx, "COULD NOT GET A RF\n");
         }

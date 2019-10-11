@@ -61,14 +61,6 @@ static __attribute__((always_inline)) void gaussElimination(picoquic_cnx_t *cnx,
 
     sort_system(cnx, a, constant_terms, n_eq, n_unknowns);
 
-    PROTOOP_PRINTF(cnx, "AFTER SORTED\n");
-    for (int i = 0 ; i < n_eq ; i++) {
-        PROTOOP_PRINTF(cnx, "BEGIN EQ %d\n", i);
-        for (int j = 0 ; j < n_unknowns ; j++) {
-            PROTOOP_PRINTF(cnx, "%d\n", a[i][j]);
-        }
-        PROTOOP_PRINTF(cnx, "END EQ\n");
-    }
 
     int i,j,k;
     for(i=0;i<n_eq-1;i++){
@@ -92,7 +84,6 @@ static __attribute__((always_inline)) void gaussElimination(picoquic_cnx_t *cnx,
     int candidate = n_unknowns - 1;
     //Begin Back-substitution
     for(i=n_eq-1;i>=0;i--){
-        PROTOOP_PRINTF(cnx, "FOR LOOP\n");
         bool only_zeroes = true;
         for (int j = 0 ; j < n_unknowns ; j++) {
             if (a[i][j] != 0) {
@@ -101,16 +92,13 @@ static __attribute__((always_inline)) void gaussElimination(picoquic_cnx_t *cnx,
             }
         }
         if (!only_zeroes) {
-            PROTOOP_PRINTF(cnx, "NOT ONLY ZERO\n");
             while(a[i][candidate] == 0 && candidate >= 0) {
-                PROTOOP_PRINTF(cnx, "UNDET 1\n");
                 undetermined[candidate--] = true;
             }
             my_memcpy(x[candidate], constant_terms[i], symbol_size);
             for (int j = 0 ; j < candidate ; j++) {
                 if (a[i][j] != 0) {
                     // if this variable depends on another one with a smaller index, it is undefined, as we don't know the value of the one with a smaller index
-                    PROTOOP_PRINTF(cnx, "UNDET 2\n");
                     undetermined[candidate] = true;
                     break;
                 }
@@ -120,7 +108,6 @@ static __attribute__((always_inline)) void gaussElimination(picoquic_cnx_t *cnx,
                 if (a[i][j] != 0) {
                     if (undetermined[j]) {
                         // if the unknown depends on an undetermined unknown, this unknown is undetermined
-                        PROTOOP_PRINTF(cnx, "UNDET 3\n");
                         undetermined[candidate] = true;
                     } else {
                         symbol_sub_scaled(x[candidate], a[i][j], x[j], symbol_size, mul);
@@ -128,25 +115,18 @@ static __attribute__((always_inline)) void gaussElimination(picoquic_cnx_t *cnx,
                     }
                 }
             }
-            PROTOOP_PRINTF(cnx, "BEFORE END\n");
             // i < n_eq <= n_unknowns, so a[i][i] is small
             if (symbol_is_zero(x[candidate], symbol_size) || a[i][candidate] == 0) {
                 // this solution is undetermined
-                PROTOOP_PRINTF(cnx, "UNDET 4\n");
                 undetermined[candidate] = true;
                 // TODO
             } else if (!undetermined[candidate]) {
                 // x[i] = x[i]/a[i][i]
 //                PROTOOP_PRINTF(cnx, "%u /= %u = %u\n", x[candidate][8], a[i][candidate], mul[x[candidate][8]][inv[a[i][candidate]]]);
-                PROTOOP_PRINTF(cnx, "INVERT\n");
                 symbol_mul(x[candidate], inv[a[i][candidate]], symbol_size, mul);
                 a[i][candidate] = gf256_mul(a[i][candidate], inv[a[i][candidate]], mul);
-            } else {
-                PROTOOP_PRINTF(cnx, "UNDET 5 :(\n");
             }
             candidate--;
-        } else {
-            PROTOOP_PRINTF(cnx, "ONLY ZEROES\n");
         }
     }
     // it marks all the variables with an index <= candidate as undetermined

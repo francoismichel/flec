@@ -27,7 +27,6 @@ protoop_arg_t schedule_frames_on_path(picoquic_cnx_t *cnx)
     // set the current fpid
     plugin_state_t *state = get_plugin_state(cnx);
 
-    PROTOOP_PRINTF(cnx, "AFTER SCHEDULE FRAMES, CURRENT TIME = %lu\n", picoquic_current_time());
 
     // protect the source symbol
     uint8_t *data = (uint8_t *) get_pkt(packet, AK_PKT_BYTES);
@@ -47,14 +46,12 @@ protoop_arg_t schedule_frames_on_path(picoquic_cnx_t *cnx)
             return err;
 
         if (err == 0) {
-            PROTOOP_PRINTF(cnx, "THE PACKET HAS BEEN SUCCESSFULLY PROTECTED, CURRENT TIME = %lu\n", picoquic_current_time());
             // something has been protected
             set_pkt_metadata(cnx, packet, FEC_PKT_METADATA_SENT_SLOT, state->current_slot++);
             set_pkt_metadata(cnx, packet, FEC_PKT_METADATA_FLAGS, packet_flags | FEC_PKT_METADATA_FLAG_IS_FEC_PROTECTED);
             set_pkt_metadata(cnx, packet, FEC_PKT_METADATA_FIRST_SOURCE_SYMBOL_ID, id);
             set_pkt_metadata(cnx, packet, FEC_PKT_METADATA_NUMBER_OF_SOURCE_SYMBOLS, n_symbols);
             fec_sent_packet(cnx, packet, true, false, false);
-            PROTOOP_PRINTF(cnx, "SENT PACKET DONE\n");
         }
 
     } else if (state->has_written_repair_frame || state->has_written_fb_fec_repair_frame) {
@@ -70,7 +67,6 @@ protoop_arg_t schedule_frames_on_path(picoquic_cnx_t *cnx)
     }
     packet_flags = get_pkt_metadata(cnx, packet, FEC_PKT_METADATA_FLAGS);
     if (state->has_written_recovered_frame) {
-        PROTOOP_PRINTF(cnx, "THIS PACKET CONTAINS A RECOVERED FRAME !\n");
         set_pkt_metadata(cnx, packet, FEC_PKT_METADATA_FLAGS, packet_flags | FEC_PKT_METADATA_FLAG_CONTAINS_RECOVERED_FRAME);
     }
     state->has_written_fpi_frame = false;
@@ -86,7 +82,6 @@ protoop_arg_t schedule_frames_on_path(picoquic_cnx_t *cnx)
     // TODO: remove first part of if
     if (cnx_state == picoquic_state_server_ready && !run_noparam(cnx, FEC_PROTOOP_HAS_PROTECTED_DATA_TO_SEND, 0, NULL, NULL) && slot_available && state->n_reserved_id_or_repair_frames == 0) {
         reserve_repair_frames(cnx, state->framework_sender, DEFAULT_SLOT_SIZE, state->symbol_size, false, false, 0, 0);
-        PROTOOP_PRINTF(cnx, "FAIR RESERVE THE FLUSHED FRAME\n");
         picoquic_frame_fair_reserve(cnx, path, NULL, get_path(path, AK_PATH_SEND_MTU, 0) - 35);
     }
     return 0;

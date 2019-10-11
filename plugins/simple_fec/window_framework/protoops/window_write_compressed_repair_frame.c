@@ -28,6 +28,5 @@ protoop_arg_t write_frame(picoquic_cnx_t *cnx) {
     }
     set_cnx(cnx, AK_CNX_OUTPUT, 0, (protoop_arg_t) 1 + consumed);
     set_cnx(cnx, AK_CNX_OUTPUT, 1, (protoop_arg_t) true);
-    PROTOOP_PRINTF(cnx, "WRITTEN COMPRESSED REPAIR FRAME\n");
     return err;
 }

@@ -23,7 +23,6 @@ protoop_arg_t notify_recovered_frame(picoquic_cnx_t *cnx)
     if (!received || state->current_packet_is_lost) {
         // try to resend the frame: re-reserve the rfs
         size_t reserved_size = reserve_frames(cnx, 1, rfs);
-        PROTOOP_PRINTF(cnx, "RETRANSMIT RECOVERED FRAME !\n", rfs->frame_type, reserved_size);
         if (reserved_size < rfs->nb_bytes) {
             PROTOOP_PRINTF(cnx, "Unable to reserve frame slot\n");
             delete_recovered_frame(cnx, rf);
@@ -31,7 +30,6 @@ protoop_arg_t notify_recovered_frame(picoquic_cnx_t *cnx)
             my_free(cnx, rfs);
         }
     } else {
-        PROTOOP_PRINTF(cnx, "FRAME RECEIVED\n");
         delete_recovered_frame(cnx, rf);
         my_free(cnx, rfs);
     }

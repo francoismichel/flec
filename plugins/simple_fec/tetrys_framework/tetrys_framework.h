@@ -176,7 +176,6 @@ static __attribute__((always_inline)) bool buffer_enqueue_symbol_payload(picoqui
     if (!buffer->slots[idx].symbol) return false;
     my_memcpy(buffer->slots[idx].symbol, payload, size);
     buffer->slots[idx].size = size;
-    PROTOOP_PRINTF(cnx, "ENQUEUE SYMBOL PAYLOAD AT IDX %d, SIZE = %d\n", idx, size);
     buffer->slots[idx].highest_sent_id_when_enqueued = ((tetrys_fec_framework_sender_t *)state->framework_sender)->last_sent_id;
     buffer->size++;
     return true;
@@ -203,7 +202,6 @@ static __attribute__((always_inline)) int buffer_peek_symbol_payload_size(picoqu
     if (buffer->size == 0) return 0;
     int idx = buffer->start;
     int size = buffer->slots[idx].size;
-    PROTOOP_PRINTF(cnx, "BUFFER SIZE = %d, ID = %d, PEEK SIZE = %d, MAX SIZE = %d\n", buffer->size, idx, size, max_size);
     if (size > max_size) return 0;
     return size;
 }

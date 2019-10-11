@@ -34,16 +34,12 @@ static __attribute__((always_inline)) void tetrys_process_recovered_packets(pico
     uint64_t n_packets = *((uint64_t *) size_and_packets);
     uint64_t *packet_numbers = (uint64_t *) (size_and_packets + sizeof(uint64_t));
     tetrys_source_symbol_id_t *ids = (tetrys_source_symbol_id_t  *) (packet_numbers + n_packets);
-    PROTOOP_PRINTF(cnx, "PROCESS RF, %lu PACKETS\n", n_packets);
     for (int i = 0 ; i < n_packets ; i++) {
-        PROTOOP_PRINTF(cnx, "PROCESS PACKET %lx\n", packet_numbers[i]);
         tetrys_packet_has_been_recovered(cnx, state, wff, packet_numbers[i], ids[i]);
-        //window_announce_symbols_as_landed(cnx, wff, packet_numbers[i]);
     }
 }
 
 static __attribute__((always_inline)) tetrys_fec_framework_sender_t *tetrys_create_framework_sender(picoquic_cnx_t *cnx) {
-    PROTOOP_PRINTF(cnx, "ALLOC FRAMEWORK SENDER\n");
     tetrys_fec_framework_sender_t *ff = my_malloc(cnx, sizeof(tetrys_fec_framework_sender_t));
     if (!ff) return NULL;
     if (tetrys_init_framework(cnx, &ff->common_fec_framework) != 0) {
@@ -76,9 +72,7 @@ static __attribute__((always_inline)) int tetrys_reserve_repair_frames(picoquic_
     }
     tetrys_fec_framework_t *wff = (tetrys_fec_framework_t *) ff;
     update_tetrys_state(cnx, wff);
-    PROTOOP_PRINTF(cnx, "BEFORE LOOP\n");
     while (buffer_peek_symbol_payload_size(cnx, &wff->buffered_repair_symbols, MIN(SERIALIZATION_BUFFER_SIZE, size_max)) > 0) {
-        PROTOOP_PRINTF(cnx, "START LOOP\n");
         uint16_t n_repair_symbols = 0;
         uint16_t total_frame_bytes = 1 + sizeof(uint16_t); // type byte + n_repair_symbols field
         int size;
@@ -90,23 +84,14 @@ static __attribute__((always_inline)) int tetrys_reserve_repair_frames(picoquic_
                                                                    MIN(SERIALIZATION_BUFFER_SIZE,
                                                                        size_max - total_frame_bytes))) > 0) {
             // TODO: see if it makes sense to encode the first ID in the repair frame
-            PROTOOP_PRINTF(cnx, "GOT SYMBOL, SIZE %d\n", size);
-//        repair_frame->first_id = decode_u32(wff->buffer);
-//        repair_frame->header.data_length = size - sizeof(source_fpid_t) - sizeof(uint16_t);  // we remove the 6 bytes of metadata in the symbol: they are present in the frame header, except the payload length without the block
-            // copy the data length
-//        my_memcpy(bytes, wff->buffer + sizeof(source_fpid_t), sizeof(uint16_t));
-            PROTOOP_PRINTF(cnx, "CREATE REPAIR SYMBOL\n");
             tetrys_repair_symbol_t *rs = create_tetrys_repair_symbol(cnx, size);
             if (!rs) {
                 return PICOQUIC_ERROR_MEMORY;
             }
-            PROTOOP_PRINTF(cnx, "CREATED REPAIR SYMBOL\n");
 //        my_memcpy(bytes+sizeof(uint16_t), wff->buffer + sizeof(source_fpid_t) + 4, repair_frame->header.data_length - sizeof(uint16_t));
             my_memcpy(rs->repair_symbol.repair_payload, wff->buffer, size);
-            PROTOOP_PRINTF(cnx, "COPIED, SIZE = %d\n", size);
             repair_frame->symbols[n_repair_symbols++] = (repair_symbol_t *) rs;
             total_frame_bytes += sizeof(uint16_t) + size;   // we add the size_of_symbol_n field and the symbol n itself
-            PROTOOP_PRINTF(cnx, "ADDED SYMBOL\n");
         }
         repair_frame->n_repair_symbols = n_repair_symbols;
         reserve_frame_slot_t *slot = (reserve_frame_slot_t *) my_malloc(cnx, sizeof(reserve_frame_slot_t));
@@ -117,7 +102,6 @@ static __attribute__((always_inline)) int tetrys_reserve_repair_frames(picoquic_
         slot->nb_bytes = total_frame_bytes;
         slot->frame_ctx = repair_frame;
         slot->is_congestion_controlled = !feedback_implied;
-        PROTOOP_PRINTF(cnx, "RESERVE REPAIR FRAME, SIZE = %ld, %d SYMBOLS\n", total_frame_bytes, repair_frame->n_repair_symbols);
         size_t reserved_size = reserve_frames(cnx, 1, slot);
         if (reserved_size < slot->nb_bytes) {
             PROTOOP_PRINTF(cnx, "Unable to reserve frame slot\n");
@@ -140,13 +124,11 @@ static __attribute__((always_inline)) int tetrys_protect_source_symbol(picoquic_
     tetrys_fec_framework_t *ff = &ffs->common_fec_framework;
     ff->buffer[0] = TYPE_PAYLOAD_TO_PROTECT;
     my_memcpy(ff->buffer+1, ss->source_symbol._whole_data, symbol_size);
-    PROTOOP_PRINTF(cnx, "BEFORE SEND\n");
     if (send(ff->unix_sock_fd, ff->buffer, 1 + symbol_size, 0) != 1 + symbol_size) {
         PROTOOP_PRINTF(cnx, "ERROR SEND, ERRNO = %d\\n\", get_errno()\n");
         return -1;
     }
     int size;
-    PROTOOP_PRINTF(cnx, "BEFORE HANDLE MESSAGE\n");
     while ((size = recv(ff->unix_sock_fd, ff->buffer, SERIALIZATION_BUFFER_SIZE, 0)) >= 0 && ff->buffer[0] != TYPE_SOURCE_SYMBOL) {
         tetrys_handle_message(cnx, state, ff, ff->buffer, size);
     }
@@ -154,7 +136,6 @@ static __attribute__((always_inline)) int tetrys_protect_source_symbol(picoquic_
         PROTOOP_PRINTF(cnx, "ERROR RECV, ERRNO = %d\n", get_errno());
         return -1;
     }
-    PROTOOP_PRINTF(cnx, "AFTER HANDLE MESSAGE\n");
     // here, we know that the type is TYPE_SOURCE_SYMBOL
     ss->id = decode_u32(&ff->buffer[1]);
     uint16_t recv_symbol_size = size - 1 - sizeof(tetrys_source_symbol_id_t);
@@ -174,7 +155,6 @@ static __attribute__((always_inline)) int tetrys_protect_packet_payload(picoquic
     source_symbol_t **sss = packet_payload_to_source_symbols(cnx, payload, payload_length, symbol_size, packet_number, n_chunks, sizeof(tetrys_source_symbol_t));
     if (!sss)
         return PICOQUIC_ERROR_MEMORY;
-    PROTOOP_PRINTF(cnx, "N CHUNKS = %u\n", *n_chunks);
     for (int i = 0 ; i < *n_chunks ; i++) {
         int err = tetrys_protect_source_symbol(cnx, state, ff, (tetrys_source_symbol_t *) sss[i], symbol_size);
         if (err) {

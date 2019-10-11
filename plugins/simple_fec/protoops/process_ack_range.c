@@ -35,7 +35,6 @@ protoop_arg_t process_ack_range(picoquic_cnx_t *cnx)
 
                     uint32_t length = (uint32_t) get_pkt(p, AK_PKT_LENGTH);
                     if ((picoquic_congestion_algorithm_t *) get_cnx(cnx, AK_CNX_CONGESTION_CONTROL_ALGORITHM, 0) != NULL) {
-                        PROTOOP_PRINTF(cnx, "NOTIFY ACK FOR ÄCKED %lu\n", highest);
                         helper_congestion_algorithm_notify(cnx, old_path,
                                                            picoquic_congestion_notification_acknowledgement, 0, length, 0, current_time);
                     }
@@ -86,13 +85,12 @@ protoop_arg_t process_ack_range(picoquic_cnx_t *cnx)
                 fec_packet_symbols_have_been_received(cnx, closest_lost->pn, closest_lost->slot, closest_lost->id, closest_lost->n_source_symbols, true, false);
             range--;
             highest--;
-        } else if (closest_lost) PROTOOP_PRINTF(cnx, " ELSE, first lost = %lx, highest = %lx\n", closest_lost->pn, highest);
+        }
     }
 
 
     ppacket = p;
 
-    PROTOOP_PRINTF(cnx, "END PROCESS ACK RANGE, CURRENT TIME = %lu\n", current_time);
 
     set_cnx(cnx, AK_CNX_OUTPUT, 0, (protoop_arg_t) ppacket);
     return (protoop_arg_t) ret;

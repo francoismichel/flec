@@ -33,12 +33,6 @@ protoop_arg_t write_frame(picoquic_cnx_t *cnx) {
     source_symbol_id_t id = 0;
     //int err = get_next_source_symbol_id(cnx, state->framework_sender, &id); //(window_source_symbol_id_t) get_cnx(cnx, AK_CNX_INPUT, 2);
 
-//    if (err) {
-//        PROTOOP_PRINTF(cnx, "ERROR GETTING THE NEXT SOURCE SYMBOL\n");
-//        return -1;
-//    }
-
-    PROTOOP_PRINTF(cnx, "WRITE SRC FPI, ID = %u\n", id);
     my_memset(bytes, FRAME_FEC_SRC_FPI, bytes_max - bytes);
     bytes++;
 

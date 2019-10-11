@@ -22,7 +22,6 @@ protoop_arg_t parse_frame(picoquic_cnx_t *cnx) {
     uint8_t* bytes_protected = (uint8_t *) get_cnx(cnx, AK_CNX_INPUT, 0);
     const uint8_t* bytes_max = (uint8_t *) get_cnx(cnx, AK_CNX_INPUT, 1);
 
-    PROTOOP_PRINTF(cnx, "PARSE SRC FPI, IN SKIP FRAME = %d\n", state->is_in_skip_frame);
     // type byte
     bytes_protected++;
 

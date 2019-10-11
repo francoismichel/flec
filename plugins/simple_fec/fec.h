@@ -34,10 +34,6 @@ typedef struct {
 
     uint64_t current_slot;
 
-    // TODO: remove these slots
-//    uint64_t last_protected_slot;
-//    uint64_t last_fec_slot;
-
     uint64_t n_reserved_id_or_repair_frames;
 
     uint8_t *current_packet;

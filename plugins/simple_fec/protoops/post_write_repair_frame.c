@@ -12,7 +12,6 @@ protoop_arg_t post_write_repair_frame(picoquic_cnx_t *cnx) {
 
 
 
-    PROTOOP_PRINTF(cnx, "POST WRITE REPAIR\n");
     if (retval != PICOQUIC_MISCCODE_RETRY_NXT_PKT) {
         size_t consumed = get_cnx(cnx, AK_CNX_OUTPUT, 0);
         bool retransmittable = get_cnx(cnx, AK_CNX_OUTPUT, 1);

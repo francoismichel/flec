@@ -27,7 +27,6 @@ protoop_arg_t parse_frame(picoquic_cnx_t *cnx) {
     if (!size_and_packets)  // error
         return (protoop_arg_t) NULL;
 
-    PROTOOP_PRINTF(cnx, "PARSED RF, COMSUMED = 1 + %ld\n", consumed);
     set_cnx(cnx, AK_CNX_OUTPUT, 0, (protoop_arg_t) size_and_packets);
     set_cnx(cnx, AK_CNX_OUTPUT, 1, false);
     set_cnx(cnx, AK_CNX_OUTPUT, 2, true);

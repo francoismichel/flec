@@ -25,14 +25,12 @@ protoop_arg_t reserve_repair_frames_protoop(picoquic_cnx_t *cnx) {
     // TODO: remove cnx_state part of else if
 
     if (ff->common_fec_framework.buffered_repair_symbols.size > 0) {
-        PROTOOP_PRINTF(cnx, "RESERVE REPAIR FRAMES\n");
         err = tetrys_reserve_repair_frames(cnx, ff, max_size, symbol_size, feedback_implied);
         if (!err)
             state->n_reserved_id_or_repair_frames++;
     } else if (feedback_implied || (cnx_state == picoquic_state_server_ready/* && state->n_repair_frames_sent_since_last_feedback <= max_repair_frames_threshold *//*wff->window_length*2*/)) {
 
         PROTOOP_PRINTF(cnx, "NOTHING TO RESERVE, GENERATE !\n");
-        PROTOOP_PRINTF(cnx, "GENERATE %d REPAIR SYMBOLS, PROTECT SUBSET = %d, FIRST = %u, n_symbols = %u\n",
                        PICOQUIC_MAX_PACKET_SIZE / state->symbol_size/* + 1*/, protect_subset, first_id_to_protect,
                        n_symbols_to_protect);
         err = flush_tetrys(cnx, ff, state->symbol_size);

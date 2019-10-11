@@ -39,7 +39,6 @@ protoop_arg_t retransmit_needed(picoquic_cnx_t *cnx)
             uint8_t * new_bytes = (uint8_t *) get_pkt(packet, AK_PKT_BYTES);
             int ret = 0;
 
-//            PROTOOP_PRINTF(cnx, "CONSIDER LOST PACKET %lx\n", lost_packet_number);
             length = 0;
             /* Get the packet type */
 
@@ -58,7 +57,6 @@ protoop_arg_t retransmit_needed(picoquic_cnx_t *cnx)
                 }
             } else {
 
-//                PROTOOP_PRINTF(cnx, "PACKET %lx LOST, MAYBE RETRANSMIT\n", lost_packet_number);
                 /* check if this is an ACK only packet */
 //                int contains_crypto = (int) get_pkt(p, AK_PKT_CONTAINS_CRYPTO);
                 int packet_is_pure_ack = (int) get_pkt(p, AK_PKT_IS_PURE_ACK);
@@ -100,7 +98,6 @@ protoop_arg_t retransmit_needed(picoquic_cnx_t *cnx)
                 }
 
                 if (should_retransmit != 0) {
-//                    PROTOOP_PRINTF(cnx, "SHOULD RETRANSMIT PACKET OF CONTEXT %d, PN = %lu\n", pc, get_pkt(p, AK_PKT_SEQUENCE_NUMBER));
                     picoquic_packet_context_t *pkt_ctx = (picoquic_packet_context_t *) get_path(path_x, AK_PATH_PKT_CTX, pc);
                     set_pkt(packet, AK_PKT_SEQUENCE_NUMBER, (uint64_t) get_pkt_ctx(pkt_ctx, AK_PKTCTX_SEND_SEQUENCE));
                     set_pkt(packet, AK_PKT_SEND_PATH, (protoop_arg_t) path_x);
@@ -207,7 +204,6 @@ protoop_arg_t retransmit_needed(picoquic_cnx_t *cnx)
                     source_symbol_id_t first_symbol_id = get_pkt_metadata(cnx, p, FEC_PKT_METADATA_FIRST_SOURCE_SYMBOL_ID);
                     uint16_t n_symbols = get_pkt_metadata(cnx, p, FEC_PKT_METADATA_NUMBER_OF_SOURCE_SYMBOLS);
                     plugin_state_t *state = NULL;
-//                    PROTOOP_PRINTF(cnx, "DISABLE RETRANSMISSIONS, CONTAINS RECOVERED = %d\n", contains_recovered_frame);
                     // ugly but by doing so, we avoid initializing the state before we enter in the application state
                     if (fec_related || contains_recovered_frame || get_pkt(p, AK_PKT_CONTEXT) == picoquic_packet_context_application) {
                         state = get_plugin_state(cnx);
@@ -229,7 +225,6 @@ protoop_arg_t retransmit_needed(picoquic_cnx_t *cnx)
                                 is_timer_based = true;
                             }
 
-                            PROTOOP_PRINTF(cnx, "RETRANS TIMER = %lu, CURRENT TIME = %lu\n", retrans_cc_notification_timer, current_time);
                             if (current_time >= retrans_cc_notification_timer) {
                                 set_pkt_ctx(orig_pkt_ctx, AK_PKTCTX_LATEST_RETRANSMIT_CC_NOTIFICATION_TIME, current_time);
                                 helper_congestion_algorithm_notify(cnx, old_path,
@@ -298,7 +293,6 @@ protoop_arg_t retransmit_needed(picoquic_cnx_t *cnx)
                             set_pkt(packet, AK_PKT_LENGTH, length);
                             set_cnx(cnx, AK_CNX_NB_RETRANSMISSION_TOTAL, 0, get_cnx(cnx, AK_CNX_NB_RETRANSMISSION_TOTAL, 0) + 1);
 
-//                            PROTOOP_PRINTF(cnx, "CURRENT TIME = %lu, RETRANS TIMER = %lu\n", retrans_cc_notification_timer);
                             if (current_time >= retrans_cc_notification_timer) {
                                 set_pkt_ctx(orig_pkt_ctx, AK_PKTCTX_LATEST_RETRANSMIT_CC_NOTIFICATION_TIME, current_time);
                                 helper_congestion_algorithm_notify(cnx, old_path,

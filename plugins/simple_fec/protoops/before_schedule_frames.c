@@ -28,7 +28,6 @@ protoop_arg_t schedule_frames_on_path(picoquic_cnx_t *cnx)
     plugin_state_t *state = get_plugin_state(cnx);
     if (!state)
         return PICOQUIC_ERROR_MEMORY;
-    PROTOOP_PRINTF(cnx, "BEFORE SCHEDULE FRAME, CURRENT TIME = %lu, n_reserved = %d\n", get_cnx(cnx, AK_CNX_INPUT, 2), state->n_reserved_id_or_repair_frames);
 
     state->has_written_fpi_frame = false;
     state->has_written_repair_frame = false;

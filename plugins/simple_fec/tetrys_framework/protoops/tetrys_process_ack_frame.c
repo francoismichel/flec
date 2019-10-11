@@ -10,7 +10,6 @@
 protoop_arg_t process_tetrys_ack_frame(picoquic_cnx_t *cnx)
 {
     tetrys_ack_frame_t *frame = (tetrys_ack_frame_t *) get_cnx(cnx, AK_CNX_INPUT, 0);
-    PROTOOP_PRINTF(cnx, "PROCESS TETRYS ACK\n");
     plugin_state_t *state = get_plugin_state(cnx);
     int err = 0;
     if (!state || !tetrys_receive_ack(cnx, &((tetrys_fec_framework_sender_t *) state->framework_sender)->common_fec_framework, frame)) {

@@ -16,7 +16,6 @@ protoop_arg_t available_slot(picoquic_cnx_t *cnx) {
     protoop_arg_t args[1];
     args[0] = reason;
     what_to_send_t wts = 0;
-    PROTOOP_PRINTF(cnx, "AVAILABLE SLOT !\n");
     source_symbol_id_t first_id;
     uint16_t n_symbols_to_protect;
     int err = fec_what_to_send(cnx, reason, &wts, &first_id, &n_symbols_to_protect);

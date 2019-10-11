@@ -23,7 +23,6 @@ protoop_arg_t window_packet_sent(picoquic_cnx_t *cnx) {
             return -1;
         }
         wff->max_id = first_id + n_symbols - 1;
-        PROTOOP_PRINTF(cnx, "N SYMBOLS = %u, NEW MAX ID = %u\n", n_symbols, wff->max_id);
     }
     return 0;
 }
