@@ -16,8 +16,9 @@ protoop_arg_t available_slot(picoquic_cnx_t *cnx) {
     protoop_arg_t args[1];
     args[0] = reason;
     what_to_send_t wts = 0;
-    PROTOOP_PRINTF(cnx, "AVAILABLE SLOT !\n");
-    int err = fec_what_to_send(cnx, reason, &wts);
+    source_symbol_id_t first_id;
+    uint16_t n_symbols_to_protect;
+    int err = fec_what_to_send(cnx, reason, &wts, &first_id, &n_symbols_to_protect);
     if (err) {
         return err;
     }
@@ -31,10 +32,14 @@ protoop_arg_t available_slot(picoquic_cnx_t *cnx) {
                 if (!err)
                     state->n_reserved_id_or_repair_frames++;
                 break;
-            } // otherwise, we fallthrough and send a repair symbol
+            }
+            // otherwise, we fallthrough and send a repair symbol
         case what_to_send_feedback_implied_repair_symbol:
         case what_to_send_repair_symbol:
-            err = reserve_repair_frames(cnx, state->framework_sender, DEFAULT_SLOT_SIZE, state->symbol_size);
+            // TODO: allow to protect only a subset of the source symbols when sending a FEEDBACK FEC !!
+            err = reserve_repair_frames(cnx, state->framework_sender, DEFAULT_SLOT_SIZE, state->symbol_size,
+                    wts == what_to_send_feedback_implied_repair_symbol, wts == what_to_send_feedback_implied_repair_symbol,
+                    first_id, n_symbols_to_protect);
             break;
     }
     return err;

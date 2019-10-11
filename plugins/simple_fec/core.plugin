@@ -6,7 +6,6 @@ retransmit_needed replace protoops/disable_retransmissions.o
 prepare_packet_ready pre protoops/maybe_notify_recovered_packets_to_everybody.o
 process_ack_range replace protoops/process_ack_range.o
 fec_has_protected_data_to_send replace protoops/has_protected_data_to_send.o
-stream_bytes_max replace protoops/stream_bytes_max_no_stream_frame_with_repair_frame.o
 
 skip_frame pre protoops/pre_skip_frame.o
 skip_frame post protoops/post_skip_frame.o
@@ -16,6 +15,7 @@ incoming_encrypted post protoops/after_incoming_encrypted.o
 
 write_frame param 0x29 post protoops/post_write_src_fpi_frame.o
 write_frame param 0x2a post protoops/post_write_repair_frame.o
+write_frame param 0x2b post protoops/post_write_recovered_frame.o
 
 fec_sent_packet replace protoops/sent_packet.o
 

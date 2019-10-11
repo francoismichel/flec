@@ -109,25 +109,32 @@ static __attribute__((always_inline)) int protect_packet_payload(picoquic_cnx_t 
 }
 
 
-static __attribute__((always_inline)) int reserve_repair_frames(picoquic_cnx_t *cnx, framework_sender_t sender, size_t size_max, size_t symbol_size) {
-    protoop_arg_t args[3];
+static __attribute__((always_inline)) int reserve_repair_frames(picoquic_cnx_t *cnx, framework_sender_t sender, size_t size_max, size_t symbol_size,
+                                        bool feedback_implied, bool protect_subset, source_symbol_id_t first_id_to_protect, uint16_t n_symbols_to_protect) {
+    protoop_arg_t args[7];
 
     args[0] = (protoop_arg_t) sender;
     args[1] = (protoop_arg_t) size_max;
     args[2] = (protoop_arg_t) symbol_size;
+    args[3] = (protoop_arg_t) feedback_implied;
+    args[4] = (protoop_arg_t) protect_subset;
+    args[5] = (protoop_arg_t) first_id_to_protect;
+    args[6] = (protoop_arg_t) n_symbols_to_protect;
 
-    int err = (int) run_noparam(cnx, FEC_RESERVE_REPAIR_FRAMES, 3, args, NULL);
+    int err = (int) run_noparam(cnx, FEC_RESERVE_REPAIR_FRAMES, 7, args, NULL);
     return err;
 }
 
 
-static __attribute__((always_inline)) int fec_what_to_send(picoquic_cnx_t *cnx, available_slot_reason_t reason, what_to_send_t *wts) {
+static __attribute__((always_inline)) int fec_what_to_send(picoquic_cnx_t *cnx, available_slot_reason_t reason, what_to_send_t *wts, source_symbol_id_t *first_id_to_protect, uint16_t *n_symbols_to_protect) {
     protoop_arg_t args[1];
     args[0] = (protoop_arg_t) reason;
-    protoop_arg_t out[1];
+    protoop_arg_t out[3];
 
     int err = (what_to_send_t) run_noparam(cnx, FEC_PROTOOP_WHAT_TO_SEND, 1, args, out);
     *wts = out[0];
+    *first_id_to_protect = out[1];
+    *n_symbols_to_protect = out[2];
     return err;
 }
 
@@ -147,7 +154,7 @@ static __attribute__((always_inline)) what_to_send_t fec_check_for_available_slo
 }
 
 
-static __attribute__((always_inline)) what_to_send_t fec_packet_has_been_lost(picoquic_cnx_t *cnx,
+static __attribute__((always_inline)) int fec_packet_has_been_lost(picoquic_cnx_t *cnx,
                                                                               uint64_t packet_number,
                                                                               uint64_t packet_slot,
                                                                               source_symbol_id_t id,
@@ -207,7 +214,7 @@ static __attribute__((always_inline)) int reserve_src_fpi_frame(picoquic_cnx_t *
 
     slot->frame_type = FRAME_FEC_SRC_FPI;
     slot->nb_bytes = 1 + MAX_SRC_FPI_SIZE;
-    slot->is_congestion_controlled = false;
+    slot->is_congestion_controlled = true;
     slot->low_priority = true;
     slot->frame_ctx = (void *) id;
     if (reserve_frames(cnx, 1, slot) != 1 + MAX_SRC_FPI_SIZE)
@@ -222,6 +229,7 @@ typedef struct lost_packet {
     source_symbol_id_t id;
     uint16_t n_source_symbols;
     struct lost_packet *next;
+    struct lost_packet *previous;
 } lost_packet_t;
 
 // we use a queue because it is more likely that we dequeue the packets in the order we inserted them
@@ -246,6 +254,7 @@ static __attribute__((always_inline)) int add_lost_packet(picoquic_cnx_t *cnx, l
         return 0;
     }
     queue->tail->next = lp;
+    lp->previous = queue->tail;
     queue->tail = lp;
     return 0;
 }
@@ -265,8 +274,12 @@ static __attribute__((always_inline)) bool dequeue_lost_packet(picoquic_cnx_t *c
             if (!previous) {
                 // head == current
                 queue->head = current->next;
+                if (queue->head)
+                    queue->head->previous = NULL;
             } else {
                 previous->next = current->next;
+                if (current->next)
+                    current->next->previous = previous;
             }
             if (queue->tail == current) {
                 queue->tail = previous;
@@ -283,10 +296,35 @@ static __attribute__((always_inline)) bool dequeue_lost_packet(picoquic_cnx_t *c
 
 // returns the packet number at first position of the queue (i.e. the oldest enqueued packet)
 // returns -1 if the queue is empty
-static __attribute__((always_inline)) int64_t get_first_lost_packet(picoquic_cnx_t *cnx, lost_packet_queue_t *queue) {
+static __attribute__((always_inline)) lost_packet_t *get_first_lost_packet(picoquic_cnx_t *cnx, lost_packet_queue_t *queue) {
     if (!queue->head && !queue->tail)
-        return -1;
-    return queue->head->pn;
+        return NULL;
+    return queue->head;
+}
+
+// returns the packet number at first position of the queue (i.e. the oldest enqueued packet)
+// returns -1 if the queue is empty
+static __attribute__((always_inline)) lost_packet_t *get_last_lost_packet(picoquic_cnx_t *cnx, lost_packet_queue_t *queue) {
+    if (!queue->head && !queue->tail)
+        return NULL;
+    return queue->tail;
+}
+
+
+// returns the packet number at first position of the queue (i.e. the oldest enqueued packet)
+// returns -1 if the queue is empty
+static __attribute__((always_inline)) lost_packet_t *get_lost_packet_equal_or_smaller(picoquic_cnx_t *cnx, lost_packet_queue_t *queue, uint64_t pn) {
+    if (!queue->head && !queue->tail)
+        return NULL;
+    lost_packet_t *current = queue->tail;
+    while (current && current->pn > pn) {
+        current = current->previous;
+    }
+    return current;
+}
+
+static __attribute__((always_inline)) bool is_lost_packet_queue_empty(picoquic_cnx_t *cnx, lost_packet_queue_t *queue) {
+    return !queue->head || !queue->tail;
 }
 
 #define MAX_RECOVERED_PACKETS_IN_BUFFER 50

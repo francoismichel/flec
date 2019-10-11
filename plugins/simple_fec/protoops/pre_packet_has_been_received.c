@@ -15,6 +15,7 @@ protoop_arg_t pre_packet_has_been_received(picoquic_cnx_t *cnx) {
 //    uint64_t slot = get_cnx(cnx, AK_CNX_INPUT, 1);
 //    source_symbol_id_t first_symbol_id = get_cnx(cnx, AK_CNX_INPUT, 2);
 //    uint16_t n_symbols = get_cnx(cnx, AK_CNX_INPUT, 0);
+    state->n_repair_frames_sent_since_last_feedback = 0;    // new feedback
     int err = 0;
     if ((err = fec_check_for_available_slot(cnx, available_slot_reason_ack)) != 0)
         return err;

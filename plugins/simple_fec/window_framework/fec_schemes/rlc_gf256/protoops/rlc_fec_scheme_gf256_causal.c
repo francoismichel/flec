@@ -61,6 +61,7 @@ static __attribute__((always_inline)) void gaussElimination(picoquic_cnx_t *cnx,
 
     sort_system(cnx, a, constant_terms, n_eq, n_unknowns);
 
+
     int i,j,k;
     for(i=0;i<n_eq-1;i++){
         for(k=i+1;k<n_eq;k++){
@@ -121,6 +122,7 @@ static __attribute__((always_inline)) void gaussElimination(picoquic_cnx_t *cnx,
                 // TODO
             } else if (!undetermined[candidate]) {
                 // x[i] = x[i]/a[i][i]
+//                PROTOOP_PRINTF(cnx, "%u /= %u = %u\n", x[candidate][8], a[i][candidate], mul[x[candidate][8]][inv[a[i][candidate]]]);
                 symbol_mul(x[candidate], inv[a[i][candidate]], symbol_size, mul);
                 a[i][candidate] = gf256_mul(a[i][candidate], inv[a[i][candidate]], mul);
             }
@@ -154,6 +156,7 @@ static __attribute__((always_inline)) void get_coefs(picoquic_cnx_t *cnx, tinymt
  * \param[in] repair_symbols <b> window_repair_symbol_t ** </b> array of repair symbols
  * \param[in] n_repair_symbols <b> uint16_t </b> size of repair_symbols
  * \param[in] n_missing_source_symbols <b> uint16_t </b> number of missing source symbols in the array
+ * \param[in] missing_source_symbols <b> window_source_symbol_id * </b> buffer of missing source symbols IDs
  * \param[in] smallest_source_symbol_id <b> window_source_symbol_id_t </b> the id of the smallest source symbol in the array
  * \param[in] symbol_size <b> uint16_t </b> size of a source/repair symbol in bytes
  *
@@ -167,8 +170,9 @@ protoop_arg_t fec_recover(picoquic_cnx_t *cnx)
     window_repair_symbol_t **repair_symbols = (window_repair_symbol_t **) get_cnx(cnx, AK_CNX_INPUT, 3);
     uint16_t n_repair_symbols = (uint16_t) get_cnx(cnx, AK_CNX_INPUT, 4);
     uint16_t n_missing_source_symbols = (uint16_t) get_cnx(cnx, AK_CNX_INPUT, 5);
-    window_source_symbol_id_t smallest_protected = (window_source_symbol_id_t) get_cnx(cnx, AK_CNX_INPUT, 6);
-    uint16_t symbol_size = (uint16_t) get_cnx(cnx, AK_CNX_INPUT, 7);
+    window_source_symbol_id_t *missing_source_symbols = (window_source_symbol_id_t *) get_cnx(cnx, AK_CNX_INPUT, 6);
+    window_source_symbol_id_t smallest_protected = (window_source_symbol_id_t) get_cnx(cnx, AK_CNX_INPUT, 7);
+    uint16_t symbol_size = (uint16_t) get_cnx(cnx, AK_CNX_INPUT, 8);
 
     window_repair_symbol_t *rs;
 
@@ -192,13 +196,20 @@ protoop_arg_t fec_recover(picoquic_cnx_t *cnx)
     uint8_t **system_coefs = my_malloc(cnx, n_eq*sizeof(uint8_t *));//[n_eq][n_unknowns + 1];
     uint8_t **constant_terms = my_malloc(cnx, n_eq*sizeof(uint8_t *));
     bool *undetermined = my_malloc(cnx, n_missing_source_symbols*sizeof(bool));
-    my_memset(undetermined, 0, n_missing_source_symbols*sizeof(bool));
+    // contains the indexes of the unknowns in the system
+    int *missing_indexes = my_malloc(cnx, n_source_symbols*sizeof(int));
 
 
-
-    if (!coefs || !unknowns || !system_coefs) {
+    if (!coefs || !unknowns || !system_coefs || !undetermined) {
         PROTOOP_PRINTF(cnx, "NOT ENOUGH MEM\n");
         return PICOQUIC_ERROR_MEMORY;
+    }
+
+    my_memset(undetermined, 0, n_missing_source_symbols*sizeof(bool));
+    my_memset(missing_indexes, -1, n_source_symbols*sizeof(int));
+
+    for (int j = 0 ; j < n_missing_source_symbols ; j++) {
+        missing_indexes[missing_source_symbols[j] - smallest_protected] = j;
     }
 
     for (int j = 0 ; j < n_eq ; j++) {
@@ -240,28 +251,42 @@ protoop_arg_t fec_recover(picoquic_cnx_t *cnx)
                 }
             }
             if (protects_at_least_one_new_source_symbol) {
+                PROTOOP_PRINTF(cnx, "RS %u PROTECTS ONE SS\n", decode_u32(rs->metadata.fss.val));
                 constant_terms[i] = my_malloc(cnx, symbol_size);
                 if (!constant_terms[i]) {
                     return -1;
                 }
+//                PROTOOP_PRINTF(cnx, "MALLOC DONE, RS = %p\n", (protoop_arg_t) rs);
                 my_memset(constant_terms[i], 0, symbol_size);
                 my_memcpy(constant_terms[i], rs->repair_symbol.repair_payload, symbol_size);
-                my_memset(system_coefs[i], 0, n_source_symbols);
+                my_memset(system_coefs[i], 0, n_missing_source_symbols);
                 get_coefs(cnx, prng, decode_u32(rs->metadata.fss.val), rs->metadata.n_protected_symbols, &coefs[smallest_protected_by_rs - smallest_protected]);
                 int current_unknown = 0;
+                PROTOOP_PRINTF(cnx, "BEFORE LOOP, source_symbols = %p\n", (protoop_arg_t) source_symbols);
                 for (int j = smallest_protected_by_rs - smallest_protected ; j < smallest_protected_by_rs + rs->metadata.n_protected_symbols - smallest_protected ; j++) {
                     // this source symbol is protected by this repair symbol
                     if (source_symbols[j]) {
-                        // we add data_length to avoid overflowing on the source symbol. As we assume the source symbols are padded to 0, there is no harm in not adding the zeroes
+                        PROTOOP_PRINTF(cnx, "SYMBOL %u NOT NULL\n", j + smallest_protected);
+                        PROTOOP_PRINTF(cnx, "ADD KNOWN TO CT, COEF = %u\n", coefs[j]);
                         symbol_sub_scaled(constant_terms[i], coefs[j], source_symbols[j]->source_symbol._whole_data, symbol_size, mul);
                     } else if (current_unknown < n_missing_source_symbols) {
-                        system_coefs[i][current_unknown++] = coefs[j];
+                        PROTOOP_PRINTF(cnx, "ADDING UNKNOWN %u, COEF %u\n", j + smallest_protected, coefs[j]);
+//                        system_coefs[i][current_unknown++] = coefs[j];
+                        if (missing_indexes[j] != -1) {
+                            system_coefs[i][missing_indexes[j]] = coefs[j];
+                            current_unknown++;
+                        } else {
+                            PROTOOP_PRINTF(cnx, "ERROR: WRONG INDEX FOR ID %u\n", i + smallest_protected);
+                        }
                     }
+                    PROTOOP_PRINTF(cnx, "DONE\n");
                 }
                 i++;
+                PROTOOP_PRINTF(cnx, "EQUATION BUILT\n");
             }
         }
     }
+    PROTOOP_PRINTF(cnx, "SYSTEM BUILT\n");
     my_free(cnx, protected_symbols);
     int n_effective_equations = i;
 
@@ -304,6 +329,7 @@ protoop_arg_t fec_recover(picoquic_cnx_t *cnx)
     my_free(cnx, unknowns);
     my_free(cnx, coefs);
     my_free(cnx, undetermined);
+    my_free(cnx, missing_indexes);
 
     return err;
 }

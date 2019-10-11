@@ -26,7 +26,7 @@
 #define FEC_PROTOOP_WINDOW_CONTROLLER_FREE_SLOT "fec_controller_free_slot"
 #define WINDOW_INITIAL_SYMBOL_ID 1
 
-#define MAX_SENDING_WINDOW_SIZE 100
+#define MAX_SENDING_WINDOW_SIZE 200
 
 
 #define for_each_window_source_symbol(____sss, ____ss, ____nss) \
@@ -67,6 +67,25 @@ typedef struct {
     source_symbol_t source_symbol;
     window_source_symbol_id_t id;
 } window_source_symbol_t;
+
+// packed needed because of the malloc block size...
+typedef struct __attribute__((__packed__)) {
+    window_source_symbol_id_t first_symbol_id;
+    uint8_t number_of_symbols;
+} window_source_symbol_packet_metadata_t;
+
+typedef struct __attribute__((__packed__)) {
+    window_source_symbol_id_t first_protected_source_symbol_id;
+    uint8_t n_protected_source_symbols;
+    uint8_t number_of_repair_symbols;
+    uint8_t is_fb_fec;
+
+} window_repair_symbol_packet_metadata_t;
+
+typedef struct __attribute__((__packed__)) {
+    window_repair_symbol_packet_metadata_t repair_metadata;
+    window_source_symbol_packet_metadata_t source_metadata;
+} window_packet_metadata_t;
 
 static __attribute__((always_inline)) window_source_symbol_t *create_window_source_symbol(picoquic_cnx_t *cnx, uint16_t symbol_size) {
     window_source_symbol_t *ss = my_malloc(cnx, sizeof(window_source_symbol_t));
@@ -392,8 +411,9 @@ static __attribute__((always_inline)) int serialize_window_recovered_frame(picoq
 
 // we do not read the type byte
 static __attribute__((always_inline)) uint8_t *parse_window_recovered_frame(picoquic_cnx_t *cnx, uint8_t *bytes, uint8_t *bytes_max, size_t *consumed) {
+    PROTOOP_PRINTF(cnx, "PARSE RECOVERED FRAME, AVAILABLE SPACE = %ld\n", bytes_max - bytes);
     uint64_t first_recovered_packet;
-
+    uint8_t *bytes_orig = bytes;
     uint64_t number_of_packets;
     ssize_t size = picoquic_varint_decode(bytes, bytes_max - bytes, &number_of_packets);
     bytes += size;
@@ -417,6 +437,7 @@ static __attribute__((always_inline)) uint8_t *parse_window_recovered_frame(pico
         if (!range_is_gap) {
             // this is a range of recovered packets
             if (currently_parsed_recovered_packets + range > number_of_packets) {
+                PROTOOP_PRINTF(cnx, "ERROR PARSING RECOVERED FRAME: THE RANGE GOES OUT OF THE PACKET: %d + %lu > %lu\n", currently_parsed_recovered_packets, range, number_of_packets);
                 // error
                 my_free(cnx, size_and_packets);
                 return NULL;
@@ -454,12 +475,12 @@ static __attribute__((always_inline)) uint8_t *parse_window_recovered_frame(pico
         bytes += cons;
     }
 
+    *consumed = bytes - bytes_orig;
 
-
-    if (currently_parsed_sfpids != number_of_packets || bytes >= bytes_max) {
+    if (currently_parsed_sfpids != number_of_packets || bytes > bytes_max) {
         // error
         my_free(cnx, size_and_packets);
-        PROTOOP_PRINTF(cnx, "DID NOT PARSE THE CORRECT NUMBER OF RECOVERED SFPIDS (%u < %u)\n", currently_parsed_sfpids, number_of_packets);
+        PROTOOP_PRINTF(cnx, "DID NOT PARSE THE CORRECT NUMBER OF RECOVERED SFPIDS (%u < %u OR %ld > 0)\n", currently_parsed_sfpids, number_of_packets, bytes - bytes_max);
         return NULL;
     }
 
