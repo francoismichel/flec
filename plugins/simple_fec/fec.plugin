@@ -1,4 +1,4 @@
-be.michelfra.simple_fec rate_unlimited
+be.michelfra.simple_fec rate_unlimited dynamic_memory
 core.plugin include
 causal.plugin include
 window_framework.plugin include
