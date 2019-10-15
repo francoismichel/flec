@@ -47,7 +47,7 @@ protoop_arg_t get_one_coded_symbol(picoquic_cnx_t *cnx)
 
 
     uint8_t *coefs = my_malloc(cnx, n_source_symbols*sizeof(uint8_t));
-    uint8_t **knowns = my_malloc(cnx, n_source_symbols*sizeof(uint8_t));
+    uint8_t **knowns = my_malloc(cnx, n_source_symbols*sizeof(uint8_t *));
 
     for (int i = 0 ; i < n_source_symbols ; i++) {
         knowns[i] = my_malloc(cnx, symbol_size);
