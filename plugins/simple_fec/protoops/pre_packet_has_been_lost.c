@@ -17,8 +17,9 @@ protoop_arg_t pre_packet_has_been_lost(picoquic_cnx_t *cnx) {
     state->n_repair_frames_sent_since_last_feedback = 0;    // new feedback
     source_symbol_id_t first_symbol_id = get_cnx(cnx, AK_CNX_INPUT, 2);
     uint16_t n_symbols = get_cnx(cnx, AK_CNX_INPUT, 3);
+    uint64_t send_time = get_cnx(cnx, AK_CNX_INPUT, 6);
     int err = 0;
-    if ((err = add_lost_packet(cnx, &state->lost_packets, lost_packet_number, slot, first_symbol_id, n_symbols)) != 0)
+    if ((err = add_lost_packet(cnx, &state->lost_packets, lost_packet_number, slot, first_symbol_id, n_symbols, send_time)) != 0)
         return err;
     if ((err = fec_check_for_available_slot(cnx, available_slot_reason_nack)) != 0)
         return err;

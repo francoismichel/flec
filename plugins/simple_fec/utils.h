@@ -160,15 +160,17 @@ static __attribute__((always_inline)) int fec_packet_has_been_lost(picoquic_cnx_
                                                                               source_symbol_id_t id,
                                                                               uint16_t n_source_symbols_in_packet,
                                                                               bool fec_protected,
-                                                                              bool contains_repair_Frame) {
-    protoop_arg_t args[6];
+                                                                              bool contains_repair_Frame,
+                                                                              uint64_t send_time) {
+    protoop_arg_t args[7];
     args[0] = (protoop_arg_t) packet_number;
     args[1] = (protoop_arg_t) packet_slot;
     args[2] = (protoop_arg_t) id;
     args[3] = (protoop_arg_t) n_source_symbols_in_packet;
     args[4] = (protoop_arg_t) fec_protected;
     args[5] = (protoop_arg_t) contains_repair_Frame;
-    return (int) run_noparam(cnx, FEC_PACKET_HAS_BEEN_LOST, 6, args, NULL);
+    args[6] = (protoop_arg_t) send_time;
+    return (int) run_noparam(cnx, FEC_PACKET_HAS_BEEN_LOST, 7, args, NULL);
 }
 
 // the symbols have been received, meaning that it has either been received or recovered
@@ -178,15 +180,17 @@ static __attribute__((always_inline)) what_to_send_t fec_packet_symbols_have_bee
                                                                                            source_symbol_id_t id,
                                                                                            uint16_t n_source_symbols_in_packet,
                                                                                            bool fec_protected,
-                                                                                           bool contains_repair_Frame) {
-    protoop_arg_t args[6];
+                                                                                           bool contains_repair_Frame,
+                                                                                           uint64_t sent_time) {
+    protoop_arg_t args[7];
     args[0] = (protoop_arg_t) packet_number;
     args[1] = (protoop_arg_t) packet_slot;
     args[2] = (protoop_arg_t) id;
     args[3] = (protoop_arg_t) n_source_symbols_in_packet;
     args[4] = (protoop_arg_t) fec_protected;
     args[5] = (protoop_arg_t) contains_repair_Frame;
-    return (int) run_noparam(cnx, FEC_PACKET_HAVE_BEEN_RECEIVED, 6, args, NULL);
+    args[6] = (protoop_arg_t) sent_time;
+    return (int) run_noparam(cnx, FEC_PACKET_HAVE_BEEN_RECEIVED, 7, args, NULL);
 }
 
 static __attribute__((always_inline)) what_to_send_t fec_sent_packet(picoquic_cnx_t *cnx, picoquic_packet_t *packet,
@@ -228,6 +232,7 @@ typedef struct lost_packet {
     uint64_t slot;
     source_symbol_id_t id;
     uint16_t n_source_symbols;
+    uint64_t send_time;
     struct lost_packet *next;
     struct lost_packet *previous;
 } lost_packet_t;
@@ -239,7 +244,7 @@ typedef struct lost_packet_queue {
 } lost_packet_queue_t;
 
 // pre: queue != NULL
-static __attribute__((always_inline)) int add_lost_packet(picoquic_cnx_t *cnx, lost_packet_queue_t *queue, uint64_t pn, uint64_t slot, source_symbol_id_t id, uint16_t n_source_symbols) {
+static __attribute__((always_inline)) int add_lost_packet(picoquic_cnx_t *cnx, lost_packet_queue_t *queue, uint64_t pn, uint64_t slot, source_symbol_id_t id, uint16_t n_source_symbols, uint64_t send_time) {
     lost_packet_t *lp = my_malloc(cnx, sizeof(lost_packet_t));
     if (!lp) {
         return PICOQUIC_ERROR_MEMORY;
@@ -249,6 +254,7 @@ static __attribute__((always_inline)) int add_lost_packet(picoquic_cnx_t *cnx, l
     lp->slot = slot;
     lp->id = id;
     lp->n_source_symbols = n_source_symbols;
+    lp->send_time = send_time;
     if (!queue->head && !queue->tail) {
         queue->head = queue->tail = lp;
         return 0;
@@ -261,7 +267,7 @@ static __attribute__((always_inline)) int add_lost_packet(picoquic_cnx_t *cnx, l
 
 // sets *slot to the slot when the packet was sent, dequeues the packet from the queue and returns true if this packet was present
 // if the packet was not present, does nothing and returns false
-static __attribute__((always_inline)) bool dequeue_lost_packet(picoquic_cnx_t *cnx, lost_packet_queue_t *queue, uint64_t pn, uint64_t *slot, source_symbol_id_t *id, uint16_t *n_source_symbols) {
+static __attribute__((always_inline)) bool dequeue_lost_packet(picoquic_cnx_t *cnx, lost_packet_queue_t *queue, uint64_t pn, uint64_t *slot, source_symbol_id_t *id, uint16_t *n_source_symbols, uint64_t *send_time) {
     if (!queue->head && !queue->tail)
         return false;
     lost_packet_t *previous = NULL;
@@ -271,6 +277,7 @@ static __attribute__((always_inline)) bool dequeue_lost_packet(picoquic_cnx_t *c
             *slot = current->slot;
             *id = current->id;
             *n_source_symbols = current->n_source_symbols;
+            *send_time = current->send_time;
             if (!previous) {
                 // head == current
                 queue->head = current->next;

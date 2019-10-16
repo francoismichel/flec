@@ -231,7 +231,7 @@ protoop_arg_t retransmit_needed(picoquic_cnx_t *cnx)
                                                                    (is_timer_based) ? picoquic_congestion_notification_timeout : picoquic_congestion_notification_repeat,
                                                                    0, 0, lost_packet_number, current_time);
                             }
-                            if (fec_packet_has_been_lost(cnx, lost_packet_number, slot, first_symbol_id, n_symbols, fec_protected, contains_repair_frame))
+                            if (fec_packet_has_been_lost(cnx, lost_packet_number, slot, first_symbol_id, n_symbols, fec_protected, contains_repair_frame, get_pkt(p, AK_PKT_SEND_TIME)))
                                 return -1;
                         }
                         length = 0;

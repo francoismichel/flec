@@ -316,12 +316,12 @@ static __attribute__((always_inline)) int maybe_notify_recovered_packets_to_ever
             uint64_t slot;
             source_symbol_id_t first_id;
             uint16_t n_source_symbols;
-
+            uint64_t send_time;
 
             // announce the reception of the source symbols
-            bool present = dequeue_lost_packet(cnx, &state->lost_packets, pn64, &slot, &first_id, &n_source_symbols);
+            bool present = dequeue_lost_packet(cnx, &state->lost_packets, pn64, &slot, &first_id, &n_source_symbols, &send_time);
             if (present) {
-                fec_packet_symbols_have_been_received(cnx, pn64, slot, first_id, n_source_symbols, true, false);
+                fec_packet_symbols_have_been_received(cnx, pn64, slot, first_id, n_source_symbols, true, false, send_time);
             } else {
                 // this is not normal
                 PROTOOP_PRINTF(cnx, "ERROR: THE RECOVERED PACKET %lx (%lu) IS NEITHER IN THE RETRANSMIT QUEUE, NEITHER IN THE LOST PACKETS\n", pn64, pn64);
