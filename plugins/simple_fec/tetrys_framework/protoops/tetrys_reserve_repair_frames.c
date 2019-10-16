@@ -31,8 +31,6 @@ protoop_arg_t reserve_repair_frames_protoop(picoquic_cnx_t *cnx) {
     } else if (feedback_implied || (cnx_state == picoquic_state_server_ready/* && state->n_repair_frames_sent_since_last_feedback <= max_repair_frames_threshold *//*wff->window_length*2*/)) {
 
         PROTOOP_PRINTF(cnx, "NOTHING TO RESERVE, GENERATE !\n");
-                       PICOQUIC_MAX_PACKET_SIZE / state->symbol_size/* + 1*/, protect_subset, first_id_to_protect,
-                       n_symbols_to_protect);
         err = flush_tetrys(cnx, ff, state->symbol_size);
         if (buffer_peek_symbol_payload_size(cnx, &ff->common_fec_framework.buffered_repair_symbols, max_size)) {
 
