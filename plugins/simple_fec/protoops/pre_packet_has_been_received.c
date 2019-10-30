@@ -16,7 +16,9 @@ protoop_arg_t pre_packet_has_been_received(picoquic_cnx_t *cnx) {
     bool fec_protected = get_cnx(cnx, AK_CNX_INPUT, 4);
     if (fec_protected) {
         uint64_t send_time = get_cnx(cnx, AK_CNX_INPUT, 6);
-        PROTOOP_PRINTF(cnx, "[[PACKET %lx RECEIVED IN %lu µs]]\n", received_packet_number, picoquic_current_time() - send_time);
+        PROTOOP_PRINTF(cnx, "EVENT::{\"time\": %ld, \"type\": \"packet_received_by_peer\", \"pn\": %ld, \"elapsed\": %ld}\n", picoquic_current_time(), received_packet_number, picoquic_current_time() - send_time);
+
+        PROTOOP_PRINTF(cnx, "[[PACKET %lx RECEIVED IN %lu]]\n", received_packet_number, picoquic_current_time() - send_time);
     }
     state->n_repair_frames_sent_since_last_feedback = 0;    // new feedback
     int err = 0;

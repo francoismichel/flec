@@ -18,11 +18,16 @@ protoop_arg_t window_packet_sent(picoquic_cnx_t *cnx) {
         uint16_t n_symbols = get_pkt_metadata(cnx, packet, FEC_PKT_METADATA_NUMBER_OF_SOURCE_SYMBOLS);
         window_source_symbol_id_t supposed_id;
         get_next_source_symbol_id(cnx, (framework_sender_t) wff, (source_symbol_id_t *) &supposed_id);
+        PROTOOP_PRINTF(cnx, "EVENT::{\"time\": %ld, \"type\": \"sent_protected_packet\", \"pn\": %ld, \"id\": %u}\n", picoquic_current_time(), get_pkt(packet, AK_PKT_SEQUENCE_NUMBER), first_id);
         if (supposed_id != first_id) {
             PROTOOP_PRINTF(cnx, "THE WRONG ID HAS BEEN PUT INTO THE PACKET ! %u INSTEAD OF %u\n", first_id, supposed_id);
             return -1;
         }
         wff->max_id = first_id + n_symbols - 1;
+    } else if (contains_repair_frame) {
+        window_source_symbol_id_t first = get_pkt_metadata(cnx, packet, FEC_PKT_METADATA_FIRST_PROTECTED_SYMBOL_ID);
+        uint16_t n_protected = get_pkt_metadata(cnx, packet, FEC_PKT_METADATA_NUMBER_OF_PROTECTED_SYMBOLS);
+        PROTOOP_PRINTF(cnx, "EVENT::{\"time\": %ld, \"type\": \"sent_repair_packet\", \"pn\": %ld, \"window\": [%u, %u]}\n", picoquic_current_time(), get_pkt(packet, AK_PKT_SEQUENCE_NUMBER), first, first+n_protected-1);
     }
     return 0;
 }

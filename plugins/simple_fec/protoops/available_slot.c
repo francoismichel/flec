@@ -36,7 +36,6 @@ protoop_arg_t available_slot(picoquic_cnx_t *cnx) {
             // otherwise, we fallthrough and send a repair symbol
         case what_to_send_feedback_implied_repair_symbol:
         case what_to_send_repair_symbol:
-            // TODO: allow to protect only a subset of the source symbols when sending a FEEDBACK FEC !!
             err = reserve_repair_frames(cnx, state->framework_sender, DEFAULT_SLOT_SIZE, state->symbol_size,
                     wts == what_to_send_feedback_implied_repair_symbol, wts == what_to_send_feedback_implied_repair_symbol,
                     first_id, n_symbols_to_protect);

@@ -20,6 +20,7 @@ protoop_arg_t write_frame(picoquic_cnx_t *cnx) {
     size_t consumed = 0;
     int err = serialize_compress_padding_window_repair_frame(cnx, bytes, bytes_max - bytes, rf, state->symbol_size, &consumed);
     if (!err) {
+        PROTOOP_PRINTF(cnx, "WRITTEN REPAIR FRAME, FB_FEC = %d\n", rf->is_fb_fec);
         state->has_written_fb_fec_repair_frame = rf->is_fb_fec;
         state->has_written_repair_frame = !rf->is_fb_fec;
         state->current_repair_frame_first_protected_id = rf->first_protected_symbol;

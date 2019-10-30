@@ -21,7 +21,7 @@ typedef struct {
     repair_symbol_t *repair_symbol;
     window_source_symbol_id_t first_protected_symbol;
     window_fec_scheme_specific_t fss;
-    uint8_t n_protected_symbols;
+    uint16_t n_protected_symbols;
 } queue_item;
 
 typedef struct __attribute__((__packed__)) fec_slot {
@@ -102,7 +102,7 @@ static __attribute__((always_inline)) void remove_item_at_index(picoquic_cnx_t *
     wff->repair_symbols_queue[idx].n_protected_symbols = 0;
 }
 
-static __attribute__((always_inline)) void put_item_at_index(window_fec_framework_t *wff, int idx, repair_symbol_t *rs, uint8_t n_protected_symbols,
+static __attribute__((always_inline)) void put_item_at_index(window_fec_framework_t *wff, int idx, repair_symbol_t *rs, uint16_t n_protected_symbols,
         window_source_symbol_id_t first_protected, window_fec_scheme_specific_t fss) {
     wff->repair_symbols_queue[idx].repair_symbol = rs;
     wff->repair_symbols_queue[idx].n_protected_symbols = n_protected_symbols;

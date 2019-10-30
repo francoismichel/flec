@@ -299,6 +299,12 @@ static __attribute__((always_inline)) int maybe_notify_recovered_packets_to_ever
             bool packet_is_pure_ack = get_pkt(current_packet, AK_PKT_IS_PURE_ACK);
             // notify everybody that this packet is lost
             helper_packet_was_lost(cnx, current_packet, path);
+            // TODO: call "fec_packet_symbols have_been_received" as soon as we can (when the recovered frame is processed)
+            uint64_t slot = get_pkt_metadata(cnx, current_packet, FEC_PKT_METADATA_SENT_SLOT);
+            source_symbol_id_t first_id = get_pkt_metadata(cnx, current_packet, FEC_PKT_METADATA_FIRST_SOURCE_SYMBOL_ID);
+            uint64_t n_source_symbols = get_pkt_metadata(cnx, current_packet, FEC_PKT_METADATA_NUMBER_OF_SOURCE_SYMBOLS);
+            uint64_t send_time = get_pkt(current_packet, AK_PKT_SEND_TIME);
+            fec_packet_symbols_have_been_received(cnx, current_pn64, slot, first_id, n_source_symbols, true, false, send_time);
             helper_dequeue_retransmit_packet(cnx, current_packet, 1);
             if (current_time >= retrans_cc_notification_timer && !packet_is_pure_ack) {    // do as in core: if is pure_ack or recently notified, do not notify cc
                 set_pkt_ctx(pkt_ctx, AK_PKTCTX_LATEST_RETRANSMIT_CC_NOTIFICATION_TIME, current_time);

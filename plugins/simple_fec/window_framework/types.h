@@ -26,7 +26,7 @@
 #define FEC_PROTOOP_WINDOW_CONTROLLER_FREE_SLOT "fec_controller_free_slot"
 #define WINDOW_INITIAL_SYMBOL_ID 1
 
-#define MAX_SENDING_WINDOW_SIZE 200
+#define MAX_SENDING_WINDOW_SIZE 400
 
 
 #define for_each_window_source_symbol(____sss, ____ss, ____nss) \
@@ -71,13 +71,13 @@ typedef struct {
 // packed needed because of the malloc block size...
 typedef struct __attribute__((__packed__)) {
     window_source_symbol_id_t first_symbol_id;
-    uint8_t number_of_symbols;
+    uint16_t number_of_symbols;
 } window_source_symbol_packet_metadata_t;
 
 typedef struct __attribute__((__packed__)) {
     window_source_symbol_id_t first_protected_source_symbol_id;
-    uint8_t n_protected_source_symbols;
-    uint8_t number_of_repair_symbols;
+    uint16_t n_protected_source_symbols;
+    uint16_t number_of_repair_symbols;
     uint8_t is_fb_fec;
 
 } window_repair_symbol_packet_metadata_t;

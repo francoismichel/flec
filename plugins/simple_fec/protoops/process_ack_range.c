@@ -46,6 +46,7 @@ protoop_arg_t process_ack_range(picoquic_cnx_t *cnx)
                         uint16_t n_source_symbols = (uint16_t) get_pkt_metadata(cnx, p, FEC_PKT_METADATA_NUMBER_OF_SOURCE_SYMBOLS);
                         fec_packet_symbols_have_been_received(cnx, sequence_number, slot, id, n_source_symbols,
                                                               fec_protected, contains_repair_frame, get_pkt(p, AK_PKT_SEND_TIME));
+                        PROTOOP_PRINTF(cnx, "PROTECTED OR REPAIR IN ACK\n");
                         PROTOOP_PRINTF(cnx, "[[PACKET RECEIVED]] %lu,%lu\n", sequence_number, current_time - get_pkt(p, AK_PKT_SEND_TIME));
                     }
 
@@ -81,8 +82,11 @@ protoop_arg_t process_ack_range(picoquic_cnx_t *cnx)
                 highest--;
             }
         } else if (closest_lost->pn <= highest) { // closest_lost is always not null as p == NULL
-            if (closest_lost->pn == highest)
+            if (closest_lost->pn == highest) {
+                PROTOOP_PRINTF(cnx, "ALREADY LOST SYMBOL RECEIVED\n");
                 fec_packet_symbols_have_been_received(cnx, closest_lost->pn, closest_lost->slot, closest_lost->id, closest_lost->n_source_symbols, true, false, closest_lost->send_time);
+                dequeue_lost_packet(cnx, &state->lost_packets, closest_lost->pn, NULL, NULL, NULL, NULL);
+            }
             range--;
             highest--;
         }

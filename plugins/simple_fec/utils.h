@@ -274,10 +274,14 @@ static __attribute__((always_inline)) bool dequeue_lost_packet(picoquic_cnx_t *c
     lost_packet_t *current = queue->head;
     while (current) {
         if (current->pn == pn) {
-            *slot = current->slot;
-            *id = current->id;
-            *n_source_symbols = current->n_source_symbols;
-            *send_time = current->send_time;
+            if (slot)
+                *slot = current->slot;
+            if (id)
+                *id = current->id;
+            if (n_source_symbols)
+                *n_source_symbols = current->n_source_symbols;
+            if (send_time)
+                *send_time = current->send_time;
             if (!previous) {
                 // head == current
                 queue->head = current->next;

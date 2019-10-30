@@ -2,7 +2,7 @@
 #include "window_receive_buffers.h"
 #include "types.h"
 
-#define MAX_RECEIVE_BUFFER_SIZE 210
+#define MAX_RECEIVE_BUFFER_SIZE 450
 
 
 #define MIN(a, b) ((a < b) ? a : b)
@@ -159,6 +159,7 @@ static __attribute__((always_inline)) int window_receive_source_symbol(picoquic_
         delete_window_source_symbol(cnx, removed);
     }
     uint32_t highest_contiguous_received = get_highest_contiguous_received_source_symbol(wff->symbols_tracker);
+    PROTOOP_PRINTF(cnx, "HIGHEST_CONTIGUOUSLY_RECEIVED = %u\n", highest_contiguous_received);
     int err = tracker_receive_source_symbol(cnx, wff->symbols_tracker, ss->id);
     if (err) {
         return err;
