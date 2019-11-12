@@ -387,7 +387,7 @@ static __attribute__((always_inline)) causal_packet_type_t what_to_send(picoquic
     if (type == fb_fec_packet) {
         uint64_t lost_slot = 0;
         dequeue_elem_from_buffer(controller->lost_and_non_fec_retransmitted_slots, &lost_slot);
-        PROTOOP_PRINTF(cnx, "GOT SLOT %lu AS LOST AND NON RETRANSMITTED\n");
+        PROTOOP_PRINTF(cnx, "GOT SLOT %lu AS LOST AND NON RETRANSMITTED\n", lost_slot);
         window_packet_metadata_t md;
         int err = get_sent_slot_metadata(controller->slots_history, lost_slot, &md);
         if (err == -1) {
@@ -425,7 +425,7 @@ static __attribute__((always_inline)) void sent_packet(picoquic_cnx_t *cnx, wind
         window.start = md.repair_metadata.first_protected_source_symbol_id;
         window.end = window.start + md.repair_metadata.n_protected_source_symbols;
     }
-    PROTOOP_PRINTF(cnx, "SENT PACKET, TYPE = %d\n", type);
+    PROTOOP_PRINTF(cnx, "SENT PACKET, TYPE = %d, SLOT %lu\n", type, slot);
     if (false && !EW(controller, &window)) {
         controller->latest_symbol_protected_by_fec = (((uint64_t) (window.end-1))/((uint64_t)controller->k))*controller->k;
     } else if (type == fec_packet){
@@ -553,8 +553,16 @@ static __attribute__((always_inline)) void slot_nacked(picoquic_cnx_t *cnx, wind
     causal_redundancy_controller_t *controller = (causal_redundancy_controller_t *) c;
     controller->n_received_feedbacks++;
     controller->n_lost_slots++;
-    PROTOOP_PRINTF(cnx, "ADD SLOT %lu AS LOST AND NON RETRANSMITTED\n");
-    add_elem_to_buffer(controller->lost_and_non_fec_retransmitted_slots, slot);
+    window_packet_metadata_t md;
+    int err = get_sent_slot_metadata(controller->slots_history, slot, &md);
+    if (err) {
+        PROTOOP_PRINTF(cnx, "ERROR: NACKED A SLOT NEVER SENT !\n");
+        return;
+    }
+    if (md.source_metadata.number_of_symbols > 0 || (md.repair_metadata.is_fb_fec)) {
+        PROTOOP_PRINTF(cnx, "ADD SLOT %lu AS LOST AND NON RETRANSMITTED\n", slot);
+        add_elem_to_buffer(controller->lost_and_non_fec_retransmitted_slots, slot);
+    }
     // remove all the acked slots in the window
     add_elem_to_buffer(controller->nacked_slots, slot);
     controller->last_feedback = available_slot_reason_nack;
