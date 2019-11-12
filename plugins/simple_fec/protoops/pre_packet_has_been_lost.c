@@ -14,7 +14,6 @@ protoop_arg_t pre_packet_has_been_lost(picoquic_cnx_t *cnx) {
     // the packet is always fec-protected TODO: NOT THE CASE ANYMORE
     uint64_t lost_packet_number = get_cnx(cnx, AK_CNX_INPUT, 0);
     uint64_t slot = get_cnx(cnx, AK_CNX_INPUT, 1);
-    state->n_repair_frames_sent_since_last_feedback = 0;    // new feedback
     source_symbol_id_t first_symbol_id = get_cnx(cnx, AK_CNX_INPUT, 2);
     uint16_t n_symbols = get_cnx(cnx, AK_CNX_INPUT, 3);
     uint64_t send_time = get_cnx(cnx, AK_CNX_INPUT, 6);

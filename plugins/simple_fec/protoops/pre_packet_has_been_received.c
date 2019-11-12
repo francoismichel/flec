@@ -20,7 +20,6 @@ protoop_arg_t pre_packet_has_been_received(picoquic_cnx_t *cnx) {
 
         PROTOOP_PRINTF(cnx, "[[PACKET %lx RECEIVED IN %lu]]\n", received_packet_number, picoquic_current_time() - send_time);
     }
-    state->n_repair_frames_sent_since_last_feedback = 0;    // new feedback
     int err = 0;
     if ((err = fec_check_for_available_slot(cnx, available_slot_reason_ack)) != 0)
         return err;

@@ -19,9 +19,6 @@ protoop_arg_t post_write_repair_frame(picoquic_cnx_t *cnx) {
         if (!state)
             return PICOQUIC_ERROR_MEMORY;
         state->n_reserved_id_or_repair_frames--;
-        if (consumed  > 0) { // if bytes have been written
-            state->n_repair_frames_sent_since_last_feedback++;
-        }
         set_cnx(cnx, AK_CNX_OUTPUT, 0, consumed);
         set_cnx(cnx, AK_CNX_OUTPUT, 1, retransmittable);
     }
