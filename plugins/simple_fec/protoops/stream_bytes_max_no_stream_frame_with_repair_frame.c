@@ -23,7 +23,7 @@ protoop_arg_t stream_bytes_max(picoquic_cnx_t* cnx) {
         size_t overhead = 25;
         uint64_t mtu = get_path((picoquic_path_t *) get_cnx(cnx, AK_CNX_PATH, 0), AK_PATH_SEND_MTU, 0) - 30; // max repair frame size
         uint64_t max_pkt_size = MIN(CHUNK_SIZE, mtu);   // 30 is an ok value for header + checksum overheads
-        bytes_max = (bytes_max && bytes_max > max_pkt_size - overhead) ? (max_pkt_size-overhead) : bytes_max;
+        bytes_max = (bytes_max && bytes_max > max_pkt_size - overhead) ? (max_pkt_size-overhead) : (bytes_max-overhead);
     }
     set_cnx(cnx, AK_CNX_OUTPUT, 0, bytes_max);
     return 0;
