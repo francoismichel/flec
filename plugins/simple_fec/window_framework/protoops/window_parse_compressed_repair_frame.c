@@ -19,8 +19,8 @@ protoop_arg_t parse_frame(picoquic_cnx_t *cnx) {
     size_t consumed = 0;
     // we cannot signal an error...
     window_repair_frame_t *rf = parse_compressed_padding_window_repair_frame(cnx, bytes_protected, bytes_max, state->symbol_size, &consumed, state->is_in_skip_frame);
-    set_cnx(cnx, AK_CNX_OUTPUT, 0, (protoop_arg_t) rf);
-    set_cnx(cnx, AK_CNX_OUTPUT, 1, false);
-    set_cnx(cnx, AK_CNX_OUTPUT, 2, false);
+    set_cnx(cnx, AK_CNX_OUTPUT, 0, (protoop_arg_t) rf); // frame
+    set_cnx(cnx, AK_CNX_OUTPUT, 1, true);               // ack needed
+    set_cnx(cnx, AK_CNX_OUTPUT, 2, false);              // is retransmittable
     return (protoop_arg_t) bytes_protected + consumed;
 }
