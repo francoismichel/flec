@@ -200,6 +200,15 @@ protoop_arg_t retransmit_needed(picoquic_cnx_t *cnx)
                     fec_related = fec_protected || contains_repair_frame;
 
 
+                    /* We should also consider if some action was recently observed to consider that it is actually a RTO... */
+                    retrans_timer = orig_time_stamp_largest_received + orig_smoothed_rtt;
+                    if (orig_latest_retransmit_time >= orig_time_stamp_largest_received) {
+                        retrans_timer = orig_latest_retransmit_time + orig_smoothed_rtt;
+                    }
+                    /* Or any packet acknowledged */
+                    if (orig_latest_progress_time + orig_smoothed_rtt > retrans_timer) {
+                        retrans_timer = orig_latest_progress_time + orig_smoothed_rtt;
+                    }
 
                     source_symbol_id_t first_symbol_id = get_pkt_metadata(cnx, p, FEC_PKT_METADATA_FIRST_SOURCE_SYMBOL_ID);
                     uint16_t n_symbols = get_pkt_metadata(cnx, p, FEC_PKT_METADATA_NUMBER_OF_SOURCE_SYMBOLS);
@@ -223,6 +232,7 @@ protoop_arg_t retransmit_needed(picoquic_cnx_t *cnx)
                             is_timer_based = false;
                             if (timer_based_retransmit != 0 && current_time >= retrans_timer) {
                                 is_timer_based = true;
+                                PROTOOP_PRINTF(cnx, "TIMER BASED, CURRENT TIME = %lu\n", current_time);
                             }
 
                             if (current_time >= retrans_cc_notification_timer) {
@@ -231,6 +241,7 @@ protoop_arg_t retransmit_needed(picoquic_cnx_t *cnx)
                                                                    (is_timer_based) ? picoquic_congestion_notification_timeout : picoquic_congestion_notification_repeat,
                                                                    0, 0, lost_packet_number, current_time);
                             }
+                            PROTOOP_PRINTF(cnx, "LOST PACKET, NUMBER %lx, RETRANS TIMER = %lu\n", lost_packet_number, retrans_timer);
                             if (fec_packet_has_been_lost(cnx, lost_packet_number, slot, first_symbol_id, n_symbols, fec_protected, contains_repair_frame, get_pkt(p, AK_PKT_SEND_TIME)))
                                 return -1;
                         }
@@ -244,15 +255,6 @@ protoop_arg_t retransmit_needed(picoquic_cnx_t *cnx)
 //                        uint64_t orig_latest_retransmit_time = get_pkt_ctx(orig_pkt_ctx, AK_PKTCTX_LATEST_RETRANSMIT_TIME);
 //                        uint64_t orig_latest_progress_time = get_pkt_ctx(orig_pkt_ctx, AK_PKTCTX_LATEST_PROGRESS_TIME);
 
-                        /* We should also consider if some action was recently observed to consider that it is actually a RTO... */
-                        retrans_timer = orig_time_stamp_largest_received + orig_smoothed_rtt;
-                        if (orig_latest_retransmit_time >= orig_time_stamp_largest_received) {
-                            retrans_timer = orig_latest_retransmit_time + orig_smoothed_rtt;
-                        }
-                        /* Or any packet acknowledged */
-                        if (orig_latest_progress_time + orig_smoothed_rtt > retrans_timer) {
-                            retrans_timer = orig_latest_progress_time + orig_smoothed_rtt;
-                        }
                         is_timer_based = false;
 //                        uint64_t retrans_cc_notification_timer = get_pkt_ctx(orig_pkt_ctx, AK_PKTCTX_LATEST_RETRANSMIT_CC_NOTIFICATION_TIME);
                         if (timer_based_retransmit != 0 && current_time >= retrans_timer) {
