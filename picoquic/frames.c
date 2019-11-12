@@ -1004,13 +1004,12 @@ protoop_arg_t find_ready_plugin_stream(picoquic_cnx_t *cnx)
 
         } ;
     } else {
-        if ((stream->send_queue == NULL ||
-             stream->send_queue->length <= stream->send_queue->offset) &&
+        if (stream &&
+            (stream->send_queue == NULL || stream->send_queue->length <= stream->send_queue->offset) &&
             (!STREAM_FIN_NOTIFIED(stream) || STREAM_FIN_SENT(stream)) &&
             (!STREAM_RESET_REQUESTED(stream) || STREAM_RESET_SENT(stream)) &&
             (!STREAM_STOP_SENDING_REQUESTED(stream) || STREAM_STOP_SENDING_SENT(stream))) {
             stream = NULL;
-            printf("This should never happen for plugin stream...\n");
         }
     }
 
@@ -3729,6 +3728,8 @@ protoop_arg_t process_plugin_validate_frame(picoquic_cnx_t* cnx)
                 MAX_PLUGIN_DATA_LEN, &size_used);
             if (err == 0) {
                 picoquic_add_to_plugin_stream(cnx, frame->pid_id, plugin_buffer, size_used, 1);
+            } else {
+                printf("Failed to prepare plugin data exchanged\n");
             }
             return err;
         }

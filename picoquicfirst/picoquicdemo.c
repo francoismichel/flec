@@ -1136,14 +1136,10 @@ int quic_client(const char* ip_address_text, int server_port, const char * sni,
     /* Wait for packets */
     while (ret == 0 && picoquic_get_cnx_state(cnx_client) != picoquic_state_disconnected) {
         int bytes_recv;
-        if (picoquic_is_cnx_backlog_empty(cnx_client) && callback_ctx.nb_open_streams == 0) {
-            delay_max = 10000;
-        } else {
-            delay_max = 10000000;
-        }
 
         from_length = to_length = sizeof(struct sockaddr_storage);
 
+        uint64_t select_time = picoquic_current_time();
         bytes_recv = picoquic_select(&fd, 1, &packet_from, &from_length,
             &packet_to, &to_length, &if_index_to,
             buffer, sizeof(buffer),
@@ -1153,7 +1149,7 @@ int quic_client(const char* ip_address_text, int server_port, const char * sni,
 
         if (bytes_recv != 0) {
             if (F_log != NULL) {
-                fprintf(F_log, "Select returns %d, from length %u\n", bytes_recv, from_length);
+                fprintf(F_log, "Select returns %d, from length %u, after %d (delta_t was %d)\n", bytes_recv, from_length, current_time - select_time, delta_t);
             }
 
             if (bytes_recv > 0 && F_log != NULL)
@@ -1327,7 +1323,7 @@ int quic_client(const char* ip_address_text, int server_port, const char * sni,
         uint8_t* ticket;
         uint16_t ticket_length;
 
-        if (sni != NULL && 0 == picoquic_get_ticket(qclient->p_first_ticket, picoquic_current_time(), sni, (uint16_t)strlen(sni), alpn, (uint16_t)strlen(alpn), &ticket, &ticket_length)) {
+        if (sni != NULL && 0 == picoquic_get_ticket(qclient->p_first_ticket, picoquic_current_time(), sni, (uint16_t)strlen(sni), alpn, (uint16_t)strlen(alpn), &ticket, &ticket_length) && F_log) {
             fprintf(F_log, "Received ticket from %s:\n", sni);
             picoquic_log_picotls_ticket(F_log, picoquic_null_connection_id, ticket, ticket_length);
         }
@@ -1642,9 +1638,6 @@ int main(int argc, char** argv)
         }
     }
 
-    if (!F_log && (!log_file || strcmp(log_file, "/dev/null") != 0)) {
-        F_log = stdout;
-    }
 
     FILE* F_tls_secrets = NULL;
 
