@@ -25,8 +25,8 @@ protoop_arg_t stream_bytes_max(picoquic_cnx_t* cnx) {
         uint64_t max_pkt_size = MIN(CHUNK_SIZE, mtu);   // 30 is an ok value for header + checksum overheads
         PROTOOP_PRINTF(cnx, "MTU = %lu\n", mtu);
         PROTOOP_PRINTF(cnx, "MAX PKT SIZE - OVERHEAD = %lu - %lu = %lu, BYTES MAX = %lu\n", max_pkt_size, overhead, max_pkt_size - overhead, bytes_max);
-        bytes_max = (bytes_max && bytes_max > max_pkt_size - overhead) ? (max_pkt_size-overhead) : bytes_max;
-        PROTOOP_PRINTF(cnx, "RETURN %lu\n", bytes_max);
+        bytes_max = (bytes_max && (bytes_max - overhead) > (max_pkt_size - overhead)) ? (max_pkt_size-overhead) : (bytes_max-overhead);
+        PROTOOP_PRINTF(cnx, "RETURN STREAM BYTES MAX %lu\n", bytes_max);
     }
     set_cnx(cnx, AK_CNX_OUTPUT, 0, bytes_max);
     return 0;
