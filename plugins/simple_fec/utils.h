@@ -110,7 +110,7 @@ static __attribute__((always_inline)) int protect_packet_payload(picoquic_cnx_t 
 
 
 static __attribute__((always_inline)) int reserve_repair_frames(picoquic_cnx_t *cnx, framework_sender_t sender, size_t size_max, size_t symbol_size,
-                                        bool feedback_implied, bool protect_subset, source_symbol_id_t first_id_to_protect, uint16_t n_symbols_to_protect) {
+                                        bool feedback_implied, bool protect_subset, source_symbol_id_t first_id_to_protect, uint16_t n_symbols_to_protect, protoop_arg_t *could_reserve) {
     protoop_arg_t args[7];
 
     args[0] = (protoop_arg_t) sender;
@@ -121,7 +121,7 @@ static __attribute__((always_inline)) int reserve_repair_frames(picoquic_cnx_t *
     args[5] = (protoop_arg_t) first_id_to_protect;
     args[6] = (protoop_arg_t) n_symbols_to_protect;
 
-    int err = (int) run_noparam(cnx, FEC_RESERVE_REPAIR_FRAMES, 7, args, NULL);
+    int err = (int) run_noparam(cnx, FEC_RESERVE_REPAIR_FRAMES, 7, args, could_reserve);
     return err;
 }
 
