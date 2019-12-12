@@ -460,19 +460,13 @@ typedef struct st_picoquic_path_t {
     /* Sequence and retransmission state */
     picoquic_packet_context_t pkt_ctx[picoquic_nb_packet_context];
 
+    plugin_struct_metadata_t *metadata;
 } picoquic_path_t;
 
 /* Typedef for plugins */
 
 typedef char* plugin_id_t;
 
-/* Structure keeping track of the start pointer of the opaque data and its size */
-typedef struct st_picoquic_opaque_meta_t {
-    void *start_ptr;
-    size_t size;
-} picoquic_opaque_meta_t;
-
-#define OPAQUE_ID_MAX 0x10
 #define PLUGIN_MEMORY (16 * 1024 * 1024) /* In bytes, at least needed by tests */
 
 typedef enum {
@@ -516,8 +510,6 @@ typedef struct protoop_plugin {
     uint64_t frames_total; /* Number of total generated frames, for monitoring */
     uint64_t hash;         /* Hash of the plugin name */
     plugin_parameters_t params;
-    /* Opaque field for free use by plugins */
-    picoquic_opaque_meta_t opaque_metas[OPAQUE_ID_MAX];
     /* With uBPF, we don't want the VM it corrupts the memory of another context.
      * Therefore, each plugin has its own memory space that should contain everything
      * needed for the given connection.
@@ -721,6 +713,8 @@ typedef struct st_picoquic_cnx_t {
     protocol_operation_struct_t *ops;
 
     protoop_plugin_t *plugins;
+
+    plugin_struct_metadata_t *metadata;
 
     /* Due to uBPF constraints, all needed info must be contained in the context.
      * Furthermore, the arguments might have different types...

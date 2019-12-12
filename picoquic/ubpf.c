@@ -38,12 +38,15 @@ register_functions(struct ubpf_vm *vm) {
     unsigned int current_idx = 0;
     /* specific API related */
     ubpf_register(vm, current_idx++, "plugin_run_protoop", plugin_run_protoop);
-    ubpf_register(vm, current_idx++, "get_opaque_data", get_opaque_data);
     ubpf_register(vm, current_idx++, "reserve_frames", reserve_frames);
     ubpf_register(vm, current_idx++, "get_cnx", get_cnx);
     ubpf_register(vm, current_idx++, "set_cnx", set_cnx);
+    ubpf_register(vm, current_idx++, "get_cnx_metadata", get_cnx_metadata);
+    ubpf_register(vm, current_idx++, "set_cnx_metadata", set_cnx_metadata);
     ubpf_register(vm, current_idx++, "get_path", get_path);
     ubpf_register(vm, current_idx++, "set_path", set_path);
+    ubpf_register(vm, current_idx++, "get_path_metadata", get_path_metadata);
+    ubpf_register(vm, current_idx++, "set_path_metadata", set_path_metadata);
     ubpf_register(vm, current_idx++, "get_pkt_ctx", get_pkt_ctx);
     ubpf_register(vm, current_idx++, "set_pkt_ctx", set_pkt_ctx);
     ubpf_register(vm, current_idx++, "get_pkt", get_pkt);
@@ -113,8 +116,6 @@ register_functions(struct ubpf_vm *vm) {
     ubpf_register(vm, current_idx++, "picoquic_set_cnx_state", picoquic_set_cnx_state);
     ubpf_register(vm, current_idx++, "picoquic_frames_varint_decode", picoquic_frames_varint_decode);
     ubpf_register(vm, current_idx++, "picoquic_record_pn_received", picoquic_record_pn_received);
-    /* This value is reserved. DO NOT OVERRIDE IT! */
-    ubpf_register(vm, current_idx++, "picoquic_memory_bound_error", picoquic_memory_bound_error);
 
     ubpf_register(vm, current_idx++, "queue_peek", queue_peek);
     /* FIXME remove this function */
@@ -145,6 +146,9 @@ register_functions(struct ubpf_vm *vm) {
     ubpf_register(vm, current_idx++, "recv", recv);
 
     ubpf_register(vm, current_idx++, "strcmp", strncmp);
+
+    /* This value is reserved. DO NOT OVERRIDE IT! */
+    ubpf_register(vm, 0x7f, "picoquic_memory_bound_error", picoquic_memory_bound_error);
 }
 
 static void *readfile(const char *path, size_t maxlen, size_t *len)
