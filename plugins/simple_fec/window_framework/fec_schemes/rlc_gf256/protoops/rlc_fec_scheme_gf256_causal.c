@@ -1,4 +1,5 @@
 #include <picoquic.h>
+#include <zlib.h>
 #include "../gf256/prng/tinymt32.c"
 #include "../gf256/swif_symbol.c"
 #include "rlc_fec_scheme_gf256.h"
@@ -240,6 +241,7 @@ protoop_arg_t fec_recover(picoquic_cnx_t *cnx)
     my_free(cnx, shuffle_prng);
     for_each_window_repair_symbol(repair_symbols, rs, n_repair_symbols) {
         if (rs && i < n_eq) {
+            PROTOOP_PRINTF(cnx, "RS %d CRC = 0x%x\n", i, crc32(0, rs->repair_symbol.repair_payload, rs->repair_symbol.payload_length));
             window_source_symbol_id_t smallest_protected_by_rs = rs->metadata.first_id;
             bool protects_at_least_one_new_source_symbol = false;
             for (int k = smallest_protected_by_rs - smallest_protected ; k < smallest_protected_by_rs + rs->metadata.n_protected_symbols - smallest_protected ; k++) {
@@ -267,7 +269,7 @@ protoop_arg_t fec_recover(picoquic_cnx_t *cnx)
                     // this source symbol is protected by this repair symbol
                     if (source_symbols[j]) {
                         PROTOOP_PRINTF(cnx, "SYMBOL %u NOT NULL\n", j + smallest_protected);
-                        PROTOOP_PRINTF(cnx, "ADD KNOWN TO CT, COEF = %u\n", coefs[j]);
+                        PROTOOP_PRINTF(cnx, "ADD KNOWN TO CT, COEF = %u, CRC = 0x%x\n", coefs[j], crc32(0, source_symbols[j]->source_symbol._whole_data, symbol_size));
                         symbol_sub_scaled(constant_terms[i], coefs[j], source_symbols[j]->source_symbol._whole_data, symbol_size, mul);
                     } else if (current_unknown < n_missing_source_symbols) {
                         PROTOOP_PRINTF(cnx, "ADDING UNKNOWN %u, COEF %u\n", j + smallest_protected, coefs[j]);
@@ -311,6 +313,7 @@ protoop_arg_t fec_recover(picoquic_cnx_t *cnx)
             my_memcpy(ss->source_symbol._whole_data, unknowns[current_unknown], symbol_size);
             source_symbols[j] = ss;
             my_free(cnx, unknowns[current_unknown++]);
+            PROTOOP_PRINTF(cnx, "RECOVERED SYMBOL %u, CRC = 0x%x\n", ss->id, crc32(0, ss->source_symbol._whole_data, symbol_size));
         } else if (!source_symbols[j] && (!can_recover || undetermined[current_unknown] || symbol_is_zero(unknowns[current_unknown], symbol_size))) {
             // this unknown could not be recovered
             my_free(cnx, unknowns[current_unknown++]);

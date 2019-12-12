@@ -1,5 +1,6 @@
 #include <picoquic.h>
 #include <getset.h>
+#include <zlib.h>
 #include "../gf256/swif_symbol.c"
 #include "../gf256/prng/tinymt32.c"
 #include "rlc_fec_scheme_gf256.h"
@@ -17,7 +18,7 @@ static inline void get_coefs(picoquic_cnx_t *cnx, tinymt32_t *prng, uint32_t see
 }
 
 /**
- * fec_block_t* fec_block = (fec_block_t *) cnx->protoop_inputv[0];
+ *
  *
  * Output: return code (int)
  */
@@ -25,11 +26,12 @@ protoop_arg_t get_one_coded_symbol(picoquic_cnx_t *cnx)
 {
 
     rlc_gf256_fec_scheme_t *fs = (rlc_gf256_fec_scheme_t *) get_cnx(cnx, AK_CNX_INPUT, 0);
-    window_source_symbol_t **source_symbols = (window_source_symbol_t **) get_cnx(cnx, AK_CNX_INPUT, 1);
+    source_symbol_t **source_symbols = (source_symbol_t **) get_cnx(cnx, AK_CNX_INPUT, 1);
     uint16_t n_source_symbols = (uint16_t ) get_cnx(cnx, AK_CNX_INPUT, 2);
     window_repair_symbol_t **repair_symbols = (window_repair_symbol_t **) get_cnx(cnx, AK_CNX_INPUT, 3);
     uint16_t n_symbols_to_generate = (uint16_t ) get_cnx(cnx, AK_CNX_INPUT, 4);
     uint16_t symbol_size = (uint16_t) get_cnx(cnx, AK_CNX_INPUT, 5);
+    window_source_symbol_id_t first_protected_id = (window_source_symbol_id_t) get_cnx(cnx, AK_CNX_INPUT, 6);
 
 
 
@@ -52,13 +54,14 @@ protoop_arg_t get_one_coded_symbol(picoquic_cnx_t *cnx)
     for (int i = 0 ; i < n_source_symbols ; i++) {
         knowns[i] = my_malloc(cnx, symbol_size);
         my_memset(knowns[i], 0, symbol_size);
-        my_memcpy(knowns[i], source_symbols[i]->source_symbol._whole_data, symbol_size);
+        my_memcpy(knowns[i], source_symbols[i]->_whole_data, symbol_size);
     }
 
 
 
     uint32_t first_seed = fs->current_repair_symbol;
     for (int i = 0 ; i < n_symbols_to_generate ; i++) {
+        PROTOOP_PRINTF(cnx, "EQUATION %d\n", i);
         uint32_t seed = fs->current_repair_symbol++;
 
         // generate one symbol
@@ -67,14 +70,15 @@ protoop_arg_t get_one_coded_symbol(picoquic_cnx_t *cnx)
         if (!rs)
             return PICOQUIC_ERROR_MEMORY;
         for (int j = 0 ; j < n_source_symbols ; j++) {
+            PROTOOP_PRINTF(cnx, "SYMBOL %d, COEF %d, CRC = 0x%x\n", first_protected_id + j, coefs[j], crc32(0, source_symbols[j]->_whole_data, symbol_size));
             symbol_add_scaled(rs->repair_symbol.repair_payload, coefs[j], knowns[j], symbol_size, mul);
         }
         rs->metadata.n_protected_symbols = n_source_symbols;
-        rs->metadata.first_id = source_symbols[0]->id;
+        rs->metadata.first_id = first_protected_id;
         rs->repair_symbol.payload_length = symbol_size;
         encode_u32(seed, rs->metadata.fss.val);
         repair_symbols[i] = rs;
-
+        PROTOOP_PRINTF(cnx, "GENERATED RS CRC = 0x%x\n", crc32(0, rs->repair_symbol.repair_payload, rs->repair_symbol.payload_length));
     }
     // done
 

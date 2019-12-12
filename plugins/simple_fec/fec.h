@@ -194,7 +194,6 @@ static __attribute__((always_inline)) int preprocess_packet_payload(picoquic_cnx
     uint8_t type_byte;
     while(offset_in_packet_payload < payload_length) {
         my_memcpy(&type_byte, &packet_payload[offset_in_packet_payload], sizeof(uint8_t));
-        // TODO: voir pk consumed fait 1400 bytes, printer e type byte
 //        type_byte = packet_payload[offset_in_packet_payload];
 //        bool to_ignore = type_byte == picoquic_frame_type_ack || type_byte == picoquic_frame_type_padding || type_byte == picoquic_frame_type_crypto_hs || type_byte == FRAME_FEC_SRC_FPI;
         bool to_ignore = !PICOQUIC_IN_RANGE(type_byte, picoquic_frame_type_stream_range_min, picoquic_frame_type_stream_range_max);
@@ -222,6 +221,7 @@ static __attribute__((always_inline)) source_symbol_t **packet_payload_to_source
     if (!processed_payload) {
         return NULL;
     }
+    my_memset(processed_payload, 0, payload_length + sizeof(uint64_t));
     uint16_t chunk_size = symbol_size - 1;
     // add the packet number at the beginning of the payload we do it anyway, even if the design allows us to not encode it
     encode_u64(packet_number, processed_payload);
@@ -289,7 +289,7 @@ static __attribute__((always_inline)) int maybe_notify_recovered_packets_to_ever
         uint64_t current_pn64 = get_pkt(current_packet, AK_PKT_SEQUENCE_NUMBER);
         if (current_pn64 == peek_first_recovered_packet_in_buffer(b)) {
             int timer_based = 0;
-            if (!helper_retransmit_needed_by_packet(cnx, current_packet, current_time, &timer_based, NULL)) {
+            if (!helper_retransmit_needed_by_packet(cnx, current_packet, current_time, &timer_based, NULL, NULL)) {
                 // we don't need to notify it now: the packet is not considered as lost
                 // don't try any subsequenc packets as they have been sent later
                 break;

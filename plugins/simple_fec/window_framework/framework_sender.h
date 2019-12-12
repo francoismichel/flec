@@ -389,7 +389,7 @@ static __attribute__((always_inline)) void remove_source_symbols_from_window(pic
 static __attribute__((always_inline)) int generate_and_queue_repair_symbols(picoquic_cnx_t *cnx, window_fec_framework_t *wff, bool flush,
                                                                             uint16_t n_symbols_to_generate, uint16_t symbol_size,
                                                                             bool protect_subset, window_source_symbol_id_t first_id, uint16_t n_source_symbols_to_protect){
-    protoop_arg_t args[6];
+    protoop_arg_t args[7];
     protoop_arg_t outs[2];
 
     // build the block to generate the symbols
@@ -447,7 +447,8 @@ static __attribute__((always_inline)) int generate_and_queue_repair_symbols(pico
         args[3] = (protoop_arg_t) repair_symbols;
         args[4] = (protoop_arg_t) n_symbols_to_generate;
         args[5] = (protoop_arg_t) symbol_size;
-        ret = (int) run_noparam(cnx, "fec_generate_repair_symbols", 6, args, outs);
+        args[6] = (protoop_arg_t) first_protected_id;
+        ret = (int) run_noparam(cnx, "fec_generate_repair_symbols", 7, args, outs);
         window_fec_scheme_specific_t first_fec_scheme_specific;
         first_fec_scheme_specific.val_big_endian = (uint32_t) outs[0];
         uint16_t n_symbols_generated = outs[1];
@@ -644,7 +645,7 @@ static __attribute__((always_inline)) void window_maybe_notify_recovered_packets
         uint64_t current_pn64 = get_pkt(current_packet, AK_PKT_SEQUENCE_NUMBER);
         if (current_pn64 == peek_first_recovered_packet_in_buffer(b)) {
             int timer_based = 0;
-            if (!helper_retransmit_needed_by_packet(cnx, current_packet, current_time, &timer_based, NULL)) {
+            if (!helper_retransmit_needed_by_packet(cnx, current_packet, current_time, &timer_based, NULL, NULL)) {
                 // we don't need to notify it now: the packet is not considered as lost
                 // don't try any subsequenc packets as they have been sent later
                 break;

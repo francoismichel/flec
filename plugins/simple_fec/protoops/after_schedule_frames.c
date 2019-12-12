@@ -23,6 +23,7 @@ protoop_arg_t schedule_frames_on_path(picoquic_cnx_t *cnx)
 {
     picoquic_packet_t *packet = (picoquic_packet_t *) get_cnx(cnx, AK_CNX_INPUT, 0);
     picoquic_packet_t *retransmit_p = (picoquic_packet_t *) get_cnx(cnx, AK_CNX_INPUT, 3);
+    picoquic_path_t *path = (picoquic_path_t *) get_cnx(cnx, AK_CNX_OUTPUT, 0);
     uint32_t length = get_cnx(cnx, AK_CNX_OUTPUT, 1);
     // set the current fpid
     plugin_state_t *state = get_plugin_state(cnx);
@@ -51,7 +52,7 @@ protoop_arg_t schedule_frames_on_path(picoquic_cnx_t *cnx)
             set_pkt_metadata(cnx, packet, FEC_PKT_METADATA_FLAGS, packet_flags | FEC_PKT_METADATA_FLAG_IS_FEC_PROTECTED);
             set_pkt_metadata(cnx, packet, FEC_PKT_METADATA_FIRST_SOURCE_SYMBOL_ID, id);
             set_pkt_metadata(cnx, packet, FEC_PKT_METADATA_NUMBER_OF_SOURCE_SYMBOLS, n_symbols);
-            fec_sent_packet(cnx, packet, true, false, false);
+            fec_sent_packet(cnx, path, packet, true, false, false);
         }
 
     } else if (state->has_written_repair_frame || state->has_written_fb_fec_repair_frame) {
@@ -63,7 +64,7 @@ protoop_arg_t schedule_frames_on_path(picoquic_cnx_t *cnx)
         set_pkt_metadata(cnx, packet, FEC_PKT_METADATA_NUMBER_OF_REPAIR_SYMBOLS, state->current_repair_frame_n_repair_symbols);
         if (state->has_written_fb_fec_repair_frame)
             set_pkt_metadata(cnx, packet, FEC_PKT_METADATA_FLAGS, packet_flags | FEC_PKT_METADATA_FLAG_IS_FB_FEC);
-        fec_sent_packet(cnx, packet, false, true, state->has_written_fb_fec_repair_frame);
+        fec_sent_packet(cnx, path, packet, false, true, state->has_written_fb_fec_repair_frame);
     }
     packet_flags = get_pkt_metadata(cnx, packet, FEC_PKT_METADATA_FLAGS);
     if (state->has_written_recovered_frame) {
@@ -75,14 +76,13 @@ protoop_arg_t schedule_frames_on_path(picoquic_cnx_t *cnx)
     state->has_written_recovered_frame = false;
 
     // maybe wake now if slots are still available
-    picoquic_path_t *path = (picoquic_path_t *) get_cnx(cnx, AK_CNX_PATH, 0);
     bool slot_available = get_path(path, AK_PATH_CWIN, 0) > get_path(path, AK_PATH_BYTES_IN_TRANSIT, 0);
 
     picoquic_state_enum cnx_state = get_cnx(cnx, AK_CNX_STATE, 0);
     // TODO: remove first part of if
-    if (cnx_state == picoquic_state_server_ready && !run_noparam(cnx, FEC_PROTOOP_HAS_PROTECTED_DATA_TO_SEND, 0, NULL, NULL) && slot_available && state->n_reserved_id_or_repair_frames == 0) {
-        reserve_repair_frames(cnx, state->framework_sender, DEFAULT_SLOT_SIZE, state->symbol_size, false, false, 0, 0);
-        picoquic_frame_fair_reserve(cnx, path, NULL, get_path(path, AK_PATH_SEND_MTU, 0) - 35);
-    }
+//    if (cnx_state == picoquic_state_server_ready && !run_noparam(cnx, FEC_PROTOOP_HAS_PROTECTED_DATA_TO_SEND, 0, NULL, NULL) && slot_available && state->n_reserved_id_or_repair_frames == 0) {
+//        reserve_repair_frames(cnx, state->framework_sender, DEFAULT_SLOT_SIZE, state->symbol_size, false, false, 0, 0);
+//        picoquic_frame_fair_reserve(cnx, path, NULL, get_path(path, AK_PATH_SEND_MTU, 0) - 35);
+//    }
     return 0;
 }

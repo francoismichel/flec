@@ -17,6 +17,7 @@ protoop_arg_t causal_sent_packet(picoquic_cnx_t *cnx) {
     bool fec_protected = (bool) get_cnx(cnx, AK_CNX_INPUT, 1);
     bool contains_repair_frame = (bool) get_cnx(cnx, AK_CNX_INPUT, 2);
     bool is_fb_fec = (bool) get_cnx(cnx, AK_CNX_INPUT, 3);
+    picoquic_path_t *path = (picoquic_path_t *) get_cnx(cnx, AK_CNX_INPUT, 4);
     window_source_symbol_id_t first_id = get_pkt_metadata(cnx, packet, FEC_PKT_METADATA_FIRST_SOURCE_SYMBOL_ID);
     uint16_t n_source_symbols = get_pkt_metadata(cnx, packet, FEC_PKT_METADATA_NUMBER_OF_SOURCE_SYMBOLS);
     causal_packet_type_t ptype;
@@ -40,6 +41,6 @@ protoop_arg_t causal_sent_packet(picoquic_cnx_t *cnx) {
         md.repair_metadata.is_fb_fec = is_fb_fec;
         PROTOOP_PRINTF(cnx, "SENT REPAIR PACKET, SLOT = %d, [%u, %u]\n", get_pkt_metadata(cnx, packet, FEC_PKT_METADATA_SENT_SLOT), md.repair_metadata.first_protected_source_symbol_id, md.repair_metadata.first_protected_source_symbol_id + md.repair_metadata.n_protected_source_symbols);
     }
-    sent_packet(cnx, ((window_fec_framework_t *) state->framework_sender)->controller, ptype, get_pkt_metadata(cnx, packet, FEC_PKT_METADATA_SENT_SLOT), md);
+    sent_packet(cnx, path, ((window_fec_framework_t *) state->framework_sender)->controller, ptype, get_pkt_metadata(cnx, packet, FEC_PKT_METADATA_SENT_SLOT), md);
     return 0;
 }

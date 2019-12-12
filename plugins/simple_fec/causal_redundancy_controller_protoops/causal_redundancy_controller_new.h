@@ -63,8 +63,17 @@ typedef struct {
     uint32_t k, m;
     uint64_t n_received_feedbacks;
     available_slot_reason_t last_feedback;
+    // FIXME: assumes single-path context, we should have 1 sample point per path
+    uint64_t last_bandwidth_check_timestamp_microsec;
+    uint64_t n_bytes_sent_since_last_bandwidth_check;
+    uint64_t last_bytes_sent_sample;
+    uint64_t last_bytes_sent_sampling_period_microsec;
     bool flush_dof_mode;
 } causal_redundancy_controller_t;
+
+// bandwidth defines a bandwidth metric
+// should only be used relatively (ratio) to another bandwidth
+typedef uint64_t bandwidth_t;
 
 static __attribute__((always_inline)) buffer_t *create_buffer(picoquic_cnx_t *cnx, int max_size) {
     if (max_size > MAX_SLOTS || !max_size) return NULL;
@@ -320,25 +329,42 @@ static __attribute__((always_inline)) bool EW(causal_redundancy_controller_t *co
     return !is_window_empty(current_window) && ((uint64_t)(current_window->end-1)) % ((uint64_t)controller->k) == 0 /*&& ((int64_t) current_window->end - (int64_t) current_window->start >= controller->k)*/ && (current_window->end-1) - controller->latest_symbol_protected_by_fec >= controller->k;
 }
 
-static __attribute__((always_inline)) bool threshold_exceeded(causal_redundancy_controller_t *controller) {
-    int64_t diff = (r_times_granularity(controller) - controller->d_times_granularity) - controller->threshold_times_granularity;
+static __attribute__((always_inline)) bool threshold_exceeded(picoquic_cnx_t *cnx, causal_redundancy_controller_t *controller, bandwidth_t available_bandwidth, bandwidth_t used_bandwidth) {
+
+    // FIXME: possible wrap-around depending on the values and granularity
+    int64_t bw_ratio_times_granularity = (used_bandwidth > 0) ? ((GRANULARITY*available_bandwidth)/used_bandwidth) : 0;
+    // old way: only check the threshold
+//    int64_t diff = (r_times_granularity(controller) - controller->d_times_granularity) - controller->threshold_times_granularity;
+// new way: take the available bandwidth into account in the threshold
+    int64_t diff = (r_times_granularity(controller) - controller->d_times_granularity) - (controller->threshold_times_granularity + (bw_ratio_times_granularity - GRANULARITY));
     diff = diff > 0 ? diff : -diff;
     // handling precision errors
     if (diff < 2){
         return false;
     }
+    // old way
     return r_times_granularity(controller) - controller->d_times_granularity > controller->threshold_times_granularity;
+// new way
+//    return r_times_granularity(controller) - controller->d_times_granularity > (controller->threshold_times_granularity + (bw_ratio_times_granularity - GRANULARITY));
 }
 
-static __attribute__((always_inline)) bool threshold_strictly_greater(causal_redundancy_controller_t *controller) {
-    int64_t diff = (r_times_granularity(controller) - controller->d_times_granularity) - controller->threshold_times_granularity;
+static __attribute__((always_inline)) bool threshold_strictly_greater(picoquic_cnx_t *cnx, causal_redundancy_controller_t *controller, bandwidth_t available_bandwidth, bandwidth_t used_bandwidth) {
+    // FIXME: possible wrap-around depending on the values and granularity
+    int64_t bw_ratio_times_granularity = (used_bandwidth > 0) ? ((GRANULARITY*available_bandwidth)/used_bandwidth) : 0;
+    // old way: only check the threshold
+//    int64_t diff = (r_times_granularity(controller) - controller->d_times_granularity) - controller->threshold_times_granularity;
+// new way: take the available bandwidth into account in the threshold
+    int64_t diff = (r_times_granularity(controller) - controller->d_times_granularity) - (controller->threshold_times_granularity + (bw_ratio_times_granularity - GRANULARITY));
     diff = diff > 0 ? diff : -diff;
     // handling precision errors
     if (diff < 2){
         return false;
     }
-
+    PROTOOP_PRINTF(cnx, "%ld - %ld <? (%ld + %ld) => %d\n", r_times_granularity(controller), controller->d_times_granularity, controller->threshold_times_granularity, (bw_ratio_times_granularity - GRANULARITY), (r_times_granularity(controller) - controller->d_times_granularity < (controller->threshold_times_granularity + (bw_ratio_times_granularity - GRANULARITY))));
+// old way:
     return r_times_granularity(controller) - controller->d_times_granularity < controller->threshold_times_granularity;
+// new way;
+//    return r_times_granularity(controller) - controller->d_times_granularity < (controller->threshold_times_granularity + (bw_ratio_times_granularity - GRANULARITY));
 }
 
 static __attribute__((always_inline)) uint32_t compute_ad(picoquic_cnx_t *cnx, causal_redundancy_controller_t *controller, fec_window_t *current_window) {
@@ -414,17 +440,30 @@ static __attribute__((always_inline)) causal_packet_type_t what_to_send(picoquic
 }
 
 
-static __attribute__((always_inline)) void sent_packet(picoquic_cnx_t *cnx, window_redundancy_controller_t c, causal_packet_type_t type, uint64_t slot, window_packet_metadata_t md) {
+static __attribute__((always_inline)) void sent_packet(picoquic_cnx_t *cnx, picoquic_path_t *path, window_redundancy_controller_t c, causal_packet_type_t type, uint64_t slot, window_packet_metadata_t md) {
     causal_redundancy_controller_t *controller = (causal_redundancy_controller_t *) c;
     add_elem_to_history(controller->slots_history, slot, md);
+    uint64_t n_bytes_sent = 0;
     fec_window_t window;
     if (type == new_rlnc_packet) {
         window.start = md.source_metadata.first_symbol_id;
         window.end = window.start + md.source_metadata.number_of_symbols;
+        n_bytes_sent = md.source_metadata.number_of_symbols*SYMBOL_SIZE;
     } else {
         window.start = md.repair_metadata.first_protected_source_symbol_id;
         window.end = window.start + md.repair_metadata.n_protected_source_symbols;
+        n_bytes_sent = md.repair_metadata.number_of_repair_symbols*SYMBOL_SIZE;
     }
+
+    uint64_t now = picoquic_current_time();
+    if (now - controller->last_bandwidth_check_timestamp_microsec > get_path(path, AK_PATH_SMOOTHED_RTT, 0)) {
+        controller->last_bytes_sent_sampling_period_microsec = now - controller->last_bandwidth_check_timestamp_microsec;
+        controller->last_bytes_sent_sample = controller->n_bytes_sent_since_last_bandwidth_check;
+        controller->n_bytes_sent_since_last_bandwidth_check = 0;
+        controller->last_bandwidth_check_timestamp_microsec = now;
+    }
+
+    controller->n_bytes_sent_since_last_bandwidth_check += n_bytes_sent;
     PROTOOP_PRINTF(cnx, "SENT PACKET, TYPE = %d, SLOT %lu\n", type, slot);
     if (false && !EW(controller, &window)) {
         controller->latest_symbol_protected_by_fec = (((uint64_t) (window.end-1))/((uint64_t)controller->k))*controller->k;
@@ -443,18 +482,27 @@ static __attribute__((always_inline)) void sent_packet(picoquic_cnx_t *cnx, wind
     }
 }
 
+#define SECOND_IN_MICROSEC 1000000
+
 // either acked or recovered
-static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, causal_redundancy_controller_t *controller, available_slot_reason_t feedback, fec_window_t *current_window) {
+static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, picoquic_path_t *path, causal_redundancy_controller_t *controller, available_slot_reason_t feedback, fec_window_t *current_window) {
 
     PROTOOP_PRINTF(cnx, "CURRENT WINDOW = [%u, %u[\n", current_window->start, current_window->end);
-    picoquic_path_t *path = (picoquic_path_t *) get_cnx(cnx, AK_CNX_PATH, 0);
     uint64_t cwin_max_slots = get_path((picoquic_path_t *) path, AK_PATH_CWIN, 0)/get_path((picoquic_path_t *) path, AK_PATH_SEND_MTU, 0);
+    // FIXME: wrap-around when the sampling period or bytes sent are too high
+    bandwidth_t available_bandwidth_bytes_per_second = get_path((picoquic_path_t *) path, AK_PATH_CWIN, 0)*SECOND_IN_MICROSEC/get_path(path, AK_PATH_SMOOTHED_RTT, 0);
+    // we take the between the last sampling point and the current bandwidth induced by the bytes in flight
+//    bandwidth_t used_bandwidth_bytes_per_second = MAX(controller->last_bytes_sent_sample*SECOND_IN_MICROSEC/controller->last_bytes_sent_sampling_period_microsec,
+//                                                        get_path(path, AK_PATH_BYTES_IN_TRANSIT, 0)*SECOND_IN_MICROSEC/get_path(path, AK_PATH_SMOOTHED_RTT, 0));
+    bandwidth_t used_bandwidth_bytes_per_second = get_path(path, AK_PATH_BYTES_IN_TRANSIT, 0)*SECOND_IN_MICROSEC/get_path(path, AK_PATH_SMOOTHED_RTT, 0);
+    int64_t bw_ratio_times_granularity = (used_bandwidth_bytes_per_second > 0) ? ((GRANULARITY*available_bandwidth_bytes_per_second)/used_bandwidth_bytes_per_second) : 0;
     // FIXME: experimental: set k according to the cwin, but bound it to the buffer length: we cannot store more than MAX_SENDING_WINDOW_SIZE, and sometimes the window length will be 2*k
     controller->k = MIN(MAX_SENDING_WINDOW_SIZE/2 - 1, 1 + cwin_max_slots);
     controller->md = compute_md(cnx, controller, current_window);
     controller->ad = compute_ad(cnx, controller, current_window);
     uint64_t ad = (controller->ad != 0) ? controller->ad : 1;
     controller->d_times_granularity = ((((uint64_t) controller->md*GRANULARITY))/((uint64_t) (ad)));
+    PROTOOP_PRINTF(cnx, "USED BW = %lu, BW_RATIO = %lu, RECEIVE RATE = %lu, DOF_RATIO = %lu/%lu = %lu\n", used_bandwidth_bytes_per_second, GRANULARITY*available_bandwidth_bytes_per_second/used_bandwidth_bytes_per_second, r_times_granularity(controller), controller->md, ad, controller->d_times_granularity);
     bool added_new_packet = false;
     int i;
     if (is_buffer_empty(controller->what_to_send)) {
@@ -467,7 +515,8 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, causal_
                 add_elem_to_buffer(controller->what_to_send, fb_fec_packet);
                 controller->ad++;
             } else {
-                PROTOOP_PRINTF(cnx, "EVENT::{\"time\": %ld, \"type\": \"algo\", \"feedback\": %d, \"ad\": %ld, \"md\": %ld, \"d\": %ld, \"k\": %ld, \"threshold\": %ld, \"r\": %ld}\n", picoquic_current_time(), feedback, controller->ad, controller->md, controller->d_times_granularity, controller->k, controller->threshold_times_granularity, r_times_granularity(controller));
+
+                PROTOOP_PRINTF(cnx, "EVENT::{\"time\": %ld, \"type\": \"algo\", \"feedback\": %d, \"ad\": %ld, \"md\": %ld, \"d\": %ld, \"k\": %ld, \"threshold\": %ld, \"r\": %ld}\n", picoquic_current_time(), controller->last_feedback, controller->ad, controller->md, controller->d_times_granularity, controller->k, controller->threshold_times_granularity, r_times_granularity(controller));
                 switch (controller->last_feedback) {
                     case available_slot_reason_none:
                         if (EW(controller, current_window)) {
@@ -482,7 +531,7 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, causal_
                         }
                         break;
                     case available_slot_reason_nack:
-                        if ((controller->d_times_granularity == -1 || threshold_exceeded(controller))) {
+                        if ((controller->d_times_granularity == -1 || threshold_exceeded(cnx, controller, available_bandwidth_bytes_per_second, used_bandwidth_bytes_per_second))) {
                             if (!EW(controller, current_window)) {
                                 // TODO: first check if new data are available to send ?
                                 added_new_packet = true;
@@ -505,13 +554,15 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, causal_
                         }
                         break;
                     case available_slot_reason_ack:
-                        if (EW(controller, current_window)) {
+                        if (false && EW(controller, current_window)) {
+                            PROTOOP_PRINTF(cnx, "EW !");
                             for (i = 0; i < controller->m; i++) {
                                 add_elem_to_buffer(controller->what_to_send, fec_packet);
                             }
                             controller->ad += controller->m;
                         } else {
-                            if (threshold_strictly_greater(controller)) {
+                            PROTOOP_PRINTF(cnx, "HAS PROTECTED DATA TO SEND %d\n", fec_has_protected_data_to_send(cnx));
+                            if (threshold_strictly_greater(cnx, controller, available_bandwidth_bytes_per_second, used_bandwidth_bytes_per_second) || (!fec_has_protected_data_to_send(cnx) && bw_ratio_times_granularity > (GRANULARITY + GRANULARITY/10))) {
                                 add_elem_to_buffer(controller->what_to_send, fec_packet);
                                 controller->ad++;
                             } else {

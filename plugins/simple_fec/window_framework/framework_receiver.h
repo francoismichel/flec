@@ -1,3 +1,4 @@
+#include <zlib.h>
 #include "../../helpers.h"
 #include "window_receive_buffers.h"
 #include "types.h"
@@ -266,9 +267,8 @@ static __attribute__((always_inline)) bool reassemble_packet_from_recovered_symb
 //            // packet too big, should never happen
 //            return false;
 //        }
-
         // we skip the packet number if it is present in the symbol
-        uint8_t data_offset = get_ss_metadata_N(&source_symbols[i]->source_symbol) ? sizeof(uint64_t) : 0;
+        size_t data_offset = get_ss_metadata_N(&source_symbols[i]->source_symbol) ? sizeof(uint64_t) : 0;
         // FIXME: this might be a bad idea to interfere with the packet payload and remove the padding, but it is needed due to the maximum mallocable size...
         for (int j = data_offset ; j < source_symbols[i]->source_symbol.chunk_size ; j++) {
             // skip padding
@@ -350,6 +350,8 @@ static __attribute__((always_inline)) int try_to_recover(picoquic_cnx_t *cnx, wi
             PROTOOP_PRINTF(cnx, "BEFORE REASSEMBLE\n");
             if (reassemble_packet_from_recovered_symbol(cnx, wff, recovered_packet, PICOQUIC_MAX_PACKET_SIZE, wff->ss_recovery_buffer, selected_source_symbols,
                                                         wff->missing_symbols_buffer[i] - first_selected_id, &packet_size, &packet_number, &first_id_in_packet)) {
+                window_source_symbol_t *ss = wff->ss_recovery_buffer[wff->missing_symbols_buffer[i] - first_selected_id];
+                PROTOOP_PRINTF(cnx, "REASSEMBLED SIZE = %lu, CRC OF SYMBOL = 0x%x\n", packet_size, crc32(0, ss->source_symbol._whole_data, symbol_size));
                 // TODO: maybe process the packets at another moment ??
                 // FIXME: we assume here a single-path context
 
