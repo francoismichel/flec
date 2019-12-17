@@ -41,6 +41,8 @@ protoop_arg_t available_slot(picoquic_cnx_t *cnx) {
                 err = reserve_fpi_frame(cnx, state);
                 break;
             }
+            // do not flush, let the algo do the flushing
+            break;
             // otherwise, we fallthrough and send a repair symbol
         case what_to_send_feedback_implied_repair_symbol:
         case what_to_send_repair_symbol: {
