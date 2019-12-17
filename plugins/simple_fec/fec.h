@@ -9,7 +9,7 @@
 #include "fec_constants.h"
 #include "utils.h"
 
-#define SIMPLE_FEC_OPAQUE_ID 10
+#define SIMPLE_FEC_STATE_METADATA_IDX 0
 
 typedef struct {
     bool has_written_fpi_frame;
@@ -82,13 +82,15 @@ static __attribute__((always_inline)) plugin_state_t *initialize_plugin_state(pi
 
 static __attribute__((always_inline)) plugin_state_t *get_plugin_state(picoquic_cnx_t *cnx)
 {
-    int allocated = 0;
-    plugin_state_t **state_ptr = (plugin_state_t **) get_opaque_data(cnx, SIMPLE_FEC_OPAQUE_ID, sizeof(plugin_state_t *), &allocated);
-    if (!state_ptr) return NULL;
-    if (allocated) {
-        *state_ptr = initialize_plugin_state(cnx);
+
+
+    plugin_state_t *state_ptr = (plugin_state_t *) get_cnx_metadata(cnx, SIMPLE_FEC_STATE_METADATA_IDX);
+    if (!state_ptr) {
+        state_ptr = initialize_plugin_state(cnx);
+        set_cnx_metadata(cnx, SIMPLE_FEC_STATE_METADATA_IDX, (protoop_arg_t) state_ptr);
+
     }
-    return *state_ptr;
+    return state_ptr;
 }
 
 
