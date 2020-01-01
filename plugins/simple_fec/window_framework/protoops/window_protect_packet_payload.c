@@ -20,8 +20,9 @@ protoop_arg_t protect_packet_payload_protoop(picoquic_cnx_t *cnx) {
     source_symbol_id_t first_symbol_id = 0;
     uint16_t n_symbols = 0;
 
+    symbol_deadline_t deadline = ((window_fec_framework_t *) state->framework_sender)->min_deadline_in_current_packet;
     int err = window_protect_packet_payload(cnx, (window_fec_framework_t *) state->framework_sender, payload, payload_length,
-            packet_number, &first_symbol_id, &n_symbols, state->symbol_size);
+            packet_number, &first_symbol_id, &n_symbols, state->symbol_size, deadline);
     set_cnx(cnx, AK_CNX_OUTPUT, 0, first_symbol_id);
     set_cnx(cnx, AK_CNX_OUTPUT, 1, n_symbols);
     return err;

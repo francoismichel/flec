@@ -18,10 +18,22 @@ static __attribute__((always_inline)) void swap(uint8_t **a, int i, int j) {
 // returns 1 if a has its first non-zero term before b
 // returns -1 if a has its first non-zero term after b
 // returns 0 otherwise
-static __attribute__((always_inline)) int cmp_eq(uint8_t *a, uint8_t *b, int idx, int n_unknowns) {
+static __attribute__((always_inline)) int cmp_eq_i(uint8_t *a, uint8_t *b, int idx, int n_unknowns) {
     if (a[idx] < b[idx]) return -1;
     else if (a[idx] > b[idx]) return 1;
     else if (a[idx] != 0) return 0;
+    return 0;
+}
+// returns 1 if a has its first non-zero term before b
+// returns -1 if a has its first non-zero term after b
+// returns 0 otherwise
+static __attribute__((always_inline)) int cmp_eq(uint8_t *a, uint8_t *b, int idx, int n_unknowns) {
+    for (int i = 0 ; i < n_unknowns ; i++) {
+        int cmp = 0;
+        if ((cmp = cmp_eq_i(a, b, i, n_unknowns)) != 0) {
+            return cmp;
+        }
+    }
     return 0;
 }
 
@@ -60,6 +72,7 @@ This program uses the first option.
 ********/
 static __attribute__((always_inline)) void gaussElimination(picoquic_cnx_t *cnx, int n_eq, int n_unknowns, uint8_t **a, uint8_t *constant_terms[n_eq], uint8_t *x[n_eq], bool undetermined[n_unknowns], uint32_t symbol_size, uint8_t **mul, uint8_t *inv){
 
+    PROTOOP_PRINTF(cnx, "START GAUSSIAN\n");
     sort_system(cnx, a, constant_terms, n_eq, n_unknowns);
 
 
@@ -82,6 +95,12 @@ static __attribute__((always_inline)) void gaussElimination(picoquic_cnx_t *cnx,
         }
     }
     sort_system(cnx, a, constant_terms, n_eq, n_unknowns);
+    PROTOOP_PRINTF(cnx, "PRINTING SYSTEM\n");
+    for (int g = 0 ; g < n_eq ; g++) {
+        for (int h = 0 ; h < n_unknowns ; h++) {
+            PROTOOP_PRINTF(cnx, "a[%d][%d] = %d\n", g, h, a[g][h]);
+        }
+    }
     int candidate = n_unknowns - 1;
     //Begin Back-substitution
     for(i=n_eq-1;i>=0;i--){
@@ -95,6 +114,11 @@ static __attribute__((always_inline)) void gaussElimination(picoquic_cnx_t *cnx,
         if (!only_zeroes) {
             while(a[i][candidate] == 0 && candidate >= 0) {
                 undetermined[candidate--] = true;
+            }
+            if (candidate < 0) {
+                // the system cannot be fully recovered, but maybe some parts could be
+                PROTOOP_PRINTF(cnx, "THE SYSTEM IS AT LEAST PARTIALLY UNDETERMINED\n");
+                break;
             }
             my_memcpy(x[candidate], constant_terms[i], symbol_size);
             for (int j = 0 ; j < candidate ; j++) {
@@ -130,6 +154,7 @@ static __attribute__((always_inline)) void gaussElimination(picoquic_cnx_t *cnx,
             candidate--;
         }
     }
+    PROTOOP_PRINTF(cnx, "END GAUSSIAN\n");
     // it marks all the variables with an index <= candidate as undetermined
     // we use a my_memset although it is harder to understand because with a for loop, the compiler will translate it into a call to memset
     if (candidate >= 0) {
@@ -174,6 +199,8 @@ protoop_arg_t fec_recover(picoquic_cnx_t *cnx)
     window_source_symbol_id_t *missing_source_symbols = (window_source_symbol_id_t *) get_cnx(cnx, AK_CNX_INPUT, 6);
     window_source_symbol_id_t smallest_protected = (window_source_symbol_id_t) get_cnx(cnx, AK_CNX_INPUT, 7);
     uint16_t symbol_size = (uint16_t) get_cnx(cnx, AK_CNX_INPUT, 8);
+
+    PROTOOP_PRINTF(cnx, "%d MISSING SOURCE SYMBOLS, TOTAL SYMBOLS = %d\n", n_missing_source_symbols, n_source_symbols);
 
     window_repair_symbol_t *rs;
 
@@ -298,9 +325,11 @@ protoop_arg_t fec_recover(picoquic_cnx_t *cnx)
         gaussElimination(cnx, n_effective_equations, n_missing_source_symbols, system_coefs, constant_terms, unknowns, undetermined, symbol_size, mul, fs->table_inv);
     else
         PROTOOP_PRINTF(cnx, "CANNOT RECOVER, %d EQUATIONS, %d MISSING SYMBOLS\n", n_effective_equations, n_missing_source_symbols);
+    PROTOOP_PRINTF(cnx, "END GAUSSIAN\n");
     int current_unknown = 0;
     int err = 0;
     for (int j = 0 ; j < n_source_symbols ; j++) {
+        PROTOOP_PRINTF(cnx, "FOR %d\n", j);
         if (!source_symbols[j] && can_recover && !undetermined[current_unknown] && !symbol_is_zero(unknowns[current_unknown], symbol_size)) {
             // TODO: handle the case where source symbols could be 0
             window_source_symbol_t *ss = create_window_source_symbol(cnx, symbol_size);
@@ -333,6 +362,6 @@ protoop_arg_t fec_recover(picoquic_cnx_t *cnx)
     my_free(cnx, coefs);
     my_free(cnx, undetermined);
     my_free(cnx, missing_indexes);
-
+    PROTOOP_PRINTF(cnx, "END RECOVER\n");
     return err;
 }

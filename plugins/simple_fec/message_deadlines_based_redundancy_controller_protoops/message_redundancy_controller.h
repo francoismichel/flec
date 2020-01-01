@@ -1,5 +1,5 @@
-#ifndef CAUSAL_REDUNDANCY_CONTROLLER_H
-#define CAUSAL_REDUNDANCY_CONTROLLER_H
+#ifndef MESSAGE_REDUNDANCY_CONTROLLER_H
+#define MESSAGE_REDUNDANCY_CONTROLLER_H
 #include "picoquic.h"
 #include "../fec.h"
 #include "../window_framework/types.h"
@@ -57,11 +57,7 @@ typedef struct {
     buffer_t *what_to_send;
     buffer_t *lost_and_non_fec_retransmitted_slots;
     slots_history_t *slots_history;
-    int64_t ad, md, n_lost_slots;
-    int64_t threshold_times_granularity;
-    int64_t d_times_granularity;
-    window_source_symbol_id_t latest_symbol_protected_by_fec;
-    uint32_t k, m;
+    int64_t n_lost_slots;
     uint64_t n_received_feedbacks;
     available_slot_reason_t last_feedback;
     // FIXME: assumes single-path context, we should have 1 sample point per path
@@ -69,11 +65,8 @@ typedef struct {
     uint64_t n_bytes_sent_since_last_bandwidth_check;
     uint64_t last_bytes_sent_sample;
     uint64_t last_bytes_sent_sampling_period_microsec;
-
-    uint64_t last_fully_protected_message_deadline;
-
     bool flush_dof_mode;
-    int64_t n_fec_in_flight;
+    int64_t n_non_fec_protectected_degrees; // ensure that we do not sent more FEC packets than there are non-FEC-protected DOFs in flight (FIXME: experimental...)
 } causal_redundancy_controller_t;
 
 // bandwidth defines a bandwidth metric
@@ -103,19 +96,7 @@ static __attribute__((always_inline)) void destroy_buffer(picoquic_cnx_t *cnx, b
 
 
 static __attribute__((always_inline)) void add_elem_to_buffer(buffer_t *buffer, buffer_elem_t slot) {
-    uint64_t idx = buffer->start + buffer->current_size;
-    idx = idx % (uint64_t) buffer->max_size;
-    buffer->elems[idx] = slot;
-    if (buffer->current_size == buffer->max_size) {
-        buffer->start = ((uint64_t)(buffer->start + 1)) % ((uint64_t)buffer->max_size);
-    } else {
-        buffer->current_size++;
-    }
-}
-static __attribute__((always_inline)) void add_elem_to_buffer2(picoquic_cnx_t *cnx, causal_redundancy_controller_t *controller, buffer_t *buffer, buffer_elem_t slot) {
-    uint64_t idx = buffer->start + buffer->current_size;
-    idx = idx % (uint64_t) buffer->max_size;
-    *(buffer->elems + idx) = slot;
+    buffer->elems[((uint64_t)(buffer->start + buffer->current_size)) % ((uint64_t)buffer->max_size)] = slot;
     if (buffer->current_size == buffer->max_size) {
         buffer->start = ((uint64_t)(buffer->start + 1)) % ((uint64_t)buffer->max_size);
     } else {
@@ -261,21 +242,14 @@ static __attribute__((always_inline)) int history_get_sent_slot_metadata(slots_h
 
 
 
-static __attribute__((always_inline)) causal_redundancy_controller_t *create_causal_redundancy_controller(picoquic_cnx_t *cnx, uint32_t threshold_times_granularity, uint32_t m, uint32_t k) {
+static __attribute__((always_inline)) causal_redundancy_controller_t *create_message_redundancy_controller(picoquic_cnx_t *cnx, uint32_t threshold_times_granularity, uint32_t m, uint32_t k) {
     causal_redundancy_controller_t *controller = my_malloc(cnx, sizeof(causal_redundancy_controller_t));
     if (!controller) return NULL;
     memset(controller, 0, sizeof(causal_redundancy_controller_t));
-    controller->k = k;
-    controller->threshold_times_granularity = threshold_times_granularity;
-    controller->m = m;
-    controller->last_fully_protected_message_deadline = UNDEFINED_SYMBOL_DEADLINE;
     controller->acked_slots = create_buffer(cnx, MAX_SLOTS);
     if (!controller->acked_slots) {
         my_free(cnx, controller);
     }
-    PROTOOP_PRINTF(cnx, "controller = %p, controller size = %lu, end = %p, acked slots = %p, acked_slots->elems = %p",
-            (protoop_arg_t) controller, sizeof(causal_redundancy_controller_t), (protoop_arg_t) ((uint8_t *) controller) + sizeof(causal_redundancy_controller_t),
-                   (protoop_arg_t) controller->acked_slots, (protoop_arg_t) controller->acked_slots->elems);
     controller->nacked_slots = create_buffer(cnx, MAX_SLOTS);
     if (!controller->nacked_slots) {
         destroy_buffer(cnx, controller->acked_slots);
@@ -335,7 +309,7 @@ static __attribute__((always_inline)) causal_redundancy_controller_t *create_cau
     return controller;
 }
 
-static __attribute__((always_inline)) void destroy_causal_redundancy_controller(picoquic_cnx_t *cnx, causal_redundancy_controller_t *controller) {
+static __attribute__((always_inline)) void destroy_message_redundancy_controller(picoquic_cnx_t *cnx, causal_redundancy_controller_t *controller) {
     destroy_buffer(cnx, controller->acked_slots);
     destroy_buffer(cnx, controller->nacked_slots);
     my_free(cnx, controller);
@@ -345,87 +319,6 @@ static __attribute__((always_inline)) int64_t r_times_granularity(causal_redunda
     if (controller->n_received_feedbacks == 0)
         return GRANULARITY;
     return GRANULARITY - ((uint64_t)(controller->n_lost_slots*GRANULARITY) / ((uint64_t)controller->n_received_feedbacks));
-}
-
-static __attribute__((always_inline)) bool EW(causal_redundancy_controller_t *controller, fec_window_t *current_window) {
-    return !is_window_empty(current_window) && ((uint64_t)(current_window->end-1)) % ((uint64_t)controller->k) == 0 /*&& ((int64_t) current_window->end - (int64_t) current_window->start >= controller->k)*/ && (current_window->end-1) - controller->latest_symbol_protected_by_fec >= controller->k;
-}
-
-static __attribute__((always_inline)) bool threshold_exceeded(picoquic_cnx_t *cnx, causal_redundancy_controller_t *controller, bandwidth_t available_bandwidth, bandwidth_t used_bandwidth) {
-
-    // FIXME: possible wrap-around depending on the values and granularity
-    int64_t bw_ratio_times_granularity = (used_bandwidth > 0) ? ((GRANULARITY*available_bandwidth)/used_bandwidth) : 0;
-    // old way: only check the threshold
-//    int64_t diff = (r_times_granularity(controller) - controller->d_times_granularity) - controller->threshold_times_granularity;
-// new way: take the available bandwidth into account in the threshold
-    int64_t diff = (r_times_granularity(controller) - controller->d_times_granularity) - (controller->threshold_times_granularity + (bw_ratio_times_granularity - GRANULARITY));
-    diff = diff > 0 ? diff : -diff;
-    // handling precision errors
-    if (diff < 2){
-        return false;
-    }
-    // old way
-    return r_times_granularity(controller) - controller->d_times_granularity > controller->threshold_times_granularity;
-// new way
-//    return r_times_granularity(controller) - controller->d_times_granularity > (controller->threshold_times_granularity + (bw_ratio_times_granularity - GRANULARITY));
-}
-
-static __attribute__((always_inline)) bool threshold_strictly_greater(picoquic_cnx_t *cnx, causal_redundancy_controller_t *controller, bandwidth_t available_bandwidth, bandwidth_t used_bandwidth) {
-    // FIXME: possible wrap-around depending on the values and granularity
-    int64_t bw_ratio_times_granularity = (used_bandwidth > 0) ? ((GRANULARITY*available_bandwidth)/used_bandwidth) : 0;
-    // old way: only check the threshold
-//    int64_t diff = (r_times_granularity(controller) - controller->d_times_granularity) - controller->threshold_times_granularity;
-// new way: take the available bandwidth into account in the threshold
-    int64_t diff = (r_times_granularity(controller) - controller->d_times_granularity) - (controller->threshold_times_granularity + (bw_ratio_times_granularity - GRANULARITY));
-    diff = diff > 0 ? diff : -diff;
-    // handling precision errors
-    if (diff < 2){
-        return false;
-    }
-    PROTOOP_PRINTF(cnx, "%ld - %ld <? (%ld + %ld) => %d\n", r_times_granularity(controller), controller->d_times_granularity, controller->threshold_times_granularity, (bw_ratio_times_granularity - GRANULARITY), (r_times_granularity(controller) - controller->d_times_granularity < (controller->threshold_times_granularity + (bw_ratio_times_granularity - GRANULARITY))));
-// old way:
-    return r_times_granularity(controller) - controller->d_times_granularity < controller->threshold_times_granularity;
-// new way;
-//    return r_times_granularity(controller) - controller->d_times_granularity < (controller->threshold_times_granularity + (bw_ratio_times_granularity - GRANULARITY));
-}
-
-static __attribute__((always_inline)) uint32_t compute_ad(picoquic_cnx_t *cnx, causal_redundancy_controller_t *controller, fec_window_t *current_window) {
-    uint32_t ad = 0;
-    int err = 0;
-    fec_window_t sent_window;
-    for (int i = 0 ; i < controller->fec_slots->current_size ; i++) {
-        uint64_t slot = controller->fec_slots->elems[((uint64_t)(controller->fec_slots->start + i))  % ((uint64_t)controller->fec_slots->max_size)];
-        err = get_window_sent_at_slot(controller, controller->slots_history, slot, &sent_window);
-
-//        PROTOOP_PRINTF(cnx, "WINDOW SENT AT SLOT %lu = [%u, %u[\n", slot, sent_window.start, sent_window.end);
-        if (!err && window_intersects(&sent_window, current_window)) {
-            ad++;
-        }
-    }
-    for (int i = 0 ; i < controller->fb_fec_slots->current_size ; i++) {
-        uint64_t slot = controller->fb_fec_slots->elems[((uint64_t)(controller->fb_fec_slots->start + i)) % ((uint64_t)controller->fb_fec_slots->max_size)];
-        err = get_window_sent_at_slot(controller, controller->slots_history, slot, &sent_window);
-        if (!err && window_intersects(&sent_window, current_window)) ad++;
-    }
-    PROTOOP_PRINTF(cnx, "RETURN AD = %u\n", ad);
-    return ad;
-}
-
-static __attribute__((always_inline)) uint32_t compute_md(picoquic_cnx_t *cnx, causal_redundancy_controller_t *controller, fec_window_t *current_window) {
-    uint32_t md = 0;
-    for (int i = 0 ; i < controller->nacked_slots->current_size ; i++) {
-        uint64_t slot = controller->nacked_slots->elems[((uint64_t)(controller->nacked_slots->start + i)) % ((uint64_t)controller->nacked_slots->max_size)];
-        fec_window_t sent_window;
-        int err = get_window_sent_at_slot(controller, controller->slots_history, slot, &sent_window);
-        // see equation
-        if (!err
-            && !is_elem_in_buffer(controller->fec_slots, slot)
-            && !is_elem_in_buffer(controller->fb_fec_slots, slot)
-            && window_intersects(&sent_window, current_window))
-            md++;
-    }
-    PROTOOP_PRINTF(cnx, "RETURN MD = %u\n", md);
-    return md;
 }
 
 static __attribute__((always_inline)) causal_packet_type_t what_to_send(picoquic_cnx_t *cnx, window_redundancy_controller_t c, window_source_symbol_id_t *first_id_to_protect, uint16_t *n_symbols_to_protect) {
@@ -459,7 +352,7 @@ static __attribute__((always_inline)) causal_packet_type_t what_to_send(picoquic
             PROTOOP_PRINTF(cnx, "ERROR: 0 SOURCE AND REPAIR SYMBOL IN THE LOST SLOT !!\n");
         }
     }
-    PROTOOP_PRINTF(cnx, "EVENT::{\"time\": %ld, \"type\": \"what_to_send\", \"wts\": %d, \"latest\": %u}\n", picoquic_current_time(), type, controller->latest_symbol_protected_by_fec);
+    PROTOOP_PRINTF(cnx, "EVENT::{\"time\": %ld, \"type\": \"what_to_send\", \"wts\": %d}\n", picoquic_current_time(), type);
     return type;
 }
 
@@ -488,13 +381,7 @@ static __attribute__((always_inline)) void sent_packet(picoquic_cnx_t *cnx, pico
     }
 
     controller->n_bytes_sent_since_last_bandwidth_check += n_bytes_sent;
-    PROTOOP_PRINTF(cnx, "SENT PACKET, TYPE = %d, SLOT %lu, %lu FEC IN FLIGHT\n", type, slot, controller->n_fec_in_flight);
-    if (false && !EW(controller, &window)) {
-        controller->latest_symbol_protected_by_fec = (((uint64_t) (window.end-1))/((uint64_t)controller->k))*controller->k;
-    } else if (type == fec_packet){
-        PROTOOP_PRINTF(cnx, "SENT FEC IN SLOT %lu\n", slot);
-        controller->latest_symbol_protected_by_fec = (((uint64_t) (window.end))/((uint64_t)controller->k))*controller->k;
-    }
+    PROTOOP_PRINTF(cnx, "SENT PACKET, TYPE = %d, SLOT %lu\n", type, slot);
     switch(type) {
         case fec_packet:
             add_elem_to_buffer(controller->fec_slots, slot);
@@ -504,17 +391,6 @@ static __attribute__((always_inline)) void sent_packet(picoquic_cnx_t *cnx, pico
             break;
         default:
             break;
-    }
-}
-
-static __attribute__((always_inline)) int64_t get_max_fec_threshold(picoquic_cnx_t *cnx, causal_redundancy_controller_t *controller, fec_window_t *current_window) {
-//    return MAX(window_size(current_window)/3, 1);
-    return MAX(3*window_size(current_window)/2, 1);
-}
-
-static __attribute__((always_inline)) void compute_new_last_fully_protected_message_deadline(picoquic_cnx_t *cnx, window_fec_framework_t *wff, causal_redundancy_controller_t *controller, fec_window_t *current_window) {
-    if (controller->n_fec_in_flight > get_max_fec_threshold(cnx, controller, current_window) && !rbt_is_empty(wff->symbols_from_deadlines)) {
-        controller->last_fully_protected_message_deadline = rbt_max_key(wff->symbols_from_deadlines);
     }
 }
 
@@ -529,64 +405,44 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, picoqui
         return;
     }
     window_fec_framework_t *wff = (window_fec_framework_t *) state->framework_sender;
-    PROTOOP_PRINTF(cnx, "CURRENT WINDOW = [%u, %u[, N FEC IN FLIGHT = %lu\n", current_window->start, current_window->end, controller->n_fec_in_flight);
     uint64_t cwin_max_slots = get_path((picoquic_path_t *) path, AK_PATH_CWIN, 0)/get_path((picoquic_path_t *) path, AK_PATH_SEND_MTU, 0);
     int64_t smoothed_rtt_microsec = get_path(path, AK_PATH_SMOOTHED_RTT, 0);
     // FIXME: wrap-around when the sampling period or bytes sent are too high
     bandwidth_t available_bandwidth_bytes_per_second = get_path((picoquic_path_t *) path, AK_PATH_CWIN, 0)*SECOND_IN_MICROSEC/smoothed_rtt_microsec;
     // we take the between the last sampling point and the current bandwidth induced by the bytes in flight
-//    bandwidth_t used_bandwidth_bytes_per_second = MAX(controller->last_bytes_sent_sample*SECOND_IN_MICROSEC/controller->last_bytes_sent_sampling_period_microsec,
-//                                                        get_path(path, AK_PATH_BYTES_IN_TRANSIT, 0)*SECOND_IN_MICROSEC/get_path(path, AK_PATH_SMOOTHED_RTT, 0));
     bandwidth_t used_bandwidth_bytes_per_second = get_path(path, AK_PATH_BYTES_IN_TRANSIT, 0)*SECOND_IN_MICROSEC/smoothed_rtt_microsec;
     int64_t bw_ratio_times_granularity = (used_bandwidth_bytes_per_second > 0) ? ((GRANULARITY*available_bandwidth_bytes_per_second)/used_bandwidth_bytes_per_second) : 0;
     // FIXME: experimental: set k according to the cwin, but bound it to the buffer length: we cannot store more than MAX_SENDING_WINDOW_SIZE, and sometimes the window length will be 2*k
-
-
-    controller->k = MIN(MAX_SENDING_WINDOW_SIZE/2 - 1, 1 + cwin_max_slots);
-    controller->md = compute_md(cnx, controller, current_window);
-    controller->ad = compute_ad(cnx, controller, current_window);
-    uint64_t ad = (controller->ad != 0) ? controller->ad : 1;
-    controller->d_times_granularity = ((((uint64_t) controller->md*GRANULARITY))/((uint64_t) (ad)));
-//    PROTOOP_PRINTF(cnx, "USED BW = %lu, BW_RATIO = %lu, RECEIVE RATE = %lu, DOF_RATIO = %lu/%lu = %lu\n", used_bandwidth_bytes_per_second, GRANULARITY*available_bandwidth_bytes_per_second/used_bandwidth_bytes_per_second, r_times_granularity(controller), controller->md, ad, controller->d_times_granularity);
     bool added_new_packet = false;
     int i;
     if (is_buffer_empty(controller->what_to_send)) {
         if (controller->flush_dof_mode) {
             PROTOOP_PRINTF(cnx, "FLUSH DOF !!\n");
             add_elem_to_buffer(controller->what_to_send, fec_packet);
-            controller->n_fec_in_flight++;
-            controller->ad++;
         } else {
             if (controller->lost_and_non_fec_retransmitted_slots->current_size > 0) {
                 add_elem_to_buffer(controller->what_to_send, fb_fec_packet);
-                controller->ad++;
             } else {
 
-//                PROTOOP_PRINTF(cnx, "EVENT::{\"time\": %ld, \"type\": \"algo\", \"feedback\": %d, \"ad\": %ld, \"md\": %ld, \"d\": %ld, \"k\": %ld, \"threshold\": %ld, \"r\": %ld}\n", picoquic_current_time(), controller->last_feedback, controller->ad, controller->md, controller->d_times_granularity, controller->k, controller->threshold_times_granularity, r_times_granularity(controller));
-
+                PROTOOP_PRINTF(cnx, "EVENT::{\"time\": %ld, \"type\": \"algo\", \"feedback\": %d, \"r\": %ld}\n", picoquic_current_time(), controller->last_feedback, r_times_granularity(controller));
 
                 uint64_t current_time = picoquic_current_time();
                 int64_t owd_microsec = smoothed_rtt_microsec/2;
                 rbt_key soonest_deadline_microsec_key;
-                rbt_val soonest_deadline_first_id_val;
-                bool found_ceiling = rbt_ceiling(wff->symbols_from_deadlines,
-                                                MAX(controller->last_fully_protected_message_deadline != UNDEFINED_SYMBOL_DEADLINE ? controller->last_fully_protected_message_deadline : 0, current_time + owd_microsec),
-                                                 &soonest_deadline_microsec_key, &soonest_deadline_first_id_val);
-
+                bool found_ceiling = rbt_ceiling_key(wff->symbols_from_deadlines, current_time + owd_microsec,
+                                                     &soonest_deadline_microsec_key);
                 symbol_deadline_t soonest_deadline_microsec = found_ceiling ? ((symbol_deadline_t) soonest_deadline_microsec_key) : UNDEFINED_SYMBOL_DEADLINE;
-
-                if (!rbt_is_empty(wff->symbols_from_deadlines)) {
-
-                    PROTOOP_PRINTF(cnx, "found ceiling to %ld = %d, tree size = %d, max = %ld\n", current_time + owd_microsec, found_ceiling, rbt_size(wff->symbols_from_deadlines), rbt_max_key(wff->symbols_from_deadlines));
-                }
-
                 uint64_t next_message_time_to_wait_microsec = 0;
                 if (wff->next_message_timestamp_microsec != UNDEFINED_SYMBOL_DEADLINE) {
                     next_message_time_to_wait_microsec = (wff->next_message_timestamp_microsec <= current_time) ? 0 : (wff->next_message_timestamp_microsec - current_time);
                 }
-                bool allowed_to_send_fec_given_deadlines = controller->n_fec_in_flight <= get_max_fec_threshold(cnx, controller, current_window) && (soonest_deadline_microsec == UNDEFINED_SYMBOL_DEADLINE || wff->next_message_timestamp_microsec == UNDEFINED_SYMBOL_DEADLINE
+                bool allowed_to_send_fec_given_deadlines = controller->n_non_fec_protectected_degrees > 0 && (soonest_deadline_microsec == UNDEFINED_SYMBOL_DEADLINE || wff->next_message_timestamp_microsec == UNDEFINED_SYMBOL_DEADLINE
                                                         // we cross the fingers here so that there will be no overflow
                                                         || current_time + next_message_time_to_wait_microsec + owd_microsec + DEADLINE_CRITICAL_THRESHOLD_MICROSEC >= soonest_deadline_microsec); // if false, that means that we can wait a bit before sending FEC
+                if (found_ceiling) {
+                    rbt_val out_val = rbt_get(wff->symbols_from_deadlines, soonest_deadline_microsec);
+                    PROTOOP_PRINTF(cnx, "soonest_deadline_symbol_id = %lu\n", (uint64_t) out_val);
+                }
                 PROTOOP_PRINTF(cnx, "allowed to send = %d, owd = %lu, current_time = %lu, soonest_deadline = %lu, next_timestamp = %lu\n", allowed_to_send_fec_given_deadlines,
                                owd_microsec, current_time, soonest_deadline_microsec, wff->next_message_timestamp_microsec);
 
@@ -594,69 +450,38 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, picoqui
                     case available_slot_reason_none:
 //                        if (false && EW(controller, current_window)) {
                         if (allowed_to_send_fec_given_deadlines && (!fec_has_protected_data_to_send(cnx) && bw_ratio_times_granularity > (GRANULARITY + GRANULARITY/10))) {
-                            for (i = 0; i < controller->m; i++) {
-                                add_elem_to_buffer(controller->what_to_send, fec_packet);
-                                controller->n_fec_in_flight++;
-                            }
-                            controller->ad += controller->m;
-                            compute_new_last_fully_protected_message_deadline(cnx, wff, controller, current_window);
+                            add_elem_to_buffer(controller->what_to_send, fec_packet);
+                            if (controller->n_non_fec_protectected_degrees > 0)
+                                controller->n_non_fec_protectected_degrees--;
                         } else {
                             // TODO: first check if new data are available to send ?
                             added_new_packet = true;
                             add_elem_to_buffer(controller->what_to_send, new_rlnc_packet);
+                            controller->n_non_fec_protectected_degrees++;
                         }
                         break;
                     case available_slot_reason_nack:
-                        if ((controller->d_times_granularity == -1 || !allowed_to_send_fec_given_deadlines || threshold_exceeded(cnx, controller, available_bandwidth_bytes_per_second, used_bandwidth_bytes_per_second))) {
-                            if (true || !EW(controller, current_window)) {
-                                // TODO: first check if new data are available to send ?
-                                added_new_packet = true;
-                                add_elem_to_buffer(controller->what_to_send, new_rlnc_packet);
-                            } else {
-                                for (i = 0; i < controller->m; i++) {
-                                    add_elem_to_buffer(controller->what_to_send, fec_packet);
-                                    controller->n_fec_in_flight++;
-                                }
-                                controller->ad += controller->m;
-                                compute_new_last_fully_protected_message_deadline(cnx, wff, controller, current_window);
-                            }
+                        // TODO: use bandwidth info
+                        if ((!allowed_to_send_fec_given_deadlines)) {
+                            // TODO: first check if new data are available to send ?
+                            added_new_packet = true;
+                            add_elem_to_buffer(controller->what_to_send, new_rlnc_packet);
+                            controller->n_non_fec_protectected_degrees++;
                         } else {
-                            PROTOOP_PRINTF(cnx, "ADD FEC\n");
                             add_elem_to_buffer(controller->what_to_send, fec_packet);
-                            controller->n_fec_in_flight++;
-                            controller->ad++;
-                            compute_new_last_fully_protected_message_deadline(cnx, wff, controller, current_window);
-                            if (false && EW(controller, current_window)) {
-                                for (i = 0; i < controller->m; i++) {
-                                    add_elem_to_buffer(controller->what_to_send, fec_packet);
-                                    controller->n_fec_in_flight++;
-                                    compute_new_last_fully_protected_message_deadline(cnx, wff, controller, current_window);
-                                }
-                                controller->ad += controller->m;
-                            }
+                            controller->n_non_fec_protectected_degrees++;
                         }
                         break;
                     case available_slot_reason_ack:
-                        if (false && EW(controller, current_window)) {
-                            PROTOOP_PRINTF(cnx, "EW !");
-                            for (i = 0; i < controller->m; i++) {
-                                add_elem_to_buffer(controller->what_to_send, fec_packet);
-                                controller->n_fec_in_flight++;
-                            }
-                            controller->ad += controller->m;
-                            compute_new_last_fully_protected_message_deadline(cnx, wff, controller, current_window);
+                        if (allowed_to_send_fec_given_deadlines && (!fec_has_protected_data_to_send(cnx) && bw_ratio_times_granularity > (GRANULARITY + GRANULARITY/10))) {
+                            add_elem_to_buffer(controller->what_to_send, fec_packet);
+                            if (controller->n_non_fec_protectected_degrees > 0)
+                                controller->n_non_fec_protectected_degrees--;
                         } else {
-                            if (allowed_to_send_fec_given_deadlines && (threshold_strictly_greater(cnx, controller, available_bandwidth_bytes_per_second, used_bandwidth_bytes_per_second) || (!fec_has_protected_data_to_send(cnx) && bw_ratio_times_granularity > (GRANULARITY + GRANULARITY/10)))) {
-                                PROTOOP_PRINTF(cnx, "ADD FEC\n");
-                                add_elem_to_buffer(controller->what_to_send, fec_packet);
-                                controller->n_fec_in_flight++;
-                                controller->ad++;
-                                compute_new_last_fully_protected_message_deadline(cnx, wff, controller, current_window);
-                            } else {
-                                added_new_packet = true;
-                                // TODO: first check if new data are available to send ?
-                                add_elem_to_buffer(controller->what_to_send, new_rlnc_packet);
-                            }
+                            added_new_packet = true;
+                            // TODO: first check if new data are available to send ?
+                            add_elem_to_buffer(controller->what_to_send, new_rlnc_packet);
+                            controller->n_non_fec_protectected_degrees++;
                         }
                         break;
                     default:
@@ -678,7 +503,7 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, picoqui
 static __attribute__((always_inline)) void slot_acked(picoquic_cnx_t *cnx, window_redundancy_controller_t c, uint64_t slot) {
     causal_redundancy_controller_t *controller = (causal_redundancy_controller_t *) c;
     controller->n_received_feedbacks++;
-    add_elem_to_buffer2(cnx, controller, controller->acked_slots, slot);
+    add_elem_to_buffer(controller->acked_slots, slot);
     controller->last_feedback = available_slot_reason_ack;
 
 
@@ -688,9 +513,9 @@ static __attribute__((always_inline)) void slot_acked(picoquic_cnx_t *cnx, windo
         PROTOOP_PRINTF(cnx, "ERROR: NACKED A SLOT NEVER SENT !\n");
         return;
     }
-    if (md.repair_metadata.number_of_repair_symbols > 0 && !md.repair_metadata.is_fb_fec) {
-        PROTOOP_PRINTF(cnx, "ACKED SLOT %lu WITH %d FEC RS\n", slot, md.repair_metadata.number_of_repair_symbols);
-        controller->n_fec_in_flight -= md.repair_metadata.number_of_repair_symbols;
+    if (md.source_metadata.number_of_symbols > 0) {
+        if (controller->n_non_fec_protectected_degrees > 0)
+            controller->n_non_fec_protectected_degrees -= MIN(md.source_metadata.number_of_symbols, controller->n_non_fec_protectected_degrees);
     }
 }
 
@@ -709,12 +534,11 @@ static __attribute__((always_inline)) void slot_nacked(picoquic_cnx_t *cnx, wind
         PROTOOP_PRINTF(cnx, "ERROR: NACKED A SLOT NEVER SENT !\n");
         return;
     }
-    if (md.source_metadata.number_of_symbols > 0  || (md.repair_metadata.is_fb_fec)) {
+    if (md.source_metadata.number_of_symbols > 0 || (md.repair_metadata.is_fb_fec)) {
         PROTOOP_PRINTF(cnx, "ADD SLOT %lu AS LOST AND NON RETRANSMITTED\n", slot);
         add_elem_to_buffer(controller->lost_and_non_fec_retransmitted_slots, slot);
-    }
-    if (md.repair_metadata.number_of_repair_symbols > 0 && !md.repair_metadata.is_fb_fec) {
-        controller->n_fec_in_flight -= md.repair_metadata.number_of_repair_symbols;
+        if (controller->n_non_fec_protectected_degrees > 0)
+            controller->n_non_fec_protectected_degrees -= MIN(md.source_metadata.number_of_symbols, controller->n_non_fec_protectected_degrees);
     }
     // remove all the acked slots in the window
     add_elem_to_buffer(controller->nacked_slots, slot);

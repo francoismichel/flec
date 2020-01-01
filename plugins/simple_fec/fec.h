@@ -45,6 +45,7 @@ typedef struct {
     lost_packet_queue_t lost_packets;
     recovered_packets_buffer_t recovered_packets;
 
+
     uint16_t symbol_size;
 } plugin_state_t;
 

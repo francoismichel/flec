@@ -45,6 +45,8 @@ protoop_arg_t retransmit_needed(picoquic_cnx_t *cnx)
             should_retransmit = helper_retransmit_needed_by_packet(cnx, p, current_time, &timer_based_retransmit, &reason, NULL);
 
             if (should_retransmit == 0) {
+                if (FEC_PKT_CONTAINS_REPAIR_FRAME(get_pkt_metadata(cnx, p, FEC_PKT_METADATA_FLAGS)))
+                    PROTOOP_PRINTF(cnx, "FEC SHOULD NOT RETR\n");
                 /*
                 * Always retransmit in order. If not this one, then nothing.
                 * But make an exception for 0-RTT packets.
@@ -56,6 +58,9 @@ protoop_arg_t retransmit_needed(picoquic_cnx_t *cnx)
                     break;
                 }
             } else {
+//                PROTOOP_PRINTF(cnx, "SHOULD RETRANSMIT = 1\n");
+//                if (FEC_PKT_CONTAINS_REPAIR_FRAME(get_pkt_metadata(cnx, p, FEC_PKT_METADATA_FLAGS)))
+//                    PROTOOP_PRINTF(cnx, "FEC SHOULD RETR\n");
 
                 /* check if this is an ACK only packet */
 //                int contains_crypto = (int) get_pkt(p, AK_PKT_CONTAINS_CRYPTO);
@@ -200,6 +205,7 @@ protoop_arg_t retransmit_needed(picoquic_cnx_t *cnx)
                     fec_related = fec_protected || contains_repair_frame;
 
 
+                    PROTOOP_PRINTF(cnx, "LOST PACKET, NUMBER %lx, CONTAINS REPAIR = %d\n", lost_packet_number, FEC_PKT_CONTAINS_REPAIR_FRAME(get_pkt_metadata(cnx, p, FEC_PKT_METADATA_FLAGS)));
                     /* We should also consider if some action was recently observed to consider that it is actually a RTO... */
                     retrans_timer = orig_time_stamp_largest_received + orig_smoothed_rtt;
                     if (orig_latest_retransmit_time >= orig_time_stamp_largest_received) {
@@ -232,7 +238,7 @@ protoop_arg_t retransmit_needed(picoquic_cnx_t *cnx)
                             is_timer_based = false;
                             if (timer_based_retransmit != 0 && current_time >= retrans_timer) {
                                 is_timer_based = true;
-                                PROTOOP_PRINTF(cnx, "TIMER BASED, CURRENT TIME = %lu\n", current_time);
+//                                PROTOOP_PRINTF(cnx, "TIMER BASED, CURRENT TIME = %lu\n", current_time);
                             }
 
                             if (current_time >= retrans_cc_notification_timer) {
@@ -241,9 +247,10 @@ protoop_arg_t retransmit_needed(picoquic_cnx_t *cnx)
                                                                    (is_timer_based) ? picoquic_congestion_notification_timeout : picoquic_congestion_notification_repeat,
                                                                    0, 0, lost_packet_number, current_time);
                             }
-                            PROTOOP_PRINTF(cnx, "LOST PACKET, NUMBER %lx, RETRANS TIMER = %lu\n", lost_packet_number, retrans_timer);
                             if (fec_packet_has_been_lost(cnx, lost_packet_number, slot, first_symbol_id, n_symbols, fec_protected, contains_repair_frame, get_pkt(p, AK_PKT_SEND_TIME)))
                                 return -1;
+                            picoquic_frame_fair_reserve(cnx, path_x, NULL, send_buffer_max - get_pkt(packet, AK_PKT_CHECKSUM_OVERHEAD));
+
                         }
                         length = 0;
                     } else {

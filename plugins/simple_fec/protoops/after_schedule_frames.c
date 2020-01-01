@@ -49,7 +49,8 @@ protoop_arg_t schedule_frames_on_path(picoquic_cnx_t *cnx)
         if (err == 0) {
             // something has been protected
             set_pkt_metadata(cnx, packet, FEC_PKT_METADATA_SENT_SLOT, state->current_slot++);
-            set_pkt_metadata(cnx, packet, FEC_PKT_METADATA_FLAGS, packet_flags | FEC_PKT_METADATA_FLAG_IS_FEC_PROTECTED);
+            packet_flags |= FEC_PKT_METADATA_FLAG_IS_FEC_PROTECTED;
+            set_pkt_metadata(cnx, packet, FEC_PKT_METADATA_FLAGS, packet_flags);
             set_pkt_metadata(cnx, packet, FEC_PKT_METADATA_FIRST_SOURCE_SYMBOL_ID, id);
             set_pkt_metadata(cnx, packet, FEC_PKT_METADATA_NUMBER_OF_SOURCE_SYMBOLS, n_symbols);
             fec_sent_packet(cnx, path, packet, true, false, false);
@@ -57,18 +58,23 @@ protoop_arg_t schedule_frames_on_path(picoquic_cnx_t *cnx)
 
     } else if (state->has_written_repair_frame || state->has_written_fb_fec_repair_frame) {
         set_pkt_metadata(cnx, packet, FEC_PKT_METADATA_SENT_SLOT, state->current_slot++);
-        set_pkt_metadata(cnx, packet, FEC_PKT_METADATA_FLAGS, packet_flags | FEC_PKT_METADATA_FLAG_CONTAINS_REPAIR_FRAME);
+        packet_flags |= FEC_PKT_METADATA_FLAG_CONTAINS_REPAIR_FRAME;
+        set_pkt_metadata(cnx, packet, FEC_PKT_METADATA_FLAGS, packet_flags);
 
         set_pkt_metadata(cnx, packet, FEC_PKT_METADATA_FIRST_PROTECTED_SYMBOL_ID, state->current_repair_frame_first_protected_id);
         set_pkt_metadata(cnx, packet, FEC_PKT_METADATA_NUMBER_OF_PROTECTED_SYMBOLS, state->current_repair_frame_n_protected_symbols);
         set_pkt_metadata(cnx, packet, FEC_PKT_METADATA_NUMBER_OF_REPAIR_SYMBOLS, state->current_repair_frame_n_repair_symbols);
-        if (state->has_written_fb_fec_repair_frame)
-            set_pkt_metadata(cnx, packet, FEC_PKT_METADATA_FLAGS, packet_flags | FEC_PKT_METADATA_FLAG_IS_FB_FEC);
+        if (state->has_written_fb_fec_repair_frame) {
+            PROTOOP_PRINTF(cnx, "HAS WRITTEN FB_FEC\n");
+            packet_flags |= FEC_PKT_METADATA_FLAG_IS_FB_FEC;
+            set_pkt_metadata(cnx, packet, FEC_PKT_METADATA_FLAGS, packet_flags);
+        }
+        PROTOOP_PRINTF(cnx, "HAS WRITTEN REPAIR FRAME, CONTAINS REPAIR FRAME = %d, IS FB-FEC = %d\n", FEC_PKT_CONTAINS_REPAIR_FRAME(get_pkt_metadata(cnx, packet, FEC_PKT_METADATA_FLAGS)), FEC_PKT_IS_FB_FEC(get_pkt_metadata(cnx, packet, FEC_PKT_METADATA_FLAGS)));
         fec_sent_packet(cnx, path, packet, false, true, state->has_written_fb_fec_repair_frame);
     }
-    packet_flags = get_pkt_metadata(cnx, packet, FEC_PKT_METADATA_FLAGS);
     if (state->has_written_recovered_frame) {
-        set_pkt_metadata(cnx, packet, FEC_PKT_METADATA_FLAGS, packet_flags | FEC_PKT_METADATA_FLAG_CONTAINS_RECOVERED_FRAME);
+        packet_flags |= FEC_PKT_METADATA_FLAG_CONTAINS_RECOVERED_FRAME;
+        set_pkt_metadata(cnx, packet, FEC_PKT_METADATA_FLAGS, packet_flags);
     }
     state->has_written_fpi_frame = false;
     state->has_written_repair_frame = false;

@@ -357,7 +357,6 @@ static __attribute__((always_inline)) void * pq_pop_max(min_max_pq_t pq) {
     return val;
 }
 
-
 static __attribute__((always_inline)) int pq_insert(min_max_pq_t pq, uint64_t key, void *value) {
     if (pq->size == pq->max_size) {
         // pq is full

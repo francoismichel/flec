@@ -19,7 +19,7 @@ protoop_arg_t reserve_repair_frames_protoop(picoquic_cnx_t *cnx) {
     bool protect_subset = (uint16_t) get_cnx(cnx, AK_CNX_INPUT, 4);
     window_source_symbol_id_t first_id_to_protect = (uint16_t) get_cnx(cnx, AK_CNX_INPUT, 5);
     uint16_t n_symbols_to_protect = (uint16_t) get_cnx(cnx, AK_CNX_INPUT, 6);
-    int max_repair_frames_threshold = 4;
+    int max_repair_frames_threshold = 20;
 //    int max_repair_frames_threshold = 10;
 //    if (!is_lost_packet_queue_empty(cnx, &state->lost_packets))
 //        max_repair_frames_threshold = wff->window_length*2;
@@ -39,7 +39,7 @@ protoop_arg_t reserve_repair_frames_protoop(picoquic_cnx_t *cnx) {
 
         PROTOOP_PRINTF(cnx, "NOTHING TO RESERVE, GENERATE !\n");
         if (!is_fec_window_empty(wff)) {
-            PROTOOP_PRINTF(cnx, "GENERATE %d REPAIR SYMBOLS, PROTECT SUBSET = %d, FIRST = %u, n_symbols = %u\n", PICOQUIC_MAX_PACKET_SIZE/state->symbol_size/* + 1*/, protect_subset, first_id_to_protect, n_symbols_to_protect);
+            PROTOOP_PRINTF(cnx, "GENERATE %d REPAIR SYMBOLS, FEEDBACK-IMPLIED = %d, PROTECT SUBSET = %d, FIRST = %u, n_symbols = %u\n", PICOQUIC_MAX_PACKET_SIZE/state->symbol_size/* + 1*/, feedback_implied, protect_subset, first_id_to_protect, n_symbols_to_protect);
             err = generate_and_queue_repair_symbols(cnx, wff, true, PICOQUIC_MAX_PACKET_SIZE/state->symbol_size /*+ 1*/, state->symbol_size, protect_subset, first_id_to_protect, n_symbols_to_protect);
             if (!err)
                 err = window_reserve_repair_frames(cnx, wff, max_size, symbol_size, feedback_implied);

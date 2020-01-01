@@ -4,7 +4,7 @@
 #include "../fec_constants.h"
 #include "../utils.h"
 #include "../fec.h"
-#include "causal_redundancy_controller_new.h"
+#include "message_redundancy_controller.h"
 #include "../window_framework/framework_sender.h"
 
 // we here assume a single-path context

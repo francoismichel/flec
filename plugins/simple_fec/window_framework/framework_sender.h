@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include "../fec.h"
 #include "types.h"
+#include "red_black_tree.h"
 
 #define INITIAL_SYMBOL_ID 1
 #define MAX_QUEUED_REPAIR_SYMBOLS 6
@@ -30,6 +31,99 @@ typedef struct __attribute__((__packed__)) fec_slot {
     bool received;
 } window_slot_t;
 
+typedef uint64_t symbol_deadline_t;
+
+const symbol_deadline_t UNDEFINED_SYMBOL_DEADLINE = 0;
+
+typedef struct protected_stream_chunk {
+    int64_t stream_id;
+    int64_t offset;
+    int64_t length;
+    symbol_deadline_t deadline_timestamp;
+    int64_t  last_source_symbol_id;     // -1 if undefined
+    struct protected_stream_chunk *next;
+} protected_stream_chunk_t;
+
+typedef struct {
+    protected_stream_chunk_t *head;
+    protected_stream_chunk_t *tail;
+    int size;   // we us an explicit size to ease the verification process
+} protected_stream_chunks_queue_t;
+
+static __attribute__((always_inline)) int protected_stream_chunks_queue_add(picoquic_cnx_t *cnx, protected_stream_chunks_queue_t *queue,
+        int64_t stream_id, int64_t offset, int64_t length, symbol_deadline_t deadline_timestamp) {
+    protected_stream_chunk_t *new_chunk = my_malloc(cnx, sizeof(protected_stream_chunk_t));
+    if (!new_chunk) {
+        PROTOOP_PRINTF(cnx, "protected_stream_chunks_queue_add: out of memory\n");
+        return -1;
+    }
+    my_memset(new_chunk, 0, sizeof(protected_stream_chunk_t));  // this sets next to null
+    new_chunk->stream_id = stream_id;
+    new_chunk->offset = offset;
+    new_chunk->length = length;
+    new_chunk->deadline_timestamp = deadline_timestamp;
+    new_chunk->last_source_symbol_id = -1;
+    if (queue->size == 0) {
+        queue->head = queue->tail = new_chunk;
+    } else {
+        queue->tail->next = new_chunk;
+        queue->tail = new_chunk;
+    }
+
+
+    queue->size++;
+    return 0;
+}
+
+static __attribute__((always_inline)) int protected_stream_chunks_queue_remove(picoquic_cnx_t *cnx, protected_stream_chunks_queue_t *queue,
+        int64_t stream_id, int64_t offset, int64_t length) {
+    protected_stream_chunk_t *previous = NULL;
+    protected_stream_chunk_t *current = queue->head;
+    for (int i = 0 ; i < queue->size ; i++) {
+        if (current->stream_id == stream_id && current->offset == offset && current->length == length) {
+            if (!previous) { // first of the list
+                queue->head = current->next;
+            } else {    // not the first
+                previous->next = current->next;
+            }
+
+            goto remove;
+        }
+        previous = current;
+        current = current->next;
+    }
+    return -1;
+remove:
+    my_free(cnx, current);
+    queue->size--;
+    return 0;
+}
+
+static __attribute__((always_inline)) symbol_deadline_t protected_stream_chunks_get_deadline_for_chunk(picoquic_cnx_t *cnx, protected_stream_chunks_queue_t *queue,
+        int64_t stream_id, int64_t offset, int64_t length) {
+    symbol_deadline_t min_deadline = UNDEFINED_SYMBOL_DEADLINE;
+
+    protected_stream_chunk_t *current = queue->head;
+    for (int i = 0 ; i < queue->size ; i++) {
+        if (current->stream_id == stream_id) {
+            if (current->offset == offset && current->length == length) {   // perfect match
+                return current->deadline_timestamp;
+            } else if ((offset <= current->offset && current->offset < offset + length)
+                        || (offset < current->offset + current->length && current->offset + current->length <= offset + length)) {
+                min_deadline = (min_deadline == UNDEFINED_SYMBOL_DEADLINE) ? current->deadline_timestamp : (MIN(min_deadline, current->deadline_timestamp));
+            }
+        }
+        current = current->next;
+    }
+
+    PROTOOP_PRINTF(cnx, "DEADLINE FOR CHUNK [%lu, %lu] IS %lu\n", offset, offset+length, min_deadline);
+
+    return min_deadline;
+}
+
+
+#define WINDOW_FEC_FRAMEWORK_MAX_HANDLED_STREAM_ID 15
+
 typedef struct {
     fec_scheme_t fec_scheme;
     window_slot_t fec_window[MAX_SENDING_WINDOW_SIZE];
@@ -45,6 +139,16 @@ typedef struct {
     uint32_t repair_symbols_queue_head;
     int repair_symbols_queue_length;
     int64_t current_slot;
+
+    int64_t next_message_timestamp_microsec; // -1 for undefined
+    int64_t symbol_lifetime_microsec; // -1 for undefined
+
+    symbol_deadline_t min_deadline_in_current_packet;
+
+    red_black_tree_t *symbols_from_deadlines;
+    red_black_tree_t *deadlines_from_symbols;
+    protected_stream_chunks_queue_t stream_chunks_queue;    // useful when sending stream chunks as a deadline-limited message
+    uint64_t stream_enqueued_data_amount[WINDOW_FEC_FRAMEWORK_MAX_HANDLED_STREAM_ID];
 } window_fec_framework_t;
 
 static __attribute__((always_inline)) bool is_fec_window_empty(window_fec_framework_t *wff) {
@@ -82,6 +186,21 @@ static __attribute__((always_inline)) window_fec_framework_t *create_framework_s
         my_free(cnx, wff);
         return NULL;
     }
+    wff->min_deadline_in_current_packet = UNDEFINED_SYMBOL_DEADLINE;
+    wff->symbols_from_deadlines = my_malloc(cnx, sizeof(red_black_tree_t));
+    if (!wff->symbols_from_deadlines) {
+        delete_recovered_packets_buffer(cnx, wff->rps);
+        my_free(cnx, wff);
+        return NULL;
+    }
+    rbt_init(wff->symbols_from_deadlines);
+    wff->deadlines_from_symbols = my_malloc(cnx, sizeof(red_black_tree_t));
+    if (!wff->deadlines_from_symbols) {
+        delete_recovered_packets_buffer(cnx, wff->rps);
+        my_free(cnx, wff);
+        return NULL;
+    }
+    rbt_init(wff->deadlines_from_symbols);
 
     wff->fec_scheme = fs;
     return wff;
@@ -261,6 +380,8 @@ static __attribute__((always_inline)) int window_reserve_repair_frames(picoquic_
             return err;
         }
 
+        rf->is_fb_fec = feedback_implied;
+
         reserve_frame_slot_t *slot = (reserve_frame_slot_t *) my_malloc(cnx, sizeof(reserve_frame_slot_t));
         if (!slot) {
             my_free(cnx, rf);
@@ -359,6 +480,12 @@ static __attribute__((always_inline)) int sfpid_has_landed(picoquic_cnx_t *cnx, 
     uint32_t idx = id % MAX_SENDING_WINDOW_SIZE;
     if (received && wff->fec_window[idx].symbol) {
         if (wff->fec_window[idx].id == id) {
+            if (rbt_contains(wff->deadlines_from_symbols, id)) {
+                symbol_deadline_t deadline = (symbol_deadline_t) rbt_get(wff->deadlines_from_symbols, id);
+                // remove the symbol from the state
+                rbt_delete(cnx, wff->deadlines_from_symbols, id);
+                rbt_delete(cnx, wff->symbols_from_deadlines, deadline);
+            }
             wff->fec_window[idx].received = true;
             // if it is the first symbol of the window, let's prune the window
             if (!is_fec_window_empty(wff) && id == wff->smallest_in_transit) {
@@ -511,7 +638,10 @@ static __attribute__((always_inline)) int protect_source_symbol(picoquic_cnx_t *
 
 static __attribute__((always_inline)) int window_protect_packet_payload(picoquic_cnx_t *cnx, window_fec_framework_t *wff,
                                                                         uint8_t *payload, size_t payload_length, uint64_t packet_number,
-                                                                        source_symbol_id_t *first_symbol_id, uint16_t *n_chunks, size_t symbol_size) {
+                                                                        source_symbol_id_t *first_symbol_id, uint16_t *n_chunks, size_t symbol_size,
+                                                                        symbol_deadline_t deadline) {
+    // reset the value that is specific to this packet processing loop iteration
+    wff->min_deadline_in_current_packet = UNDEFINED_SYMBOL_DEADLINE;
     *n_chunks = 0;
     source_symbol_t **sss = packet_payload_to_source_symbols(cnx, payload, payload_length, symbol_size, packet_number, n_chunks, sizeof(window_source_symbol_t));
     if (!sss)
@@ -525,6 +655,10 @@ static __attribute__((always_inline)) int window_protect_packet_payload(picoquic
         }
         if (i == 0)
             *first_symbol_id = id;
+        if (deadline != UNDEFINED_SYMBOL_DEADLINE && !rbt_contains(wff->symbols_from_deadlines, deadline)) {
+            rbt_put(cnx, wff->symbols_from_deadlines, deadline, (void *) (uint64_t) id);
+            rbt_put(cnx, wff->deadlines_from_symbols, (uint64_t) id, (void *) deadline);
+        }
     }
     my_free(cnx, sss);
     return 0;
