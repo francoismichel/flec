@@ -122,8 +122,6 @@ static __attribute__((always_inline)) symbol_deadline_t protected_stream_chunks_
 }
 
 
-#define WINDOW_FEC_FRAMEWORK_MAX_HANDLED_STREAM_ID 15
-
 typedef struct {
     fec_scheme_t fec_scheme;
     window_slot_t fec_window[MAX_SENDING_WINDOW_SIZE];
@@ -147,9 +145,28 @@ typedef struct {
 
     red_black_tree_t *symbols_from_deadlines;
     red_black_tree_t *deadlines_from_symbols;
+    red_black_tree_t *unreliable_messages_from_deadlines;
     protected_stream_chunks_queue_t stream_chunks_queue;    // useful when sending stream chunks as a deadline-limited message
-    uint64_t stream_enqueued_data_amount[WINDOW_FEC_FRAMEWORK_MAX_HANDLED_STREAM_ID];
 } window_fec_framework_t;
+
+typedef struct {
+    int64_t stream_id;
+    size_t length;
+} unreliable_message_metadata_t;
+
+static __attribute__((always_inline)) unreliable_message_metadata_t *new_unreliable_message_metadata(picoquic_cnx_t *cnx, int64_t stream_id, size_t length) {
+    unreliable_message_metadata_t *md = my_malloc(cnx, sizeof(unreliable_message_metadata_t));
+    if (!md) {
+        return NULL;
+    }
+    my_memset(md, 0, sizeof(unreliable_message_metadata_t));
+    md->stream_id = stream_id;
+    md->length = length;
+    return md;
+}
+static __attribute__((always_inline)) void delete_unreliable_message_metadata(picoquic_cnx_t *cnx, unreliable_message_metadata_t *md) {
+    my_free(cnx, md);
+}
 
 static __attribute__((always_inline)) bool is_fec_window_empty(window_fec_framework_t *wff) {
     return wff->window_length == 0;
@@ -201,6 +218,13 @@ static __attribute__((always_inline)) window_fec_framework_t *create_framework_s
         return NULL;
     }
     rbt_init(wff->deadlines_from_symbols);
+    wff->unreliable_messages_from_deadlines = my_malloc(cnx, sizeof(red_black_tree_t));
+    if (!wff->unreliable_messages_from_deadlines) {
+        delete_recovered_packets_buffer(cnx, wff->rps);
+        my_free(cnx, wff);
+        return NULL;
+    }
+    rbt_init(wff->unreliable_messages_from_deadlines);
 
     wff->fec_scheme = fs;
     return wff;
