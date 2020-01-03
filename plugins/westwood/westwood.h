@@ -8,7 +8,7 @@
 #include "../helpers.h"
 #include "../../picoquic/picoquic.h"
 
-#define WESTWOOD_OPAQUE_ID 0x0F
+#define WESTWOOD_OPAQUE_ID 0x00
 #define NB_RTT_WESTWOOD 4
 
 typedef enum {
