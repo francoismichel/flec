@@ -795,6 +795,8 @@ size_t picoquic_varint_encode(uint8_t* bytes, size_t max_bytes, uint64_t n64);
 /* Stream management */
 picoquic_stream_head* picoquic_find_stream(picoquic_cnx_t* cnx, uint64_t stream_id, int create);
 
+protoop_arg_t find_ready_stream_round_robin(picoquic_cnx_t *cnx);
+
 /* Plugin stream management */
 picoquic_stream_head* picoquic_find_plugin_stream(picoquic_cnx_t* cnx, uint64_t pid_id, int create);
 picoquic_stream_head* picoquic_find_or_create_plugin_stream(picoquic_cnx_t* cnx, uint64_t pid_id, int is_remote);

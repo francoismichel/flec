@@ -116,6 +116,7 @@ register_functions(struct ubpf_vm *vm) {
     ubpf_register(vm, current_idx++, "picoquic_find_stream", picoquic_find_stream);
     ubpf_register(vm, current_idx++, "picoquic_reset_stream", picoquic_reset_stream);
     ubpf_register(vm, current_idx++, "picoquic_add_to_stream", picoquic_add_to_stream);
+    ubpf_register(vm, current_idx++, "find_ready_stream_round_robin", find_ready_stream_round_robin);
     ubpf_register(vm, current_idx++, "picoquic_set_cnx_state", picoquic_set_cnx_state);
     ubpf_register(vm, current_idx++, "picoquic_frames_varint_decode", picoquic_frames_varint_decode);
     ubpf_register(vm, current_idx++, "picoquic_record_pn_received", picoquic_record_pn_received);

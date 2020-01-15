@@ -933,7 +933,7 @@ uint8_t* picoquic_decode_stream_frame(picoquic_cnx_t* cnx, uint8_t* bytes, const
 /**
  * See PROTOOP_NOPARAM_FIND_READY_STREAM
  */
-protoop_arg_t find_ready_stream(picoquic_cnx_t *cnx) {
+protoop_arg_t find_ready_stream_round_robin(picoquic_cnx_t *cnx) {
     picoquic_stream_head *stream = cnx->first_stream;
 
     if (cnx->maxdata_remote > cnx->data_sent) {
@@ -4285,8 +4285,8 @@ void frames_register_noparam_protoops(picoquic_cnx_t *cnx)
 
     register_param_protoop(cnx, &PROTOOP_PARAM_WRITE_FRAME, picoquic_frame_type_plugin_validate, &write_plugin_validate_frame);
 
-    register_noparam_protoop(cnx, &PROTOOP_NOPARAM_FIND_READY_STREAM, &find_ready_stream);
-    register_noparam_protoop(cnx, &PROTOOP_NOPARAM_SCHEDULE_NEXT_STREAM, &find_ready_stream);
+    register_noparam_protoop(cnx, &PROTOOP_NOPARAM_FIND_READY_STREAM, &find_ready_stream_round_robin);
+    register_noparam_protoop(cnx, &PROTOOP_NOPARAM_SCHEDULE_NEXT_STREAM, &find_ready_stream_round_robin);
     register_noparam_protoop(cnx, &PROTOOP_NOPARAM_FIND_READY_PLUGIN_STREAM, &find_ready_plugin_stream);
     register_noparam_protoop(cnx, &PROTOOP_NOPARAM_IS_ACK_NEEDED, &is_ack_needed);
     register_noparam_protoop(cnx, &PROTOOP_NOPARAM_IS_TLS_STREAM_READY, &is_tls_stream_ready);
