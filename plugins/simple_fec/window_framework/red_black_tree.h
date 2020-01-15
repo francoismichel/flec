@@ -377,6 +377,20 @@ static __attribute__((always_inline)) rbt_node_t *rbt_node_min(rbt_node_t *node)
 
 /**
  * pre: tree not empty
+ * Sets the smallest key and its associated val in the symbol table.
+ * @return true if found, false if the tree was empty
+ */
+static __attribute__((always_inline)) bool rbt_min(red_black_tree_t *tree, rbt_key *retkey, rbt_val *retval) {
+    if (rbt_is_empty(tree)) {
+        return false;
+    }
+    rbt_node_t *min_node = rbt_node_min(tree->root);
+    *retkey = min_node->key;
+    *retval = min_node->val;
+    return true;
+}
+/**
+ * pre: tree not empty
  * Returns the smallest key in the symbol table.
  * @return the smallest key in the symbol table
  */
