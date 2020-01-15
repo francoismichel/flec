@@ -14,6 +14,7 @@
 #include <fcntl.h>
 #include <sys/types.h>
 #include <time.h>
+#include <zlib.h>
 #include "plugin.h"
 #include "memcpy.h"
 #include "memory.h"
@@ -113,6 +114,8 @@ register_functions(struct ubpf_vm *vm) {
     ubpf_register(vm, current_idx++, "picoquic_compare_addr", picoquic_compare_addr);
     ubpf_register(vm, current_idx++, "picoquic_parse_stream_header", picoquic_parse_stream_header);
     ubpf_register(vm, current_idx++, "picoquic_find_stream", picoquic_find_stream);
+    ubpf_register(vm, current_idx++, "picoquic_reset_stream", picoquic_reset_stream);
+    ubpf_register(vm, current_idx++, "picoquic_add_to_stream", picoquic_add_to_stream);
     ubpf_register(vm, current_idx++, "picoquic_set_cnx_state", picoquic_set_cnx_state);
     ubpf_register(vm, current_idx++, "picoquic_frames_varint_decode", picoquic_frames_varint_decode);
     ubpf_register(vm, current_idx++, "picoquic_record_pn_received", picoquic_record_pn_received);
@@ -146,6 +149,7 @@ register_functions(struct ubpf_vm *vm) {
     ubpf_register(vm, current_idx++, "recv", recv);
 
     ubpf_register(vm, current_idx++, "strcmp", strncmp);
+    ubpf_register(vm, current_idx++, "crc32", crc32);
 
     /* This value is reserved. DO NOT OVERRIDE IT! */
     ubpf_register(vm, 0x7f, "picoquic_memory_bound_error", picoquic_memory_bound_error);
