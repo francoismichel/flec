@@ -101,6 +101,8 @@ static const char* default_server_key_file = "certs/key.pem";
 
 #endif
 
+#define MIN(a, b) (((a) <= (b)) ? (a) : (b))
+
 static const int default_server_port = 4443;
 static const char* default_server_name = "::";
 static char* ticket_store_filename = "demo_ticket_store.bin";
@@ -115,6 +117,8 @@ static const char* bad_request_message = "<html><head><title>Bad Request</title>
 
 static const char* response_buffer = NULL;
 static size_t response_length = 0;
+
+static size_t max_stream_receive_window_size = SIZE_MAX;
 
 void print_address(struct sockaddr* address, char* label, picoquic_connection_id_t cnx_id)
 {
@@ -1079,15 +1083,23 @@ int quic_client(const char* ip_address_text, int server_port, const char * sni,
 
     /* Create the client connection */
     if (ret == 0) {
+        picoquic_tp_t tp;
+        memset(&tp, 0, sizeof(picoquic_tp_t));
+        picoquic_init_transport_parameters(&tp, 1);
+        // ensure that the receive window is respected at the beginning of the transfer
+        tp.initial_max_stream_data_bidi_local = MIN(tp.initial_max_stream_data_bidi_local, max_stream_receive_window_size);
+        tp.initial_max_stream_data_bidi_remote = MIN(tp.initial_max_stream_data_bidi_remote, max_stream_receive_window_size);
+        tp.initial_max_stream_data_uni = MIN(tp.initial_max_stream_data_uni, max_stream_receive_window_size);
         /* Create a client connection */
-        cnx_client = picoquic_create_cnx(qclient, picoquic_null_connection_id, picoquic_null_connection_id,
+        cnx_client = picoquic_create_cnx_with_transport_parameters(qclient, picoquic_null_connection_id, picoquic_null_connection_id,
             (struct sockaddr*)&server_address, current_time,
-            proposed_version, sni, alpn, 1);
+            proposed_version, sni, alpn, 1, tp);
 
         if (cnx_client == NULL) {
             ret = -1;
         }
         else {
+            cnx_client->max_stream_receive_window_size = max_stream_receive_window_size;
             if (local_plugins > 0) {
                 printf("%" PRIx64 ": ",
                         picoquic_val64_connection_id(picoquic_get_logging_cnxid(cnx_client)));
@@ -1443,6 +1455,7 @@ void usage()
     fprintf(stderr, "  -m mtu_max            Largest mtu value that can be tried for discovery\n");
     fprintf(stderr, "  -q output.qlog        qlog output file\n");
     fprintf(stderr, "  -S filename           if set, write plugin statistics in the specified file (- for stdout)\n");
+    fprintf(stderr, "  -w stream_rwin_max    sets the maximum value in bytes for the size of the streams receive window\n");
     fprintf(stderr, "  -h                    This help message\n");
     exit(1);
 }
@@ -1518,7 +1531,7 @@ int main(int argc, char** argv)
 
     /* Get the parameters */
     int opt;
-    while ((opt = getopt(argc, argv, "c:k:P:C:Q:G:p:v:L14rhzRX:S:i:s:l:m:n:t:q:")) != -1) {
+    while ((opt = getopt(argc, argv, "c:k:P:C:Q:G:p:v:L14rhzRX:S:i:s:l:m:n:t:q:w:")) != -1) {
         switch (opt) {
         case 'c':
             server_cert_file = optarg;
@@ -1622,6 +1635,13 @@ int main(int argc, char** argv)
             break;
         case 'R':
             ticket_store_filename = NULL;
+            break;
+        case 'w':
+            max_stream_receive_window_size = atol(optarg);
+            if (max_stream_receive_window_size <= 0) {
+                fprintf(stderr, "Invalid max stream receive window size: %s\n", optarg);
+                usage();
+            }
             break;
         case 'h':
             usage();

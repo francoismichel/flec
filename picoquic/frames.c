@@ -3114,12 +3114,17 @@ protoop_arg_t prepare_required_max_stream_data_frames(picoquic_cnx_t* cnx)
     picoquic_stream_head* stream = cnx->first_stream;
 
     while (stream != NULL && ret == 0 && byte_index < bytes_max) {
-        if ((stream->stream_flags & (picoquic_stream_flag_fin_received | picoquic_stream_flag_reset_received)) == 0 && 2 * stream->consumed_offset > stream->maxdata_local) {
+        uint64_t desired_offset = stream->maxdata_local + 2 * stream->consumed_offset;
+        uint64_t largest_possible_offset = stream->consumed_offset + MIN(cnx->max_stream_receive_window_size, UINT64_MAX - stream->consumed_offset); // avoid overflow
+        bool should_update = (desired_offset < largest_possible_offset &&  2 * stream->consumed_offset > stream->maxdata_local)   // we're not rwin-limited
+                            || (desired_offset >= largest_possible_offset && stream->maxdata_local - stream->consumed_offset < 0.5*cnx->max_stream_receive_window_size);  // we are rwin-limited, only update when 50% of the buffer has been read
+        if ((stream->stream_flags & (picoquic_stream_flag_fin_received | picoquic_stream_flag_reset_received)) == 0
+            && should_update) {
             size_t bytes_in_frame = 0;
 
             ret = picoquic_prepare_max_stream_data_frame(stream,
                 bytes + byte_index, bytes_max - byte_index,
-                stream->maxdata_local + 2 * stream->consumed_offset,
+                MIN(desired_offset, largest_possible_offset),
                 &bytes_in_frame);
             if (ret == 0) {
                 byte_index += bytes_in_frame;

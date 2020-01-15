@@ -1162,11 +1162,10 @@ void picoquic_create_random_cnx_id_for_cnx(picoquic_cnx_t* cnx, picoquic_connect
     picoquic_create_random_cnx_id(cnx->quic, cnx_id, id_length);
 }
 
-
-picoquic_cnx_t* picoquic_create_cnx(picoquic_quic_t* quic,
+picoquic_cnx_t* picoquic_create_cnx_with_transport_parameters(picoquic_quic_t* quic,
     picoquic_connection_id_t initial_cnx_id, picoquic_connection_id_t remote_cnx_id, 
     struct sockaddr* addr, uint64_t start_time, uint32_t preferred_version,
-    char const* sni, char const* alpn, char client_mode)
+    char const* sni, char const* alpn, char client_mode, picoquic_tp_t tp)
 {
     picoquic_cnx_t* cnx = (picoquic_cnx_t*)malloc(sizeof(picoquic_cnx_t));
 
@@ -1195,7 +1194,7 @@ picoquic_cnx_t* picoquic_create_cnx(picoquic_quic_t* quic,
     }
 
     if (cnx != NULL) {
-        picoquic_init_transport_parameters(&cnx->local_parameters, cnx->client_mode);
+        cnx->local_parameters = tp;
         if (cnx->quic->mtu_max > 0)
         {
             cnx->local_parameters.max_packet_size = cnx->quic->mtu_max;
@@ -1206,8 +1205,8 @@ picoquic_cnx_t* picoquic_create_cnx(picoquic_quic_t* quic,
         cnx->maxdata_local = ((uint64_t)cnx->local_parameters.initial_max_data);
         cnx->max_stream_id_bidir_local = cnx->local_parameters.initial_max_stream_id_bidir;
         cnx->max_stream_id_unidir_local = cnx->local_parameters.initial_max_stream_id_unidir;
-
-        /* Initialize remote variables to some plausible value. 
+        cnx->max_stream_receive_window_size = SIZE_MAX; // initially unbounded
+        /* Initialize remote variables to some plausible value.
 		 * Hopefully, this will be overwritten by the parameters received in
 		 * the TLS transport parameter extension */
         cnx->maxdata_remote = PICOQUIC_DEFAULT_0RTT_WINDOW;
@@ -1349,6 +1348,17 @@ picoquic_cnx_t* picoquic_create_cnx(picoquic_quic_t* quic,
     }
 
     return cnx;
+}
+
+picoquic_cnx_t *picoquic_create_cnx(picoquic_quic_t* quic,
+                                    picoquic_connection_id_t initial_cnx_id, picoquic_connection_id_t remote_cnx_id,
+                                    struct sockaddr* addr, uint64_t start_time, uint32_t preferred_version,
+                                    char const* sni, char const* alpn, char client_mode) {
+    picoquic_tp_t tp;
+    memset(&tp, 0, sizeof(picoquic_tp_t));
+    picoquic_init_transport_parameters(&tp, client_mode);
+    picoquic_create_cnx_with_transport_parameters(quic, initial_cnx_id, remote_cnx_id, addr, start_time, preferred_version,
+                                                  sni, alpn, client_mode, tp);
 }
 
 picoquic_cnx_t* picoquic_create_client_cnx(picoquic_quic_t* quic,

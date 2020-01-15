@@ -670,6 +670,7 @@ typedef struct st_picoquic_cnx_t {
     uint64_t data_received;
     uint64_t maxdata_local;
     uint64_t maxdata_remote;
+    uint64_t max_stream_receive_window_size;
     uint64_t max_stream_id_bidir_local;
     uint64_t max_stream_id_unidir_local;
     uint64_t max_stream_id_bidir_remote;

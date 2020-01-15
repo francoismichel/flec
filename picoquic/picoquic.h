@@ -113,6 +113,8 @@ extern "C" {
 #define PICOQUIC_BITS_SET_IN_RANGE(  v, min, max, bits) (((v) & ~((min)^(max)^(bits))) == ((min)^(bits)))
 #define PICOQUIC_BITS_CLEAR_IN_RANGE(v, min, max, bits) (((v) & ~((min)^(max)^(bits))) == (min))
 
+#define MIN(a, b) (((a) <= (b)) ? (a) : (b))
+
 /*
  * Types of frames
  */
@@ -599,6 +601,11 @@ picoquic_cnx_t* picoquic_create_cnx(picoquic_quic_t* quic,
     picoquic_connection_id_t initial_cnx_id, picoquic_connection_id_t remote_cnx_id,
     struct sockaddr* addr, uint64_t start_time, uint32_t preferred_version,
     char const* sni, char const* alpn, char client_mode);
+
+picoquic_cnx_t* picoquic_create_cnx_with_transport_parameters(picoquic_quic_t* quic,
+    picoquic_connection_id_t initial_cnx_id, picoquic_connection_id_t remote_cnx_id,
+    struct sockaddr* addr, uint64_t start_time, uint32_t preferred_version,
+    char const* sni, char const* alpn, char client_mode, picoquic_tp_t tp);
 
 picoquic_cnx_t* picoquic_create_client_cnx(picoquic_quic_t* quic,
     struct sockaddr* addr, uint64_t start_time, uint32_t preferred_version,
