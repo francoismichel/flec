@@ -3,7 +3,7 @@
 #include <getset.h>
 #include "../fec.h"
 #include "../window_framework/types.h"
-#include "causal_redundancy_controller_new.h"
+#include "causal_redundancy_controller_general.h"
 #include "../window_framework/framework_sender.h"
 
 
@@ -39,7 +39,7 @@ protoop_arg_t causal_sent_packet(picoquic_cnx_t *cnx) {
         md.repair_metadata.n_protected_source_symbols = get_pkt_metadata(cnx, packet, FEC_PKT_METADATA_NUMBER_OF_PROTECTED_SYMBOLS);
         md.repair_metadata.number_of_repair_symbols = get_pkt_metadata(cnx, packet, FEC_PKT_METADATA_NUMBER_OF_REPAIR_SYMBOLS);
         md.repair_metadata.is_fb_fec = is_fb_fec;
-        PROTOOP_PRINTF(cnx, "SENT REPAIR PACKET, SLOT = %d, [%u, %u]\n", get_pkt_metadata(cnx, packet, FEC_PKT_METADATA_SENT_SLOT), md.repair_metadata.first_protected_source_symbol_id, md.repair_metadata.first_protected_source_symbol_id + md.repair_metadata.n_protected_source_symbols);
+        PROTOOP_PRINTF(cnx, "SENT REPAIR PACKET, SLOT = %d, [%u, %u[\n", get_pkt_metadata(cnx, packet, FEC_PKT_METADATA_SENT_SLOT), md.repair_metadata.first_protected_source_symbol_id, md.repair_metadata.first_protected_source_symbol_id + md.repair_metadata.n_protected_source_symbols);
     }
     sent_packet(cnx, path, ((window_fec_framework_t *) state->framework_sender)->controller, ptype, get_pkt_metadata(cnx, packet, FEC_PKT_METADATA_SENT_SLOT), md);
     return 0;

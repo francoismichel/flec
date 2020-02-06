@@ -9,7 +9,7 @@
 
 // we here assume a single-path context
 
-protoop_arg_t packet_has_been_lost(picoquic_cnx_t *cnx) {
+protoop_arg_t window_packet_has_been_lost(picoquic_cnx_t *cnx) {
     plugin_state_t *state = get_plugin_state(cnx);
     if (!state)
         return PICOQUIC_ERROR_MEMORY;

@@ -30,8 +30,10 @@ protoop_arg_t available_slot(picoquic_cnx_t *cnx) {
     what_to_send_t wts = 0;
     source_symbol_id_t first_id;
     uint16_t n_symbols_to_protect;
+    PROTOOP_PRINTF(cnx, "CALL TO WHAT TO SEND\n");
     int err = fec_what_to_send(cnx, path, reason, &wts, &first_id, &n_symbols_to_protect);
     if (err) {
+        PROTOOP_PRINTF(cnx, "WHAT TO SEND ERROR: %d\n", err);
         return err;
     }
     PROTOOP_PRINTF(cnx, "WTS = %d!\n", wts);

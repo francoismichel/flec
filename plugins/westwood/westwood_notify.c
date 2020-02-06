@@ -30,6 +30,8 @@ protoop_arg_t congestion_algorithm_notify(picoquic_cnx_t *cnx)
         switch (notification) {
             case picoquic_congestion_notification_acknowledgement: {
                 if ((int64_t) current_time - (int64_t) westwood_state->last_rtt_timestamp > smoothed_rtt) {
+                    PROTOOP_PRINTF(cnx, "ROUND DURATION = %lu, BYTES ACK = %lu, SRTT = %lu\n", current_time - (int64_t) westwood_state->last_rtt_timestamp,
+                            westwood_state->bytes_acknowledged_since_last_rtt, smoothed_rtt);
                     // we're in a new round
                     westwood_state->bytes_acknowledged_during_previous_round = westwood_state->bytes_acknowledged_since_last_rtt;
                     westwood_state->bytes_acknowledged_since_last_rtt = 0;
@@ -37,6 +39,7 @@ protoop_arg_t congestion_algorithm_notify(picoquic_cnx_t *cnx)
                     westwood_state->last_rtt_value = smoothed_rtt;
                 }
                 westwood_state->bytes_acknowledged_since_last_rtt += nb_bytes_acknowledged;
+                PROTOOP_PRINTF(cnx, "ADD %lu BYTES ACKNOWLEDGED, TOTAL = %lu\n", nb_bytes_acknowledged, westwood_state->bytes_acknowledged_since_last_rtt);
                 switch (westwood_state->alg_state) {
                     case westwood_alg_slow_start:
                         /* Only increase when the app is CWIN limited */
@@ -98,7 +101,7 @@ protoop_arg_t congestion_algorithm_notify(picoquic_cnx_t *cnx)
                         westwood_state->min_rtt = rtt_measurement;
                     }
 
-                    if (westwood_state->nb_rtt > NB_RTT_WESTWOOD) {
+                    if (westwood_state->nb_rtt >= NB_RTT_WESTWOOD) {
                         westwood_state->nb_rtt = 0;
                     }
 
@@ -131,6 +134,8 @@ protoop_arg_t congestion_algorithm_notify(picoquic_cnx_t *cnx)
 
     /* Compute pacing data */
     update_pacing_data(path_x);
+    PROTOOP_PRINTF(cnx, "CWIN = %lu\n", cwin);
+    PROTOOP_PRINTF(cnx, "EVENT::{\"time\": %ld, \"type\": \"cwin\", \"cwin\": %lu}\n", picoquic_current_time(), cwin);
     set_path(path_x, AK_PATH_CWIN, 0, cwin);
     set_path(path_x, AK_PATH_BYTES_IN_TRANSIT, 0, bytes_in_transit);
     return 0;

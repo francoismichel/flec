@@ -64,11 +64,13 @@ static __attribute__((always_inline)) plugin_state_t *initialize_plugin_state(pi
     }
     fec_scheme_t scheme_receiver = (fec_scheme_t) schemes[0];
     fec_scheme_t scheme_sender = (fec_scheme_t) schemes[1];
-    protoop_arg_t args[2];
+    protoop_arg_t args[4];
     args[0] = scheme_receiver;
     args[1] = scheme_sender;
+    args[2] = SYMBOL_SIZE;
+    args[3] = 15000;    // DEFAULT REPAIR WINDOW SIZE
     // create_fec_framework creates the receiver (0) and sender (1) FEC Frameworks. If an error happens, ret != 0 and both frameworks are freed by the protoop
-    ret = (int) run_noparam(cnx, "create_fec_framework", 2, args, frameworks);
+    ret = (int) run_noparam(cnx, "create_fec_framework", 4, args, frameworks);
     if (ret) {
         my_free(cnx, state);
         return NULL;

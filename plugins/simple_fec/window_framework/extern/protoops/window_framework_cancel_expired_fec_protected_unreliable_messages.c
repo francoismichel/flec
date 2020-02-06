@@ -26,7 +26,7 @@ typedef enum picoquic_stream_flags {
  * cancels the expired messages
 
  */
-protoop_arg_t window_framework_cancel_expired_fec_protected_unreliable_messages(picoquic_cnx_t *cnx)
+protoop_arg_t cancel_expired_unreliable_messages(picoquic_cnx_t *cnx)
 {
     uint64_t current_time = picoquic_current_time();
 

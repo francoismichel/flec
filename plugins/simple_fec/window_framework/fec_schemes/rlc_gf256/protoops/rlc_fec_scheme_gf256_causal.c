@@ -5,8 +5,6 @@
 #include "rlc_fec_scheme_gf256.h"
 #include "../../../types.h"
 
-#define MIN(a, b) ((a < b) ? a : b)
-
 
 
 static __attribute__((always_inline)) void swap(uint8_t **a, int i, int j) {
@@ -62,6 +60,14 @@ static __attribute__((always_inline)) void shuffle_repair_symbols(picoquic_cnx_t
     }
 }
 
+static __attribute__((always_inline)) int first_non_zero_idx(const uint8_t *a, int n_unknowns) {
+    for (int i = 0 ; i < n_unknowns ; i++) {
+        if (a[i] != 0) {
+            return i;
+        }
+    }
+    return -1;
+}
 
 /*******
 Function that performs Gauss-Elimination and returns the Upper triangular matrix:
@@ -76,6 +82,12 @@ static __attribute__((always_inline)) void gaussElimination(picoquic_cnx_t *cnx,
     sort_system(cnx, a, constant_terms, n_eq, n_unknowns);
 
 
+//    PROTOOP_PRINTF(cnx, "PRINTING SYSTEM BEFORE ELIMINATION\n");
+//    for (int g = 0 ; g < n_eq ; g++) {
+//        for (int h = 0 ; h < n_unknowns ; h++) {
+//            PROTOOP_PRINTF(cnx, "a[%d][%d] = %d\n", g, h, a[g][h]);
+//        }
+//    }
     int i,j,k;
     for(i=0;i<n_eq-1;i++){
         for(k=i+1;k<n_eq;k++){
@@ -95,12 +107,55 @@ static __attribute__((always_inline)) void gaussElimination(picoquic_cnx_t *cnx,
         }
     }
     sort_system(cnx, a, constant_terms, n_eq, n_unknowns);
-    PROTOOP_PRINTF(cnx, "PRINTING SYSTEM\n");
+    PROTOOP_PRINTF(cnx, "PRINTING SYSTEM  BEFORE CANONICAL\n");
     for (int g = 0 ; g < n_eq ; g++) {
         for (int h = 0 ; h < n_unknowns ; h++) {
             PROTOOP_PRINTF(cnx, "a[%d][%d] = %d\n", g, h, a[g][h]);
         }
     }
+
+    for (i = 0 ; i < n_eq-1 ; i++) {
+        int first_nz_id = first_non_zero_idx(a[i], n_unknowns);
+//        PROTOOP_PRINTF(cnx, "FIRST NZ ID = %ld\n", first_nz_id);
+        if (first_nz_id == -1) {
+            break;
+        }
+        for (j = first_nz_id + 1 ; j < n_unknowns && a[i][j] != 0; j++) {
+            // let's try to cancel this column from this equation
+            for (k = i + 1 ; k < n_eq ; k++) {
+                int first_nz_id_below = first_non_zero_idx(a[k], n_unknowns);
+                if (j > first_nz_id_below) {
+                    break;
+                } else if (first_nz_id_below == j) {
+                    uint8_t term = gf256_mul(a[i][j], inv[a[k][j]], mul);
+                    for (int l = j ; l < n_unknowns ; l++) {
+//                        a[i][l] = a[i][l] - a[i][j]*a[k][l]/a[k][j];
+                        a[i][l] = gf256_sub(a[i][l], gf256_mul(term, a[k][l], mul));
+//                        a[i][l] = a[i][l] - a[i][j]*a[k][l]/a[k][j];
+                    }
+                    symbol_sub_scaled(constant_terms[i], term, constant_terms[k], symbol_size, mul);
+                    break;
+                }
+            }
+
+        }
+
+    }
+
+
+//    PROTOOP_PRINTF(cnx, "PRINTING SYSTEM\n");
+    for (int g = 0 ; g < n_eq ; g++) {
+        for (int h = 0 ; h < n_unknowns ; h++) {
+            PROTOOP_PRINTF(cnx, "a[%d][%d] = %d\n", g, h, a[g][h]);
+        }
+    }
+
+
+
+
+
+
+
     int candidate = n_unknowns - 1;
     //Begin Back-substitution
     for(i=n_eq-1;i>=0;i--){
@@ -200,18 +255,113 @@ protoop_arg_t fec_recover(picoquic_cnx_t *cnx)
     window_source_symbol_id_t smallest_protected = (window_source_symbol_id_t) get_cnx(cnx, AK_CNX_INPUT, 7);
     uint16_t symbol_size = (uint16_t) get_cnx(cnx, AK_CNX_INPUT, 8);
 
-    PROTOOP_PRINTF(cnx, "%d MISSING SOURCE SYMBOLS, TOTAL SYMBOLS = %d\n", n_missing_source_symbols, n_source_symbols);
+//    PROTOOP_PRINTF(cnx, "%d MISSING SOURCE SYMBOLS, TOTAL SYMBOLS = %d\n", n_missing_source_symbols, n_source_symbols);
+
+    if (n_repair_symbols == 0 || n_missing_source_symbols == 0) {
+        return 0;
+    }
+
 
     window_repair_symbol_t *rs;
 
+    // contains the indexes of the unknowns in the system
+    int *missing_indexes = my_malloc(cnx, n_source_symbols*sizeof(int));
+
+    my_memset(missing_indexes, -1, n_source_symbols*sizeof(int));
+
+    for (int j = 0 ; j < n_missing_source_symbols ; j++) {
+        missing_indexes[missing_source_symbols[j] - smallest_protected] = j;
+    }
+
+
+    // building the system, equation by equation
+    bool *protected_symbols = my_malloc(cnx, n_source_symbols*sizeof(bool));
+    if (!protected_symbols)
+        return PICOQUIC_ERROR_MEMORY;
+    my_memset(protected_symbols, 0, n_source_symbols*sizeof(bool));
+
+    int n_trivial = 0;
+
+    bool contains_trivial_equations = false;
+
+    window_source_symbol_id_t *new_missing_source_symbols = NULL;
+
+    if (n_missing_source_symbols > n_repair_symbols) {
+        // see if there are symbols that can be trivially recovered
+        window_repair_symbol_t **trivial_repairs = my_malloc(cnx, n_repair_symbols*sizeof(repair_symbol_t *));
+        if (!trivial_repairs) {
+//            PROTOOP_PRINTF(cnx, "CANNOT ALLOCATE\n");
+            return PICOQUIC_ERROR_MEMORY;
+        }
+        PROTOOP_PRINTF(cnx, "TRY TRIVIAL\n");
+        my_memset(trivial_repairs, 0, n_repair_symbols*sizeof(repair_symbol_t *));
+
+        new_missing_source_symbols = my_malloc(cnx, n_missing_source_symbols*sizeof(window_source_symbol_id_t));
+        int n_new_missing_source_symbols = 0;
+        // search for trivial ones
+        for_each_window_repair_symbol(repair_symbols, rs, n_repair_symbols) {
+                bool trivial = false;
+                if (rs && rs->metadata.n_protected_symbols < 10) {
+
+                    window_source_symbol_id_t smallest_protected_by_rs = rs->metadata.first_id;
+                    for (int k = smallest_protected_by_rs - smallest_protected;
+                         k < smallest_protected_by_rs + rs->metadata.n_protected_symbols - smallest_protected; k++) {
+
+                        if (!source_symbols[k] && !protected_symbols[k]) {
+                            int index_in_missing = missing_indexes[k];
+                            // check if lower symbols are concerned by this rs
+                            trivial =
+                                    (index_in_missing == 0 ||
+                                     missing_source_symbols[index_in_missing - 1] < smallest_protected)
+                                    // check if lower symbols are concerned by this rs
+                                    && (index_in_missing == n_missing_source_symbols - 1 ||
+                                        missing_source_symbols[index_in_missing + 1] >
+                                        smallest_protected_by_rs + rs->metadata.n_protected_symbols - 1);
+                            if (trivial) {
+                                protected_symbols[k] = true;
+                                new_missing_source_symbols[n_new_missing_source_symbols++] = k + smallest_protected;
+                            }
+                        }
+                    }
+                }
+                if (trivial) {
+                    trivial_repairs[n_trivial++] = rs;
+                }
+            }
+            if (n_trivial > 0) {
+                // this is the new number of symbols to recover
+                n_missing_source_symbols = n_new_missing_source_symbols;
+                // these are the new symbols to recover
+                missing_source_symbols = new_missing_source_symbols;
+//                smallest_protected = new_smallest_protected;
+
+                // recompute missing indexes
+                for (int j = 0 ; j < n_missing_source_symbols ; j++) {
+                    missing_indexes[missing_source_symbols[j] - smallest_protected] = j;
+                }
+                my_memcpy(repair_symbols, trivial_repairs, n_trivial*sizeof(window_repair_symbol_t *));
+                n_repair_symbols = n_trivial;
+                my_free(cnx, trivial_repairs);
+            }
+    }
+
+    PROTOOP_PRINTF(cnx, "N TRIVIAL = %lu\n", n_trivial);
+
+    if (n_trivial == 0 && n_missing_source_symbols > n_repair_symbols) {
+        my_free(cnx, missing_indexes);
+        my_free(cnx, protected_symbols);
+        if (new_missing_source_symbols) {
+            my_free(cnx, new_missing_source_symbols);
+        }
+        return 0;
+    }
+
+    my_memset(protected_symbols, 0, n_source_symbols*sizeof(bool));
 
 
 
     uint8_t **mul = fs->table_mul;
-    if (n_repair_symbols == 0 || n_missing_source_symbols == 0 ||
-        n_missing_source_symbols > n_repair_symbols) {
-        return 0;
-    }
+
     tinymt32_t *prng = my_malloc(cnx, sizeof(tinymt32_t));
     prng->mat1 = 0x8f7011ee;
     prng->mat2 = 0xfc78ff1f;
@@ -224,9 +374,6 @@ protoop_arg_t fec_recover(picoquic_cnx_t *cnx)
     uint8_t **system_coefs = my_malloc(cnx, n_eq*sizeof(uint8_t *));//[n_eq][n_unknowns + 1];
     uint8_t **constant_terms = my_malloc(cnx, n_eq*sizeof(uint8_t *));
     bool *undetermined = my_malloc(cnx, n_missing_source_symbols*sizeof(bool));
-    // contains the indexes of the unknowns in the system
-    int *missing_indexes = my_malloc(cnx, n_source_symbols*sizeof(int));
-
 
     if (!coefs || !unknowns || !system_coefs || !undetermined) {
         PROTOOP_PRINTF(cnx, "NOT ENOUGH MEM\n");
@@ -234,11 +381,6 @@ protoop_arg_t fec_recover(picoquic_cnx_t *cnx)
     }
 
     my_memset(undetermined, 0, n_missing_source_symbols*sizeof(bool));
-    my_memset(missing_indexes, -1, n_source_symbols*sizeof(int));
-
-    for (int j = 0 ; j < n_missing_source_symbols ; j++) {
-        missing_indexes[missing_source_symbols[j] - smallest_protected] = j;
-    }
 
     for (int j = 0 ; j < n_eq ; j++) {
         system_coefs[j] = my_malloc(cnx, (n_missing_source_symbols) * sizeof(uint8_t));
@@ -253,11 +395,6 @@ protoop_arg_t fec_recover(picoquic_cnx_t *cnx)
         my_memset(unknowns[j], 0, symbol_size);
     }
 
-    // building the system, equation by equation
-    bool *protected_symbols = my_malloc(cnx, n_source_symbols*sizeof(bool));
-    if (!protected_symbols)
-        return PICOQUIC_ERROR_MEMORY;
-    my_memset(protected_symbols, 0, n_source_symbols*sizeof(bool));
     i = 0;
     tinymt32_t *shuffle_prng = my_malloc(cnx, sizeof(tinymt32_t));
     shuffle_prng->mat1 = 0x8f7011ee;
@@ -266,12 +403,36 @@ protoop_arg_t fec_recover(picoquic_cnx_t *cnx)
     tinymt32_init(shuffle_prng, picoquic_current_time());
     shuffle_repair_symbols(cnx, repair_symbols, n_repair_symbols, shuffle_prng);
     my_free(cnx, shuffle_prng);
+
+//    // indicates the source symbols that can be trivially repaired (a RS only concerns it and not the others lost symbols)
+//    repair_symbol_t **trivial_repairs = my_malloc(cnx, n_missing_source_symbols*sizeof(repair_symbol_t *));
+//    if (!trivial_repairs) {
+//        PROTOOP_PRINTF(cnx, "CANNOT ALLOCATE\n");
+//        return PICOQUIC_ERROR_MEMORY;
+//    }
+//    my_memset(trivial_repairs, 0, n_missing_source_symbols*sizeof(repair_symbol_t *));
+
+
     for_each_window_repair_symbol(repair_symbols, rs, n_repair_symbols) {
         if (rs && i < n_eq) {
-            PROTOOP_PRINTF(cnx, "RS %d CRC = 0x%x\n", i, crc32(0, rs->repair_symbol.repair_payload, rs->repair_symbol.payload_length));
+//            PROTOOP_PRINTF(cnx, "RS %d CRC = 0x%x\n", i, crc32(0, rs->repair_symbol.repair_payload, rs->repair_symbol.payload_length));
             window_source_symbol_id_t smallest_protected_by_rs = rs->metadata.first_id;
             bool protects_at_least_one_new_source_symbol = false;
+            bool trivial = false;
             for (int k = smallest_protected_by_rs - smallest_protected ; k < smallest_protected_by_rs + rs->metadata.n_protected_symbols - smallest_protected ; k++) {
+                if (!source_symbols[k]) {
+                    int index_in_missing = missing_indexes[k];
+                                 // check if lower symbols are concerned by this rs
+                    trivial =  (index_in_missing == 0 || missing_source_symbols[index_in_missing-1] < smallest_protected)
+                                // check if lower symbols are concerned by this rs
+                                && (index_in_missing == n_missing_source_symbols - 1 || missing_source_symbols[index_in_missing+1] > smallest_protected_by_rs + rs->metadata.n_protected_symbols - 1);
+//                    PROTOOP_PRINTF(cnx, "RS [%u] IS TRIVIAL ?\n", smallest_protected_by_rs);
+                    if (trivial) {
+//                        PROTOOP_PRINTF(cnx, "TRIVIAL\n");
+                        contains_trivial_equations = true;
+                        break;
+                    }
+                }
                 // this source symbol is protected by this repair symbol
                 if (!source_symbols[k] && !protected_symbols[k]) {
                     protects_at_least_one_new_source_symbol = true;
@@ -279,7 +440,7 @@ protoop_arg_t fec_recover(picoquic_cnx_t *cnx)
                     break;
                 }
             }
-            if (protects_at_least_one_new_source_symbol) {
+            if (trivial || protects_at_least_one_new_source_symbol) {
                 PROTOOP_PRINTF(cnx, "RS %u PROTECTS ONE SS\n", decode_u32(rs->metadata.fss.val));
                 constant_terms[i] = my_malloc(cnx, symbol_size);
                 if (!constant_terms[i]) {
@@ -291,15 +452,15 @@ protoop_arg_t fec_recover(picoquic_cnx_t *cnx)
                 my_memset(system_coefs[i], 0, n_missing_source_symbols);
                 get_coefs(cnx, prng, decode_u32(rs->metadata.fss.val), rs->metadata.n_protected_symbols, &coefs[smallest_protected_by_rs - smallest_protected]);
                 int current_unknown = 0;
-                PROTOOP_PRINTF(cnx, "BEFORE LOOP, source_symbols = %p\n", (protoop_arg_t) source_symbols);
+//                PROTOOP_PRINTF(cnx, "BEFORE LOOP, source_symbols = %p\n", (protoop_arg_t) source_symbols);
                 for (int j = smallest_protected_by_rs - smallest_protected ; j < smallest_protected_by_rs + rs->metadata.n_protected_symbols - smallest_protected ; j++) {
                     // this source symbol is protected by this repair symbol
                     if (source_symbols[j]) {
-                        PROTOOP_PRINTF(cnx, "SYMBOL %u NOT NULL\n", j + smallest_protected);
-                        PROTOOP_PRINTF(cnx, "ADD KNOWN TO CT, COEF = %u, CRC = 0x%x\n", coefs[j], crc32(0, source_symbols[j]->source_symbol._whole_data, symbol_size));
+//                        PROTOOP_PRINTF(cnx, "SYMBOL %u NOT NULL\n", j + smallest_protected);
+//                        PROTOOP_PRINTF(cnx, "ADD KNOWN TO CT, COEF = %u, CRC = 0x%x\n", coefs[j], crc32(0, source_symbols[j]->source_symbol._whole_data, symbol_size));
                         symbol_sub_scaled(constant_terms[i], coefs[j], source_symbols[j]->source_symbol._whole_data, symbol_size, mul);
                     } else if (current_unknown < n_missing_source_symbols) {
-                        PROTOOP_PRINTF(cnx, "ADDING UNKNOWN %u, COEF %u\n", j + smallest_protected, coefs[j]);
+//                        PROTOOP_PRINTF(cnx, "ADDING UNKNOWN %u, COEF %u\n", j + smallest_protected, coefs[j]);
 //                        system_coefs[i][current_unknown++] = coefs[j];
                         if (missing_indexes[j] != -1) {
                             system_coefs[i][missing_indexes[j]] = coefs[j];
@@ -308,7 +469,6 @@ protoop_arg_t fec_recover(picoquic_cnx_t *cnx)
                             PROTOOP_PRINTF(cnx, "ERROR: WRONG INDEX FOR ID %u\n", i + smallest_protected);
                         }
                     }
-                    PROTOOP_PRINTF(cnx, "DONE\n");
                 }
                 i++;
                 PROTOOP_PRINTF(cnx, "EQUATION BUILT\n");
@@ -320,7 +480,7 @@ protoop_arg_t fec_recover(picoquic_cnx_t *cnx)
     int n_effective_equations = i;
 
     // the system is built: let's recover it
-    bool can_recover = n_effective_equations >= n_missing_source_symbols;
+    bool can_recover = contains_trivial_equations || n_effective_equations >= n_missing_source_symbols;
     if (can_recover)
         gaussElimination(cnx, n_effective_equations, n_missing_source_symbols, system_coefs, constant_terms, unknowns, undetermined, symbol_size, mul, fs->table_inv);
     else
@@ -328,9 +488,10 @@ protoop_arg_t fec_recover(picoquic_cnx_t *cnx)
     PROTOOP_PRINTF(cnx, "END GAUSSIAN\n");
     int current_unknown = 0;
     int err = 0;
-    for (int j = 0 ; j < n_source_symbols ; j++) {
-        PROTOOP_PRINTF(cnx, "FOR %d\n", j);
-        if (!source_symbols[j] && can_recover && !undetermined[current_unknown] && !symbol_is_zero(unknowns[current_unknown], symbol_size)) {
+    for (int j = 0 ; j < n_missing_source_symbols ; j++) {
+        int idx = missing_source_symbols[j] - smallest_protected;
+//        PROTOOP_PRINTF(cnx, "missing[j] = %u\n", (protoop_arg_t) missing_source_symbols[j]);
+        if (!source_symbols[idx] && can_recover && !undetermined[current_unknown] && !symbol_is_zero(unknowns[current_unknown], symbol_size)) {
             // TODO: handle the case where source symbols could be 0
             window_source_symbol_t *ss = create_window_source_symbol(cnx, symbol_size);
             if (!ss) {
@@ -338,16 +499,18 @@ protoop_arg_t fec_recover(picoquic_cnx_t *cnx)
                 err = PICOQUIC_ERROR_MEMORY;
                 continue;
             }
-            ss->id = smallest_protected + j;
+            ss->id = smallest_protected + idx;
             my_memcpy(ss->source_symbol._whole_data, unknowns[current_unknown], symbol_size);
-            source_symbols[j] = ss;
+            source_symbols[idx] = ss;
             my_free(cnx, unknowns[current_unknown++]);
             PROTOOP_PRINTF(cnx, "RECOVERED SYMBOL %u, CRC = 0x%x\n", ss->id, crc32(0, ss->source_symbol._whole_data, symbol_size));
-        } else if (!source_symbols[j] && (!can_recover || undetermined[current_unknown] || symbol_is_zero(unknowns[current_unknown], symbol_size))) {
+        } else if (!source_symbols[idx] && (!can_recover || undetermined[current_unknown] || symbol_is_zero(unknowns[current_unknown], symbol_size))) {
             // this unknown could not be recovered
             my_free(cnx, unknowns[current_unknown++]);
         }
     }
+
+    set_cnx(cnx, AK_CNX_OUTPUT, 0, can_recover);
 
     // free the system
     for (i = 0 ; i < n_eq ; i++) {
@@ -362,6 +525,8 @@ protoop_arg_t fec_recover(picoquic_cnx_t *cnx)
     my_free(cnx, coefs);
     my_free(cnx, undetermined);
     my_free(cnx, missing_indexes);
+    if (new_missing_source_symbols)
+        my_free(cnx, new_missing_source_symbols);
     PROTOOP_PRINTF(cnx, "END RECOVER\n");
     return err;
 }

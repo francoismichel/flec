@@ -38,10 +38,11 @@ protoop_arg_t process_ack_range(picoquic_cnx_t *cnx)
                         helper_congestion_algorithm_notify(cnx, old_path,
                                                            picoquic_congestion_notification_acknowledgement, 0, length, 0, current_time);
                     }
+                    packet_has_been_acknowledged(cnx, old_path, sequence_number, get_pkt(p, AK_PKT_SEND_TIME), current_time);
                     bool fec_protected = FEC_PKT_IS_FEC_PROTECTED(get_pkt_metadata(cnx, p, FEC_PKT_METADATA_FLAGS));
                     bool contains_repair_frame = FEC_PKT_CONTAINS_REPAIR_FRAME(get_pkt_metadata(cnx, p, FEC_PKT_METADATA_FLAGS));
                     if (fec_protected || contains_repair_frame) {
-                        uint64_t slot = get_pkt_metadata(cnx, p, FEC_PKT_METADATA_SENT_SLOT);;
+                        uint64_t slot = get_pkt_metadata(cnx, p, FEC_PKT_METADATA_SENT_SLOT);
                         source_symbol_id_t id = (source_symbol_id_t) get_pkt_metadata(cnx, p, FEC_PKT_METADATA_FIRST_SOURCE_SYMBOL_ID);
                         uint16_t n_source_symbols = (uint16_t) get_pkt_metadata(cnx, p, FEC_PKT_METADATA_NUMBER_OF_SOURCE_SYMBOLS);
                         fec_packet_symbols_have_been_received(cnx, sequence_number, slot, id, n_source_symbols,

@@ -7,9 +7,6 @@
 #include "wire.h"
 
 
-#define MIN(a, b) ((a < b) ? a : b)
-
-
 // returns true if the symbol has been successfully processed
 // returns false otherwise: the symbol can be destroyed
 //FIXME: we pass the state in the parameters because the call to get_bpf_state leads to an error when loading the code

@@ -19,7 +19,7 @@ protoop_arg_t reserve_repair_frames_protoop(picoquic_cnx_t *cnx) {
     bool protect_subset = (uint16_t) get_cnx(cnx, AK_CNX_INPUT, 4);
     window_source_symbol_id_t first_id_to_protect = (uint16_t) get_cnx(cnx, AK_CNX_INPUT, 5);
     uint16_t n_symbols_to_protect = (uint16_t) get_cnx(cnx, AK_CNX_INPUT, 6);
-    int max_repair_frames_threshold = 20;
+    int max_repair_frames_threshold = 50;
 //    int max_repair_frames_threshold = 10;
 //    if (!is_lost_packet_queue_empty(cnx, &state->lost_packets))
 //        max_repair_frames_threshold = wff->window_length*2;

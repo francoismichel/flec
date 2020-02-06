@@ -1,0 +1,7 @@
+be.michelfra.loss_monitor dynamic_memory
+
+packet_lost post packet_lost.o
+packet_acked post packet_acknowledged.o
+
+get_loss_parameters replace get_loss_parameters.o
+

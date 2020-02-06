@@ -1,2 +1,3 @@
 be.michelfra.westwood
 congestion_algorithm_notify replace congestion_notify.o
+congestion_set_fixed_cwin extern set_cwin.o

@@ -18,6 +18,8 @@ protoop_arg_t retransmit_needed(picoquic_cnx_t *cnx)
     int is_cleartext_mode = (int) get_cnx(cnx, AK_CNX_INPUT, 5);
     uint16_t header_length = (uint32_t) get_cnx(cnx, AK_CNX_INPUT, 6);
 
+//    PROTOOP_PRINTF(cnx, "DISABLE RETRANS\n");
+
     uint16_t length = 0;
     int stop = false;
     char *reason = NULL;
@@ -45,8 +47,6 @@ protoop_arg_t retransmit_needed(picoquic_cnx_t *cnx)
             should_retransmit = helper_retransmit_needed_by_packet(cnx, p, current_time, &timer_based_retransmit, &reason, NULL);
 
             if (should_retransmit == 0) {
-                if (FEC_PKT_CONTAINS_REPAIR_FRAME(get_pkt_metadata(cnx, p, FEC_PKT_METADATA_FLAGS)))
-                    PROTOOP_PRINTF(cnx, "FEC SHOULD NOT RETR\n");
                 /*
                 * Always retransmit in order. If not this one, then nothing.
                 * But make an exception for 0-RTT packets.
@@ -58,7 +58,6 @@ protoop_arg_t retransmit_needed(picoquic_cnx_t *cnx)
                     break;
                 }
             } else {
-//                PROTOOP_PRINTF(cnx, "SHOULD RETRANSMIT = 1\n");
 //                if (FEC_PKT_CONTAINS_REPAIR_FRAME(get_pkt_metadata(cnx, p, FEC_PKT_METADATA_FLAGS)))
 //                    PROTOOP_PRINTF(cnx, "FEC SHOULD RETR\n");
 
@@ -231,6 +230,9 @@ protoop_arg_t retransmit_needed(picoquic_cnx_t *cnx)
                     helper_dequeue_retransmit_packet(cnx, p, (packet_is_pure_ack & do_not_detect_spurious) || (pc == picoquic_packet_context_application && !get_pkt(p, AK_PKT_IS_MTU_PROBE)));
                     if (state)
                         state->current_packet_is_lost = false;
+
+                    packet_has_been_lost(cnx, path_x, lost_packet_number, get_pkt(p, AK_PKT_SEND_TIME), current_time);
+
                     /* If we have a good packet, return it */
                     if (fec_related || packet_is_pure_ack) {
                         if (fec_related) {
@@ -280,7 +282,8 @@ protoop_arg_t retransmit_needed(picoquic_cnx_t *cnx)
                             } else {
                                 set_pkt_ctx(orig_pkt_ctx, AK_PKTCTX_LATEST_RETRANSMIT_TIME, current_time);
                                 if (current_time >= retrans_cc_notification_timer) {
-                                    set_pkt_ctx(orig_pkt_ctx, AK_PKTCTX_NB_RETRANSMIT, nb_retransmit + 1);
+                                    nb_retransmit++;
+                                    set_pkt_ctx(orig_pkt_ctx, AK_PKTCTX_NB_RETRANSMIT, nb_retransmit);
                                 }
                             }
                         }

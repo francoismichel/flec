@@ -11,10 +11,16 @@
 #define FEC_RECEIVE_PACKET_PAYLOAD "fec_receive_packet_payload"
 #define FEC_PROTECT_PACKET_PAYLOAD "fec_protect_packet_payload"
 #define FEC_RESERVE_REPAIR_FRAMES "fec_reserve_repair_frames"
+#define PACKET_HAS_BEEN_LOST "packet_lost"
+#define PACKET_HAS_BEEN_ACKNOWLEDGED "packet_acked"
 #define FEC_PACKET_HAS_BEEN_LOST "fec_packet_lost"
 #define FEC_PACKET_HAVE_BEEN_RECEIVED "fec_packet_received"
 #define FEC_SENT_PACKET "fec_sent_packet"
 #define FEC_AFTER_INCOMING_PACKET "fec_after_incoming"
+
+
+// depends on the loss_monitor plugin
+#define GET_LOSS_PARAMETERS "get_loss_parameters"
 
 
 // frames

@@ -7,8 +7,6 @@
 #include "../helpers.h"
 #include "fec_constants.h"
 
-#define MIN(a, b) ((a < b) ? a : b)
-
 #define member_size(struct_type, member) (sizeof(((struct_type *) 0)->member))
 
 static __attribute__((always_inline)) uint64_t decode_un(uint8_t *bytes, int n) {
@@ -154,6 +152,34 @@ static __attribute__((always_inline)) what_to_send_t fec_check_for_available_slo
     return (int) run_noparam(cnx, FEC_PROTOOP_CHECK_FOR_AVAILABLE_SLOT, 1, args, NULL);
 }
 
+// not specific to FEC
+static __attribute__((always_inline)) int packet_has_been_acknowledged(picoquic_cnx_t *cnx,
+                                                                              picoquic_path_t *path,
+                                                                              uint64_t packet_number,
+                                                                              uint64_t send_time,
+                                                                              uint64_t current_time) {
+    protoop_arg_t args[4];
+    args[0] = (protoop_arg_t) path;
+    args[1] = (protoop_arg_t) packet_number;
+    args[2] = (protoop_arg_t) send_time;
+    args[3] = (protoop_arg_t) current_time;
+    return (int) run_noparam(cnx, PACKET_HAS_BEEN_ACKNOWLEDGED, 4, args, NULL);
+}
+
+// not specific to FEC
+static __attribute__((always_inline)) int packet_has_been_lost(picoquic_cnx_t *cnx,
+                                                                              picoquic_path_t *path,
+                                                                              uint64_t packet_number,
+                                                                              uint64_t send_time,
+                                                                              uint64_t current_time) {
+    protoop_arg_t args[4];
+    args[0] = (protoop_arg_t) path;
+    args[1] = (protoop_arg_t) packet_number;
+    args[2] = (protoop_arg_t) send_time;
+    args[3] = (protoop_arg_t) current_time;
+    return (int) run_noparam(cnx, PACKET_HAS_BEEN_LOST, 4, args, NULL);
+}
+
 
 static __attribute__((always_inline)) int fec_packet_has_been_lost(picoquic_cnx_t *cnx,
                                                                               uint64_t packet_number,
@@ -214,6 +240,24 @@ static __attribute__((always_inline)) what_to_send_t fec_after_incoming_packet(p
 static __attribute__((always_inline)) what_to_send_t fec_has_protected_data_to_send(picoquic_cnx_t *cnx) {
 
     return (int) run_noparam(cnx, FEC_PROTOOP_HAS_PROTECTED_DATA_TO_SEND, 0, NULL, NULL);
+}
+
+
+// depends on the loss_monitor plugin
+static __attribute__((always_inline)) int get_loss_parameters(picoquic_cnx_t *cnx, picoquic_path_t *path, uint64_t current_time, uint64_t granularity,
+                                                                         uint64_t *uniform_rate_times_granularity, uint64_t *p_times_granularity,
+                                                                         uint64_t *r_times_granularity) {
+
+    protoop_arg_t args[3];
+    args[0] = (protoop_arg_t) path;
+    args[1] = (protoop_arg_t) granularity;
+    args[2] = (protoop_arg_t) current_time;
+    protoop_arg_t output[4];
+    int retval = (int) run_noparam(cnx, GET_LOSS_PARAMETERS, 3, args, output);
+    if (uniform_rate_times_granularity) *uniform_rate_times_granularity = output[0];
+    if (p_times_granularity) *p_times_granularity = output[1];
+    if (r_times_granularity) *r_times_granularity = output[2];
+    return retval;
 }
 
 static __attribute__((always_inline)) int reserve_src_fpi_frame(picoquic_cnx_t *cnx, source_symbol_id_t id) {

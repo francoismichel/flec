@@ -26,7 +26,7 @@
 #define FEC_PROTOOP_WINDOW_CONTROLLER_FREE_SLOT "fec_controller_free_slot"
 #define WINDOW_INITIAL_SYMBOL_ID 1
 
-#define MAX_SENDING_WINDOW_SIZE 400
+#define MAX_SENDING_WINDOW_SIZE 1000
 
 
 #define for_each_window_source_symbol(____sss, ____ss, ____nss) \

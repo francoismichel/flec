@@ -53,6 +53,10 @@ static __attribute__((always_inline)) int rbt_stack_size(rbt_array_stack_t *stac
     return stack->current_size;
 }
 
+static __attribute__((always_inline)) void rbt_stack_reset(rbt_array_stack_t *stack) {
+    stack->current_size = 0;
+}
+
 static __attribute__((always_inline)) int rbt_stack_push(rbt_array_stack_t *stack, rbt_node_t *node, bool right) {
     if (!node || stack->current_size == RBT_MAX_DEPTH)
         return -1;
@@ -285,40 +289,30 @@ static __attribute__((always_inline)) rbt_node_t *rbt_node_put(picoquic_cnx_t *c
 
     rbt_node_t *current_node = node;
 
-    PROTOOP_PRINTF(cnx, "PUT, FIRST PART\n");
     while(current_node) {
-        PROTOOP_PRINTF(cnx, "WHILE LOOP, CURRENT = %p\n", (protoop_arg_t) current_node);
         int cmp = key_compare(key, current_node->key);
         if      (cmp < 0)  {
             // continue to search
-            PROTOOP_PRINTF(cnx, "BEFORE STACK PUSH 1\n");
             rbt_stack_push(stack, current_node, false);
-            PROTOOP_PRINTF(cnx, "AFTER STACK PUSH 1\n");
             current_node = current_node->left;  //current_node->left  = put(cnx, current_node->left,  key, val);
         }
         else if (cmp > 0) {
             // continue to search
-            PROTOOP_PRINTF(cnx, "BEFORE STACK PUSH 2\n");
             rbt_stack_push(stack, current_node, true);
-            PROTOOP_PRINTF(cnx, "AFTER STACK PUSH 2 !\n");
             current_node = current_node->right;  //current_node->right  = put(cnx, current_node->right,  key, val);
-            PROTOOP_PRINTF(cnx, "AFTER NEXT\n");
         }
         else {
             current_node->val   = val;
             break;
         }
     }
-    PROTOOP_PRINTF(cnx, "DONE WHILE, current = %p\n", (protoop_arg_t) current_node);
     if (!current_node) {
-        PROTOOP_PRINTF(cnx, "CREATE NEW NODE\n");
         current_node = rbt_new_node(cnx, key, val, RED, 1);
         if (!current_node) {
             PROTOOP_PRINTF(cnx, "Out of memory when creating a new node\n");
         }
     }
 
-    PROTOOP_PRINTF(cnx, "PUT, SECOND PART\n");
 
     // from this, the current node  subtree has the correct colors but we need the fix the path from the root to this node
 
@@ -344,7 +338,6 @@ static __attribute__((always_inline)) rbt_node_t *rbt_node_put(picoquic_cnx_t *c
 }
 
 static __attribute__((always_inline)) void rbt_put(picoquic_cnx_t *cnx, red_black_tree_t *tree, rbt_key key, rbt_val val) {
-    PROTOOP_PRINTF(cnx, "PUT KEY %lu IN TREE %p\n", key, (protoop_arg_t) tree);
     tree->root = rbt_node_put(cnx, &tree->helper_stack, tree->root, key, val);
     tree->root->color = BLACK;
     // assert check();

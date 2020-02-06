@@ -13,7 +13,7 @@
    uint64_t data_lifetime the amount of time during which the data can be used if received by the peer (so it is useless to be transmitted if the deadline is bigger than the one-way delay)
 
  */
-protoop_arg_t window_framework_send_fec_protected_unreliable_message(picoquic_cnx_t *cnx)
+protoop_arg_t fec_unreliable_message(picoquic_cnx_t *cnx)
 {
     uint64_t current_time = picoquic_current_time();
 

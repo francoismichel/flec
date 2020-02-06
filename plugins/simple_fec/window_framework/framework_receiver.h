@@ -3,10 +3,7 @@
 #include "window_receive_buffers.h"
 #include "types.h"
 
-#define MAX_RECEIVE_BUFFER_SIZE 450
-
-
-#define MIN(a, b) ((a < b) ? a : b)
+#define MAX_RECEIVE_BUFFER_SIZE 1001
 
 
 #define MAX_AMBIGUOUS_ID_GAP ((uint32_t) 0x200*2)       // the max ambiguous ID gap depends on the max number of source symbols that can be protected by a Repair Symbol
@@ -33,7 +30,8 @@ typedef struct {
     
 } window_fec_framework_receiver_t;
 
-static __attribute__((always_inline)) window_fec_framework_receiver_t *create_framework_receiver(picoquic_cnx_t *cnx, fec_scheme_t fs) {
+static __attribute__((always_inline)) window_fec_framework_receiver_t *create_framework_receiver(picoquic_cnx_t *cnx, fec_scheme_t fs, uint16_t symbol_size, uint64_t bytes_repair_buffer) {
+
     window_fec_framework_receiver_t *wff = my_malloc(cnx, sizeof(window_fec_framework_receiver_t));
     if (!wff)
         return NULL;
@@ -44,7 +42,7 @@ static __attribute__((always_inline)) window_fec_framework_receiver_t *create_fr
         my_free(cnx, wff);
         return NULL;
     }
-    wff->received_repair_symbols = new_repair_symbols_buffer(cnx, MAX_RECEIVE_BUFFER_SIZE);
+    wff->received_repair_symbols = new_repair_symbols_buffer(cnx, bytes_repair_buffer/symbol_size);
     if (!wff->received_repair_symbols) {
         release_source_symbols_buffer(cnx, wff->received_source_symbols);
         my_free(cnx, wff);
@@ -106,7 +104,7 @@ static __attribute__((always_inline)) void select_source_and_repair_symbols(pico
                                                                             window_source_symbol_id_t *missing_source_symbols
                                                                             ) {
     window_source_symbol_id_t first_id = 0, last_id = 0;
-    *n_repair_symbols = get_repair_symbols(cnx, wff->received_repair_symbols, repair_symbols, &first_id, &last_id);
+    *n_repair_symbols = get_repair_symbols(cnx, wff->received_repair_symbols, repair_symbols, &first_id, &last_id, get_highest_contiguous_received_source_symbol(wff->symbols_tracker), MAX_RECEIVE_BUFFER_SIZE);
     *n_considered_source_symbols = last_id + 1 - first_id;
     if (*n_repair_symbols > 0) {
         uint16_t n_added_source_symbols = get_source_symbols_between_bounds(cnx, wff->received_source_symbols, source_symbols, first_id, last_id);
@@ -133,7 +131,7 @@ static __attribute__((always_inline)) void select_source_and_repair_symbols(pico
 
 static __attribute__((always_inline)) int recover_lost_symbols(picoquic_cnx_t *cnx, window_fec_framework_receiver_t *wff, window_source_symbol_t **source_symbols,
             uint16_t n_source_symbols, window_source_symbol_id_t first_symbol_id, window_repair_symbol_t **repair_symbols, uint16_t n_repair_symbols,
-            uint16_t n_missing_source_symbols, window_source_symbol_id_t *missing_symbols_buffer, uint16_t symbol_size) {
+            uint16_t n_missing_source_symbols, window_source_symbol_id_t *missing_symbols_buffer, uint16_t symbol_size, protoop_arg_t *recovered) {
     protoop_arg_t args[9];
     args[0] = (protoop_arg_t) wff->fs;
     args[1] = (protoop_arg_t) source_symbols;
@@ -145,7 +143,7 @@ static __attribute__((always_inline)) int recover_lost_symbols(picoquic_cnx_t *c
     args[7] = (protoop_arg_t) first_symbol_id;
     args[8] = (protoop_arg_t) symbol_size;
 
-    return (int) run_noparam(cnx, FEC_PROTOOP_WINDOW_FEC_SCHEME_RECOVER, 9, args, NULL);
+    return (int) run_noparam(cnx, FEC_PROTOOP_WINDOW_FEC_SCHEME_RECOVER, 9, args, recovered);
 }
 
 // returns true if the symbol has been successfully processed
@@ -277,7 +275,9 @@ static __attribute__((always_inline)) bool reassemble_packet_from_recovered_symb
             data_offset++;
         }
         // copy the chunk without padding into the packet
+        PROTOOP_PRINTF(cnx, "BEFORE MEMCPY\n");
         my_memcpy(&buffer[*payload_size], source_symbols[i]->source_symbol.chunk_data + data_offset, source_symbols[i]->source_symbol.chunk_size - data_offset);
+        PROTOOP_PRINTF(cnx, "AFTER MEMCPY\n");
         *payload_size += source_symbols[i]->source_symbol.chunk_size - data_offset;
     }
 
@@ -324,10 +324,11 @@ static __attribute__((always_inline)) int try_to_recover(picoquic_cnx_t *cnx, wi
         PROTOOP_PRINTF(cnx, "NOTHING TO RECOVER\n");
         return 0;
     }
+    protoop_arg_t could_recover = false;
     // we here assume that the first protected symbol is encoded in the fec block number
-    if (first_selected_id > wff->highest_removed && selected_repair_symbols >= n_missing_source_symbols) {
+    if (first_selected_id > wff->highest_removed /*&& selected_repair_symbols >= n_missing_source_symbols*/) {
         recover_lost_symbols(cnx, wff, wff->ss_recovery_buffer, selected_source_symbols, first_selected_id, wff->rs_recovery_buffer, selected_repair_symbols,
-                n_missing_source_symbols, wff->missing_symbols_buffer, symbol_size);
+                n_missing_source_symbols, wff->missing_symbols_buffer, symbol_size, &could_recover);
         // we don't free anything, it will be freed when new symbols are received
     }
 
@@ -339,7 +340,7 @@ static __attribute__((always_inline)) int try_to_recover(picoquic_cnx_t *cnx, wi
     }
     my_memset(recovered_packet, 0, PICOQUIC_MAX_PACKET_SIZE);
     PROTOOP_PRINTF(cnx, "BEFORE LOOP, %d MISSING SYMBOLS, first_id = %u\n", n_missing_source_symbols, first_selected_id);
-    for (int i = 0 ; i < n_missing_source_symbols ; i++) {
+    for (int i = 0 ; could_recover && i < n_missing_source_symbols ; i++) {
         window_source_symbol_t *ss = wff->ss_recovery_buffer[wff->missing_symbols_buffer[i] - first_selected_id];
         if (ss) {
             ss->id = wff->missing_symbols_buffer[i];
@@ -347,7 +348,7 @@ static __attribute__((always_inline)) int try_to_recover(picoquic_cnx_t *cnx, wi
             size_t packet_size = 0;
             uint64_t packet_number = 0;
             window_source_symbol_id_t first_id_in_packet = 0;
-            PROTOOP_PRINTF(cnx, "BEFORE REASSEMBLE\n");
+            PROTOOP_PRINTF(cnx, "BEFORE REASSEMBLE %u\n", ss->id);
             if (reassemble_packet_from_recovered_symbol(cnx, wff, recovered_packet, PICOQUIC_MAX_PACKET_SIZE, wff->ss_recovery_buffer, selected_source_symbols,
                                                         wff->missing_symbols_buffer[i] - first_selected_id, &packet_size, &packet_number, &first_id_in_packet)) {
                 window_source_symbol_t *ss = wff->ss_recovery_buffer[wff->missing_symbols_buffer[i] - first_selected_id];

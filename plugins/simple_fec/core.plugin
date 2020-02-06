@@ -19,6 +19,9 @@ write_frame param 0x2b post protoops/post_write_recovered_frame.o
 
 fec_sent_packet replace protoops/sent_packet.o
 
+packet_lost replace protoops/packet_lost_noop.o
+packet_acked replace protoops/packet_acked_noop.o
+
 fec_packet_lost post protoops/pre_packet_has_been_lost.o
 fec_packet_received post protoops/pre_packet_has_been_received.o
 fec_after_incoming replace protoops/after_incoming_packet.o

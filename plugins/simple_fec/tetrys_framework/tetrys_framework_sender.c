@@ -9,8 +9,6 @@
 #define MAX_QUEUED_REPAIR_SYMBOLS 6
 #define NUMBER_OF_SYMBOLS_TO_FLUSH 5
 
-#define MIN(a, b) ((a < b) ? a : b)
-
 typedef uint32_t fec_block_number;
 
 static __attribute__((always_inline)) void tetrys_id_has_landed(tetrys_fec_framework_sender_t *wff,

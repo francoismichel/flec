@@ -4,7 +4,7 @@
 #include "../fec_constants.h"
 #include "../utils.h"
 #include "../fec.h"
-#include "causal_redundancy_controller_new.h"
+#include "causal_redundancy_controller_general.h"
 #include "../window_framework/framework_sender.h"
 
 // we here assume a single-path context
@@ -33,7 +33,7 @@ protoop_arg_t causal_what_to_send(picoquic_cnx_t *cnx) {
     }
     window_source_symbol_id_t first_id_to_protect;
     uint16_t number_of_symbols_to_protect;
-    causal_packet_type_t ptype = what_to_send(cnx, wff->controller, &first_id_to_protect, &number_of_symbols_to_protect);
+    causal_packet_type_t ptype = what_to_send(cnx, wff->controller, &first_id_to_protect, &number_of_symbols_to_protect, &window);
     number_of_symbols_to_protect = MIN(number_of_symbols_to_protect, window_size(&window));
     what_to_send_t wts;
     switch(ptype) {

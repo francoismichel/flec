@@ -13,9 +13,6 @@
 
 #define PROTOOP_GET_CURRENT_WINDOW_BOUNDS "fec_get_current_window_bounds"
 
-#define MIN(a, b) ((a < b) ? a : b)
-
-
 typedef uint32_t fec_block_number;
 
 typedef struct {
@@ -552,6 +549,7 @@ static __attribute__((always_inline)) int generate_and_queue_repair_symbols(pico
     my_memset(symbols, 0, wff->window_length*sizeof(source_symbol_t *));
     uint16_t n_symbols = 0;
     source_symbol_id_t first_protected_id = 0;
+    n_source_symbols_to_protect = MIN(n_source_symbols_to_protect, wff->highest_in_transit + 1 - first_id);
     PROTOOP_PRINTF(cnx, "GENERATE AND QUEUE, SUBSET = %d, FIRST = %u, N = %u, SMALLEST IN TRANSIT = %u\n", protect_subset, first_id, n_source_symbols_to_protect, wff->smallest_in_transit);
     int ret = 0;
     if (!protect_subset || first_id < wff->smallest_in_transit) {

@@ -77,6 +77,8 @@ static __attribute__((always_inline)) void release_repair_symbols_buffer(picoqui
 static __attribute__((always_inline)) repair_symbol_t *add_repair_symbol(picoquic_cnx_t *cnx, received_repair_symbols_buffer_t *buffer, window_repair_symbol_t *rs) {
     // FIXME: do a simple ring buffer (is it still needed ?)
     // we order it by the last protected symbol
+    PROTOOP_PRINTF(cnx, "ADD SYMBOL WITH KEY %u\n", rs->metadata.first_id + rs->metadata.n_protected_symbols - 1);
+//    return pq_insert_and_pop_min_if_full(buffer->pq, rs->metadata.first_id + rs->metadata.n_protected_symbols - 1, rs);
     return pq_insert_and_pop_min_if_full(buffer->pq, decode_u32(rs->metadata.fss.val), rs);
 }
 
@@ -95,22 +97,54 @@ static __attribute__((always_inline)) void remove_and_free_unused_repair_symbols
 
 // pre: symbols must have a length of at least the max size of the buffer
 static __attribute__((always_inline)) int get_repair_symbols(picoquic_cnx_t *cnx, received_repair_symbols_buffer_t *buffer, window_repair_symbol_t **symbols,
-        window_source_symbol_id_t *smallest_protected, uint32_t *highest_protected) {
+        window_source_symbol_id_t *smallest_protected, uint32_t *highest_protected, window_source_symbol_id_t highest_contiguously_received_id, uint16_t max_concerned_source_symbols) {
     if (pq_is_empty(buffer->pq))
         return 0;
     my_memset(symbols, 0, buffer->pq->max_size);
-    int added = pq_get_between_bounds(buffer->pq, pq_get_min_key(buffer->pq), pq_get_max_key(buffer->pq) + 1, (void **) symbols);
+    PROTOOP_PRINTF(cnx, "HIGHEST RECEIVED = %lu, MIN : %lu, MAX = %lu\n", highest_contiguously_received_id, pq_get_min_key(buffer->pq), pq_get_max_key(buffer->pq));
+    uint64_t max_key_in_pq = pq_get_max_key(buffer->pq);
+    uint64_t min_key_in_pq = pq_get_min_key(buffer->pq);
+//    int added = pq_get_between_bounds(buffer->pq, MAX(min_key_in_pq, highest_contiguously_received_id), max_key_in_pq + 1, (void **) symbols);
+    int added = pq_get_between_bounds(buffer->pq, min_key_in_pq, max_key_in_pq + 1, (void **) symbols);
+    if (added == 0) {
+        return added;
+    }
     window_source_symbol_id_t min_key = symbols[0]->metadata.first_id;
     window_source_symbol_id_t max_key = symbols[0]->metadata.first_id + symbols[0]->metadata.n_protected_symbols - 1;
+    PROTOOP_PRINTF(cnx, "FIRST ADDED [%u, %u]\n", symbols[0]->metadata.first_id, symbols[0]->metadata.first_id + symbols[0]->metadata.n_protected_symbols - 1);
     int n_tried = 1;
     for(int i = 1 ; n_tried < added && i < buffer->pq->max_size ; i++) {
         if (symbols[i]) {
+            PROTOOP_PRINTF(cnx, "ADDED [%u, %u]\n", symbols[i]->metadata.first_id, symbols[i]->metadata.first_id + symbols[i]->metadata.n_protected_symbols - 1);
             n_tried++;
             if (symbols[i]->metadata.first_id < min_key)
                 min_key = symbols[i]->metadata.first_id;
             if (symbols[i]->metadata.first_id + symbols[i]->metadata.n_protected_symbols - 1 > max_key)
                 max_key = symbols[i]->metadata.first_id + symbols[i]->metadata.n_protected_symbols - 1;
         }
+    }
+    if (max_key - min_key > max_concerned_source_symbols) {
+        // too much symbols concerned, we should prune and take the most recent repair symbols
+        uint64_t new_min_key = 0, new_max_key = 0;
+        int new_added = 0;
+        n_tried = 0;
+        for (int i = 0 ; n_tried < added && i < buffer->pq->max_size ; i++) {
+            if (symbols[i]) {
+                if (highest_contiguously_received_id > symbols[i]->metadata.first_id + symbols[i]->metadata.n_protected_symbols - 1 || symbols[i]->metadata.first_id <= max_key - max_concerned_source_symbols) {
+                    symbols[i] = NULL;
+                } else {
+                    if (new_min_key == 0 || symbols[i]->metadata.first_id < new_min_key)
+                        new_min_key = symbols[i]->metadata.first_id;
+                    if (new_max_key == 0 || symbols[i]->metadata.first_id + symbols[i]->metadata.n_protected_symbols - 1 > new_max_key)
+                        new_max_key = symbols[i]->metadata.first_id + symbols[i]->metadata.n_protected_symbols - 1;
+                    n_tried++;
+                    new_added++;
+                }
+            }
+        }
+        added = new_added;
+        min_key = new_min_key;
+        max_key = new_max_key;
     }
     *smallest_protected = min_key;
     *highest_protected = max_key;

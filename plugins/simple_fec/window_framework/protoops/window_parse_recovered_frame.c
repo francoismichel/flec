@@ -28,7 +28,7 @@ protoop_arg_t parse_frame(picoquic_cnx_t *cnx) {
         return (protoop_arg_t) NULL;
 
     set_cnx(cnx, AK_CNX_OUTPUT, 0, (protoop_arg_t) size_and_packets);
-    set_cnx(cnx, AK_CNX_OUTPUT, 1, false);
+    set_cnx(cnx, AK_CNX_OUTPUT, 1, true);
     set_cnx(cnx, AK_CNX_OUTPUT, 2, true);
     return (protoop_arg_t) bytes_protected + consumed;
 }

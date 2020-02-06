@@ -3,7 +3,7 @@
 #include <getset.h>
 #include "../fec.h"
 #include "../window_framework/types.h"
-#include "causal_redundancy_controller_new.h"
+#include "causal_redundancy_controller_general.h"
 #include "../window_framework/framework_sender.h"
 
 protoop_arg_t causal_slot_nacked(picoquic_cnx_t *cnx) {
