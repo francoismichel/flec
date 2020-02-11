@@ -13,11 +13,14 @@ static __attribute__((always_inline)) void compute_new_last_fully_protected_mess
                                                                                             causal_redundancy_controller_t *controller, message_causal_addon_t *addon_state,
                                                                                             fec_window_t *current_window, picoquic_path_t *path, uint64_t current_time, uint64_t granularity) {
 
-
-    if (MIN(addon_state->n_ew_for_last_packet, controller->n_fec_in_flight) > get_max_fec_threshold(cnx, controller, current_window, path, current_time, granularity) && !rbt_is_empty(wff->symbols_from_deadlines)) {
-        PROTOOP_PRINTF(cnx, "NEW UPDATE\n");
-        addon_state->last_fully_protected_message_deadline = rbt_max_key(wff->symbols_from_deadlines);
-    }
+//
+////    PROTOOP_PRINTF(cnx, "BEFORE UPDATE MIN = %lu, MAX THRESHOLD = %lu\n", MIN(addon_state->n_ew_for_last_packet, controller->n_fec_in_flight), get_max_fec_threshold(cnx, controller, current_window, path, current_time, granularity));
+//    PROTOOP_PRINTF(cnx, "BEFORE UPDATE MIN = %lu, MAX THRESHOLD = %lu\n", MIN(addon_state->n_ew_for_last_packet, controller->n_fec_in_flight), addon_state->max_trigger);
+////    if (MIN(addon_state->n_ew_for_last_packet, controller->n_fec_in_flight) >= get_max_fec_threshold(cnx, controller, current_window, path, current_time, granularity) && !rbt_is_empty(wff->symbols_from_deadlines)) {
+//    if (false && MIN(addon_state->n_ew_for_last_packet, controller->n_fec_in_flight) >= addon_state->max_trigger && !rbt_is_empty(wff->symbols_from_deadlines)) {
+//        PROTOOP_PRINTF(cnx, "NEW UPDATE\n");
+//        addon_state->last_fully_protected_message_deadline = rbt_max_key(wff->symbols_from_deadlines);
+//    }
 }
 
 
@@ -38,7 +41,7 @@ protoop_arg_t message_causal_update_state(picoquic_cnx_t *cnx) {
         return PICOQUIC_ERROR_MEMORY;
     }
 
-    compute_new_last_fully_protected_message_deadline(cnx, wff, controller, addon_state, &window, path, picoquic_current_time(), GRANULARITY);
+//    compute_new_last_fully_protected_message_deadline(cnx, wff, controller, addon_state, &window, path, picoquic_current_time(), GRANULARITY);
 
 
     return 0;

@@ -25,13 +25,16 @@ protoop_arg_t message_causal_ew(picoquic_cnx_t *cnx) {
         return PICOQUIC_ERROR_MEMORY;
     }
 
+    protoop_arg_t uniform_loss_rate_times_granularity = 0, gemodel_p_times_granularity = 0, gemodel_r_times_granularity = 0;
+    get_loss_parameters(cnx, path, current_time, granularity, &uniform_loss_rate_times_granularity, &gemodel_p_times_granularity, &gemodel_r_times_granularity);
 
     int64_t smoothed_rtt_microsec = get_path(path, AK_PATH_SMOOTHED_RTT, 0);
     int64_t owd_microsec = smoothed_rtt_microsec/2;
     rbt_key soonest_deadline_microsec_key;
     rbt_val soonest_deadline_first_id_val;
+
     bool found_ceiling = rbt_ceiling(wff->symbols_from_deadlines,
-                                     MAX(addon_state->last_fully_protected_message_deadline != UNDEFINED_SYMBOL_DEADLINE ? addon_state->last_fully_protected_message_deadline : 0, current_time + owd_microsec),
+                                     MAX((addon_state->last_fully_protected_message_deadline != UNDEFINED_SYMBOL_DEADLINE) ? (addon_state->last_fully_protected_message_deadline + 1) : 0, current_time + owd_microsec),
                                      &soonest_deadline_microsec_key, &soonest_deadline_first_id_val);
 
     symbol_deadline_t soonest_deadline_microsec = found_ceiling ? ((symbol_deadline_t) soonest_deadline_microsec_key) : UNDEFINED_SYMBOL_DEADLINE;
@@ -60,16 +63,16 @@ protoop_arg_t message_causal_ew(picoquic_cnx_t *cnx) {
     int64_t bw_ratio_times_granularity = (used_bandwidth_bytes_per_second > 0) ? ((granularity*available_bandwidth_bytes_per_second)/used_bandwidth_bytes_per_second) : 0;
 
     bool ew = (!fec_has_protected_data_to_send(cnx) && bw_ratio_times_granularity > (granularity + granularity/10));
-    if (ew && current_window->end != addon_state->last_packet_since_ew) {
-        addon_state->n_ew_for_last_packet = 0;
-    }
+//    if (ew && current_window->end != addon_state->last_packet_since_ew) {
+//        addon_state->n_ew_for_last_packet = 0;
+//    }
 
+//    int64_t max_fec_threshold = get_max_fec_threshold(cnx, controller, addon_state, current_window, path, current_time, granularity);
     PROTOOP_PRINTF(cnx, "BEFORE ALLOWED TO SEND\n");
     PROTOOP_PRINTF(cnx, "N FEC IN FLIGHT = %lu\n", controller->n_fec_in_flight);
-    PROTOOP_PRINTF(cnx, "MAX FEC THRESHOLD = %lu\n", get_max_fec_threshold(cnx, controller, current_window, path, current_time, granularity));
+//    PROTOOP_PRINTF(cnx, "MAX FEC THRESHOLD = %lu\n", max_fec_threshold);
     PROTOOP_PRINTF(cnx, "NEXT TS = %lu\n", wff->next_message_timestamp_microsec);
-    bool allowed_to_send_fec_given_deadlines = MIN(addon_state->n_ew_for_last_packet, controller->n_fec_in_flight) <= get_max_fec_threshold(cnx, controller, current_window, path, current_time, granularity)
-                                            && (soonest_deadline_microsec == UNDEFINED_SYMBOL_DEADLINE
+    bool allowed_to_send_fec_given_deadlines = (soonest_deadline_microsec == UNDEFINED_SYMBOL_DEADLINE
                                                 || wff->next_message_timestamp_microsec == UNDEFINED_SYMBOL_DEADLINE
                                                 // FIXME:: we cross the fingers here so that there will be no overflow
                                                 || current_time + next_message_time_to_wait_microsec + owd_microsec + DEADLINE_CRITICAL_THRESHOLD_MICROSEC >= soonest_deadline_microsec); // if false, that means that we can wait a bit before sending FEC
@@ -77,15 +80,30 @@ protoop_arg_t message_causal_ew(picoquic_cnx_t *cnx) {
     PROTOOP_PRINTF(cnx, "allowed to send = %d, owd = %lu, current_time = %lu, soonest_deadline = %lu, next_timestamp = %lu\n", allowed_to_send_fec_given_deadlines,
                    owd_microsec, current_time, soonest_deadline_microsec, wff->next_message_timestamp_microsec);
 
-
-
-
-    if (ew && allowed_to_send_fec_given_deadlines){
-        if (current_window->end != addon_state->last_packet_since_ew) {
-            addon_state->last_packet_since_ew = current_window->end;
+    int n_unprotected = current_window->end - addon_state->last_packet_since_ew;
+    bool protect = ew && allowed_to_send_fec_given_deadlines;
+    if (protect && n_unprotected > 0) {
+        addon_state->n_ew_for_last_packet = 1;
+        addon_state->max_trigger = 1+MAX((granularity/MAX(1, gemodel_r_times_granularity)), window_size(current_window)*uniform_loss_rate_times_granularity/GRANULARITY);//MIN(addon_state->n_ew_for_last_packet, controller->n_fec_in_flight) <= max_fec_threshold;
+        addon_state->last_packet_since_ew = current_window->end;
+    } else if (protect) {
+        if (MIN(addon_state->n_ew_for_last_packet, controller->n_fec_in_flight) <= addon_state->max_trigger) {
+            addon_state->n_ew_for_last_packet++;
+        } else {
+            protect = false;
+            addon_state->last_fully_protected_message_deadline = rbt_max_key(wff->symbols_from_deadlines);
         }
-        addon_state->n_ew_for_last_packet++;
     }
+
+
+
+
+//    if (addon_state->n_ew_for_last_packet >= max_fec_threshold) {
+//        addon_state->last_packet_since_ew = current_window->end;
+//    }
+//    if (ew && allowed_to_send_fec_given_deadlines){
+//        addon_state->n_ew_for_last_packet++;
+//    }
 
     if (soonest_deadline_microsec != UNDEFINED_SYMBOL_DEADLINE && wff->next_message_timestamp_microsec != UNDEFINED_SYMBOL_DEADLINE) {
         protoop_arg_t args[2];
@@ -94,5 +112,5 @@ protoop_arg_t message_causal_ew(picoquic_cnx_t *cnx) {
         run_noparam(cnx, "request_waking_at_last_at", 2, args, NULL);
     }
 
-    return ew && allowed_to_send_fec_given_deadlines;
+    return protect;
 }
