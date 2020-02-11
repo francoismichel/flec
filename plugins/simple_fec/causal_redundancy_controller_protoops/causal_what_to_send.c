@@ -4,7 +4,7 @@
 #include "../fec_constants.h"
 #include "../utils.h"
 #include "../fec.h"
-#include "causal_redundancy_controller_only_fb_fec.h"
+#include "causal_redundancy_controller_general.h"
 #include "../window_framework/framework_sender.h"
 
 // we here assume a single-path context
@@ -21,14 +21,20 @@ protoop_arg_t causal_what_to_send(picoquic_cnx_t *cnx) {
     if (!state)
         return PICOQUIC_ERROR_MEMORY;
     available_slot_reason_t reason = (available_slot_reason_t) get_cnx(cnx, AK_CNX_INPUT, 0);
+    picoquic_path_t *path = (picoquic_path_t *) get_cnx(cnx, AK_CNX_INPUT, 1);
     window_fec_framework_t *wff = (window_fec_framework_t *) state->framework_sender;
+    if (wff->next_message_timestamp_microsec != UNDEFINED_SYMBOL_DEADLINE && wff->next_message_timestamp_microsec <= picoquic_current_time()) {
+        // reset the next message timestamp if it has passe
+        wff->next_message_timestamp_microsec = UNDEFINED_SYMBOL_DEADLINE;
+    }
     fec_window_t window = get_current_fec_window(cnx, wff);
     if (window_size(&window) > 0) {
-        run_algo(cnx, (causal_redundancy_controller_t *) wff->controller, reason, &window);
+        run_algo(cnx, path, (causal_redundancy_controller_t *) wff->controller, reason, &window);
     }
     window_source_symbol_id_t first_id_to_protect;
     uint16_t number_of_symbols_to_protect;
-    causal_packet_type_t ptype = what_to_send(cnx, wff->controller, &first_id_to_protect, &number_of_symbols_to_protect);
+    causal_packet_type_t ptype = what_to_send(cnx, wff->controller, &first_id_to_protect, &number_of_symbols_to_protect, &window);
+    number_of_symbols_to_protect = MIN(number_of_symbols_to_protect, window_size(&window));
     what_to_send_t wts;
     switch(ptype) {
         case fec_packet:
