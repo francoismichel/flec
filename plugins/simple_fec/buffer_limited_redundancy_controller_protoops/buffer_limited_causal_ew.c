@@ -2,7 +2,7 @@
 #include <picoquic.h>
 #include <getset.h>
 #include "../fec.h"
-#include "../causal_redundancy_controller_protoops/causal_redundancy_controller_general.h"
+#include "../causal_redundancy_controller_protoops/causal_redundancy_controller.h"
 #include "buffer_limited_causal.h"
 
 //#define ALLOWED_BUFFER_FOR_FEC 15000

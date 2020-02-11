@@ -1,5 +1,5 @@
 #include "picoquic.h"
-#include "causal_redundancy_controller_general.h"
+#include "causal_redundancy_controller.h"
 
 // sets as output the pointer towards the controller's state
 protoop_arg_t create_window_controller(picoquic_cnx_t *cnx)

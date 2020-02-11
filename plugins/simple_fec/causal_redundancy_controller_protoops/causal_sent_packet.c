@@ -3,7 +3,7 @@
 #include <getset.h>
 #include "../fec.h"
 #include "../window_framework/types.h"
-#include "causal_redundancy_controller_general.h"
+#include "causal_redundancy_controller.h"
 #include "../window_framework/framework_sender.h"
 
 
