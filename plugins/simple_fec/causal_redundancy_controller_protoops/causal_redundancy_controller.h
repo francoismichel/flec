@@ -159,9 +159,6 @@ static __attribute__((always_inline)) bool is_buffer_empty(buffer_t *buffer) {
 
 
 
-
-
-
 static __attribute__((always_inline)) bool is_symbol_in_window(fec_window_t *window, window_source_symbol_id_t id) {
     return window->start <= id && id < window->end;
 }
@@ -191,8 +188,6 @@ static __attribute__((always_inline)) bool remove_symbol_from_window(fec_window_
     window->start++;
     return true;
 }
-
-
 
 
 static __attribute__((always_inline)) slots_history_t *create_history(picoquic_cnx_t *cnx, int max_size) {
@@ -227,8 +222,6 @@ static __attribute__((always_inline)) bool remove_elem_from_history(slots_histor
     history_entry_t *entry = &history->sent_windows[((uint64_t)slot) % ((uint64_t)history->max_size)];
     if (entry->slot == slot) {
         entry->slot = -1;
-//        entry->window.start = 0;
-//        entry->window.end = 0;
         return true;
     }
     return false;
@@ -394,7 +387,6 @@ static __attribute__((always_inline)) uint32_t compute_ad(picoquic_cnx_t *cnx, c
         uint64_t slot = controller->fec_slots->elems[((uint64_t)(controller->fec_slots->start + i))  % ((uint64_t)controller->fec_slots->max_size)];
         err = get_window_sent_at_slot(controller, controller->slots_history, slot, &sent_window);
 
-//        PROTOOP_PRINTF(cnx, "WINDOW SENT AT SLOT %lu = [%u, %u[\n", slot, sent_window.start, sent_window.end);
         if (!err && window_intersects(&sent_window, current_window) && !is_elem_in_buffer(controller->nacked_slots, slot) && (!is_elem_in_buffer(controller->acked_slots, slot))) {
             ad++;
         }
@@ -539,21 +531,8 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, picoqui
         PROTOOP_PRINTF(cnx, "MEMORY ERROR\n");
         return;
     }
-    window_fec_framework_t *wff = (window_fec_framework_t *) state->framework_sender;
     PROTOOP_PRINTF(cnx, "CURRENT WINDOW = [%u, %u[, N FEC IN FLIGHT = %lu\n", current_window->start, current_window->end, controller->n_fec_in_flight);
-    uint64_t cwin_max_slots = get_path((picoquic_path_t *) path, AK_PATH_CWIN, 0)/get_path((picoquic_path_t *) path, AK_PATH_SEND_MTU, 0);
-    int64_t smoothed_rtt_microsec = get_path(path, AK_PATH_SMOOTHED_RTT, 0);
     // FIXME: wrap-around when the sampling period or bytes sent are too high
-    bandwidth_t available_bandwidth_bytes_per_second = get_path((picoquic_path_t *) path, AK_PATH_CWIN, 0)*SECOND_IN_MICROSEC/smoothed_rtt_microsec;
-    // we take the between the last sampling point and the current bandwidth induced by the bytes in flight
-//    bandwidth_t used_bandwidth_bytes_per_second = MAX(controller->last_bytes_sent_sample*SECOND_IN_MICROSEC/controller->last_bytes_sent_sampling_period_microsec,
-//                                                        get_path(path, AK_PATH_BYTES_IN_TRANSIT, 0)*SECOND_IN_MICROSEC/get_path(path, AK_PATH_SMOOTHED_RTT, 0));
-    bandwidth_t used_bandwidth_bytes_per_second = get_path(path, AK_PATH_BYTES_IN_TRANSIT, 0)*SECOND_IN_MICROSEC/smoothed_rtt_microsec;
-    int64_t bw_ratio_times_granularity = (used_bandwidth_bytes_per_second > 0) ? ((GRANULARITY*available_bandwidth_bytes_per_second)/used_bandwidth_bytes_per_second) : 0;
-    // FIXME: experimental: set k according to the cwin, but bound it to the buffer length: we cannot store more than MAX_SENDING_WINDOW_SIZE, and sometimes the window length will be 2*k
-
-
-//    controller->k = 4;//MIN(MAX_SENDING_WINDOW_SIZE/2 - 1, 1 + cwin_max_slots);
     controller->md = compute_md(cnx, controller, current_window);
     controller->ad = compute_ad(cnx, controller, current_window);
     if (controller->md == 0 && controller->ad == 0) {
@@ -564,7 +543,6 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, picoqui
     } else {
         controller->d_times_granularity = ((((uint64_t) controller->md*GRANULARITY))/((uint64_t) (controller->ad)));
     }
-//    PROTOOP_PRINTF(cnx, "USED BW = %lu, BW_RATIO = %lu, RECEIVE RATE = %lu, DOF_RATIO = %lu/%lu = %lu\n", used_bandwidth_bytes_per_second, GRANULARITY*available_bandwidth_bytes_per_second/used_bandwidth_bytes_per_second, r_times_granularity(controller), controller->md, ad, controller->d_times_granularity);
     bool added_new_packet = false;
     int i;
     if (is_buffer_empty(controller->what_to_send)) {
@@ -574,9 +552,6 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, picoqui
             controller->n_fec_in_flight++;
             controller->ad++;
         } else {
-
-//                PROTOOP_PRINTF(cnx, "EVENT::{\"time\": %ld, \"type\": \"algo\", \"feedback\": %d, \"ad\": %ld, \"md\": %ld, \"d\": %ld, \"k\": %ld, \"threshold\": %ld, \"r\": %ld}\n", picoquic_current_time(), controller->last_feedback, controller->ad, controller->md, controller->d_times_granularity, controller->k, controller->threshold_times_granularity, r_times_granularity(controller));
-
 
             uint64_t current_time = picoquic_current_time();
 
@@ -613,24 +588,12 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, picoqui
                     } else {
                         add_elem_to_buffer(controller->what_to_send, fb_fec_packet);
                         controller->ad++;
-                        // below not necessary I think
-//                        if (EW(cnx, controller, current_window)) {
-//                            for (i = 0; i < controller->m; i++) {
-//                                add_elem_to_buffer(controller->what_to_send, fec_packet);
-//                                controller->n_fec_in_flight++;
-//                                compute_new_last_fully_protected_message_deadline(cnx, wff, controller, current_window);
-//                            }
-//                            controller->ad += controller->m;
-//                        }
                     }
                     break;
                 case available_slot_reason_ack:;
                     uint64_t gemodel_r_times_granularity = 1*GRANULARITY;
                     get_loss_parameters(cnx, path, current_time, GRANULARITY, NULL, NULL, &gemodel_r_times_granularity);
 
-//                    if (normal_causal && ((false && EW(controller, current_window) && controller->latest_symbol_when_fec_scheduled != current_window->end-1)
-//                                            || (!fec_has_protected_data_to_send(cnx) && (controller->latest_symbol_when_fec_scheduled != current_window->end-1
-//                                                                                     || GRANULARITY/MAX(1, GRANULARITY-gemodel_r_times_granularity))))) {
                     if (EW(cnx, path, controller, GRANULARITY, current_window, current_time)) {
                         PROTOOP_PRINTF(cnx, "EW !\n");
                         for (i = 0; i < controller->m; i++) {
@@ -643,7 +606,6 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, picoqui
                         if (below_threshold(cnx, path, controller, GRANULARITY, current_time)) {
                             PROTOOP_PRINTF(cnx, "ADD FEC\n");
                             add_elem_to_buffer(controller->what_to_send, fb_fec_packet);
-//                                controller->n_fec_in_flight++;
                             controller->ad++;
                         } else {
                             if (EW(cnx, path, controller, GRANULARITY, current_window, current_time)) {
