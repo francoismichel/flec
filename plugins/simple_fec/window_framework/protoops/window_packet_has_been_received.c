@@ -6,7 +6,6 @@
 #include "../../utils.h"
 #include "../types.h"
 #include "../framework_sender.h"
-#include "../../causal_redundancy_controller_protoops/causal_redundancy_controller_new.h"
 
 // we here assume a single-path context
 
