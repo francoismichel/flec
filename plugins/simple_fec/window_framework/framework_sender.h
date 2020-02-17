@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include "../fec.h"
 #include "types.h"
-#include "red_black_tree.h"
+#include <red_black_tree.h>
 
 #define INITIAL_SYMBOL_ID 1
 #define MAX_QUEUED_REPAIR_SYMBOLS 6
@@ -207,21 +207,21 @@ static __attribute__((always_inline)) window_fec_framework_t *create_framework_s
         my_free(cnx, wff);
         return NULL;
     }
-    rbt_init(wff->symbols_from_deadlines);
+    rbt_init(cnx, wff->symbols_from_deadlines);
     wff->deadlines_from_symbols = my_malloc(cnx, sizeof(red_black_tree_t));
     if (!wff->deadlines_from_symbols) {
         delete_recovered_packets_buffer(cnx, wff->rps);
         my_free(cnx, wff);
         return NULL;
     }
-    rbt_init(wff->deadlines_from_symbols);
+    rbt_init(cnx, wff->deadlines_from_symbols);
     wff->unreliable_messages_from_deadlines = my_malloc(cnx, sizeof(red_black_tree_t));
     if (!wff->unreliable_messages_from_deadlines) {
         delete_recovered_packets_buffer(cnx, wff->rps);
         my_free(cnx, wff);
         return NULL;
     }
-    rbt_init(wff->unreliable_messages_from_deadlines);
+    rbt_init(cnx, wff->unreliable_messages_from_deadlines);
 
     wff->fec_scheme = fs;
     return wff;
@@ -501,11 +501,18 @@ static __attribute__((always_inline)) int sfpid_has_landed(picoquic_cnx_t *cnx, 
     uint32_t idx = id % MAX_SENDING_WINDOW_SIZE;
     if (received && wff->fec_window[idx].symbol) {
         if (wff->fec_window[idx].id == id) {
-            if (rbt_contains(wff->deadlines_from_symbols, id)) {
-                symbol_deadline_t deadline = (symbol_deadline_t) rbt_get(wff->deadlines_from_symbols, id);
-                // remove the symbol from the state
-                rbt_delete(cnx, wff->deadlines_from_symbols, id);
-                rbt_delete(cnx, wff->symbols_from_deadlines, deadline);
+            if (rbt_contains(cnx, wff->deadlines_from_symbols, id)) {
+                rbt_val val;
+                bool found = (symbol_deadline_t) rbt_get(cnx, wff->deadlines_from_symbols, id, &val);
+                if (found) {
+                    symbol_deadline_t deadline = (symbol_deadline_t) val;
+                    // remove the symbol from the state
+                    rbt_delete(cnx, wff->deadlines_from_symbols, id);
+                    rbt_delete(cnx, wff->symbols_from_deadlines, deadline);
+                } else {
+                    // should not happen given the guarding if
+                    PROTOOP_PRINTF(cnx, "ERROR: COULD NOT FIND DEADLINE FOR MESSAGE\n");
+                }
             }
             wff->fec_window[idx].received = true;
             // if it is the first symbol of the window, let's prune the window
@@ -677,7 +684,7 @@ static __attribute__((always_inline)) int window_protect_packet_payload(picoquic
         }
         if (i == 0)
             *first_symbol_id = id;
-        if (deadline != UNDEFINED_SYMBOL_DEADLINE && !rbt_contains(wff->symbols_from_deadlines, deadline)) {
+        if (deadline != UNDEFINED_SYMBOL_DEADLINE && !rbt_contains(cnx, wff->symbols_from_deadlines, deadline)) {
             rbt_put(cnx, wff->symbols_from_deadlines, deadline, (void *) (uint64_t) id);
             rbt_put(cnx, wff->deadlines_from_symbols, (uint64_t) id, (void *) deadline);
         }

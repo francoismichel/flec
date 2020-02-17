@@ -1,7 +1,7 @@
 
 #include <picoquic.h>
 #include <getset.h>
-#include "../red_black_tree.h"
+#include <red_black_tree.h>
 #include "../../window_framework/framework_sender.h"
 
 
@@ -76,7 +76,7 @@ protoop_arg_t deadline_scheduler(picoquic_cnx_t *cnx) {
 
     if (state && get_cnx(cnx, AK_CNX_MAXDATA_REMOTE, 0) > get_cnx(cnx, AK_CNX_DATA_SENT, 0)) {
         window_fec_framework_t *framework = (window_fec_framework_t *) state->framework_sender;
-        if (!rbt_is_empty(framework->unreliable_messages_from_deadlines)) {
+        if (!rbt_is_empty(cnx, framework->unreliable_messages_from_deadlines)) {
             symbol_deadline_t current_deadline = UNDEFINED_SYMBOL_DEADLINE;
             picoquic_path_t *lowest_rtt_path = get_lowest_rtt_available_non_cwin_limited(cnx);
 
@@ -89,7 +89,7 @@ protoop_arg_t deadline_scheduler(picoquic_cnx_t *cnx) {
                 // we estimate the owd by RTT/2 and cross our fingers
                 uint64_t one_way_delay = get_path(lowest_rtt_path, AK_PATH_SMOOTHED_RTT, 0)/2;
                 symbol_deadline_t deadline_to_ceil = current_deadline == UNDEFINED_SYMBOL_DEADLINE ? (picoquic_current_time() + one_way_delay) : current_deadline;
-                bool found_ceiling = rbt_ceiling(framework->unreliable_messages_from_deadlines, deadline_to_ceil,
+                bool found_ceiling = rbt_ceiling(cnx, framework->unreliable_messages_from_deadlines, deadline_to_ceil,
                                                  &soonest_deadline, &soonest_deadline_stream_metadata);
                 if (!found_ceiling) {
                     break;

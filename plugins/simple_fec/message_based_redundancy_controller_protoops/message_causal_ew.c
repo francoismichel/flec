@@ -33,15 +33,15 @@ protoop_arg_t message_causal_ew(picoquic_cnx_t *cnx) {
     rbt_key soonest_deadline_microsec_key;
     rbt_val soonest_deadline_first_id_val;
 
-    bool found_ceiling = rbt_ceiling(wff->symbols_from_deadlines,
+    bool found_ceiling = rbt_ceiling(cnx, wff->symbols_from_deadlines,
                                      MAX((addon_state->last_fully_protected_message_deadline != UNDEFINED_SYMBOL_DEADLINE) ? (addon_state->last_fully_protected_message_deadline + 1) : 0, current_time + owd_microsec),
                                      &soonest_deadline_microsec_key, &soonest_deadline_first_id_val);
 
     symbol_deadline_t soonest_deadline_microsec = found_ceiling ? ((symbol_deadline_t) soonest_deadline_microsec_key) : UNDEFINED_SYMBOL_DEADLINE;
 
-    if (!rbt_is_empty(wff->symbols_from_deadlines)) {
+    if (!rbt_is_empty(cnx, wff->symbols_from_deadlines)) {
 
-        PROTOOP_PRINTF(cnx, "found ceiling to %ld = %d, tree size = %d, max = %ld\n", current_time + owd_microsec, found_ceiling, rbt_size(wff->symbols_from_deadlines), rbt_max_key(wff->symbols_from_deadlines));
+        PROTOOP_PRINTF(cnx, "found ceiling to %ld = %d, tree size = %d, max = %ld\n", current_time + owd_microsec, found_ceiling, rbt_size(cnx, wff->symbols_from_deadlines), rbt_max_key(cnx, wff->symbols_from_deadlines));
     }
 
     uint64_t next_message_time_to_wait_microsec = 0;
@@ -91,7 +91,7 @@ protoop_arg_t message_causal_ew(picoquic_cnx_t *cnx) {
             addon_state->n_ew_for_last_packet++;
         } else {
             protect = false;
-            addon_state->last_fully_protected_message_deadline = rbt_max_key(wff->symbols_from_deadlines);
+            addon_state->last_fully_protected_message_deadline = rbt_max_key(cnx, wff->symbols_from_deadlines);
         }
     }
 
