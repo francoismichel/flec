@@ -37,6 +37,13 @@ protoop_arg_t available_slot(picoquic_cnx_t *cnx) {
         return err;
     }
     PROTOOP_PRINTF(cnx, "WTS = %d!\n", wts);
+
+    if (state->n_reserved_id_or_repair_frames > 0 && wts != what_to_send_feedback_implied_repair_symbol) {
+        fec_cancelled_packet(cnx, wts);
+        PROTOOP_PRINTF(cnx, "ALREADY RESERVED FRAMES ARE PRESENT\n");
+        return 0;
+    }
+
     switch (wts) {
         case what_to_send_new_symbol:
             if (run_noparam(cnx, FEC_PROTOOP_HAS_PROTECTED_DATA_TO_SEND, 0, NULL, NULL)) {

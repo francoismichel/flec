@@ -16,6 +16,11 @@ parse_frame param 0x2b replace window_framework/protoops/window_parse_recovered_
 process_frame param 0x2b replace window_framework/protoops/window_process_recovered_frame.o
 notify_frame param 0x2b replace window_framework/protoops/window_notify_recovered_frame.o
 
+write_frame param 0x28 replace window_framework/protoops/window_write_window_rwin_frame.o
+parse_frame param 0x28 replace window_framework/protoops/window_parse_window_rwin_frame.o
+process_frame param 0x28 replace window_framework/protoops/window_process_window_rwin_frame.o
+notify_frame param 0x28 replace window_framework/protoops/window_notify_window_rwin_frame.o
+
 
 fec_protect_packet_payload replace window_framework/protoops/window_protect_packet_payload.o
 fec_receive_packet_payload replace window_framework/protoops/window_receive_packet_payload.o
@@ -41,3 +46,7 @@ window_fec_framework_set_repair_rwin_size extern window_framework/extern/protoop
 
 schedule_next_stream replace window_framework/stream_scheduler_protoops/unreliable_messages_stream_scheduler.o
 find_ready_stream replace window_framework/stream_scheduler_protoops/unreliable_messages_stream_scheduler.o
+
+schedule_frames_on_path pre window_framework/protoops/reserve_window_rwin_frame_if_needed.o
+
+finalize_and_protect_packet post window_framework/protoops/window_after_packet_finalized.o

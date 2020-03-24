@@ -5,6 +5,8 @@
 #include "../framework_sender.h"
 #include "../framework_receiver.h"
 
+#define RECEIVE_BUFFER_SIZE 100000
+
 protoop_arg_t create_framework(picoquic_cnx_t *cnx)
 {
     fec_scheme_t receiver_scheme = (fec_scheme_t) get_cnx(cnx, AK_CNX_INPUT, 0);
@@ -18,7 +20,7 @@ protoop_arg_t create_framework(picoquic_cnx_t *cnx)
         return PICOQUIC_ERROR_MEMORY;
     }
 
-    window_fec_framework_receiver_t *wffr = create_framework_receiver(cnx, receiver_scheme, symbol_size, repair_receive_window);
+    window_fec_framework_receiver_t *wffr = create_framework_receiver(cnx, receiver_scheme, symbol_size, repair_receive_window, RECEIVE_BUFFER_SIZE);
     if (!wffr) {
         my_free(cnx, wffs);
         set_cnx(cnx, AK_CNX_OUTPUT, 0, (protoop_arg_t) NULL);

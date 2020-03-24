@@ -11,7 +11,7 @@
 
 #define GRANULARITY 1000000
 
-#define NUMBER_OF_SOURCE_SYMBOLS_TO_PROTECT_IN_FB_FEC 2
+#define NUMBER_OF_SOURCE_SYMBOLS_TO_PROTECT_IN_FB_FEC 1
 
 typedef uint64_t buffer_elem_t;
 
@@ -519,7 +519,6 @@ static __attribute__((always_inline)) causal_packet_type_t what_to_send(picoquic
                         // outdated compared to the window
                         break;
                     }
-
                 }
             }
 
@@ -559,6 +558,17 @@ static __attribute__((always_inline)) causal_packet_type_t what_to_send(picoquic
     return type;
 }
 
+static __attribute__((always_inline)) void cancelled_packet(picoquic_cnx_t *cnx, window_redundancy_controller_t c, causal_packet_type_t type) {
+    causal_redundancy_controller_t *controller = (causal_redundancy_controller_t *) c;
+    switch(type) {
+        case fec_packet:
+        case fb_fec_packet:
+            controller->n_fec_in_flight--;
+            break;
+        default:
+            break;
+    }
+}
 
 static __attribute__((always_inline)) void sent_packet(picoquic_cnx_t *cnx, picoquic_path_t *path, window_redundancy_controller_t c, causal_packet_type_t type, uint64_t slot, window_packet_metadata_t md) {
     causal_redundancy_controller_t *controller = (causal_redundancy_controller_t *) c;

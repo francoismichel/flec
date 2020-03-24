@@ -138,6 +138,14 @@ static __attribute__((always_inline)) int fec_what_to_send(picoquic_cnx_t *cnx, 
 }
 
 
+static __attribute__((always_inline)) int fec_cancelled_packet(picoquic_cnx_t *cnx, what_to_send_t wts) {
+    protoop_arg_t args[1];
+    args[0] = (protoop_arg_t) wts;
+    int err = (what_to_send_t) run_noparam(cnx, FEC_PROTOOP_CANCELLED_PACKET, 1, args, NULL);
+    return err;
+}
+
+
 static __attribute__((always_inline)) what_to_send_t fec_available_slot(picoquic_cnx_t *cnx, picoquic_path_t *path, available_slot_reason_t reason) {
     protoop_arg_t args[2];
     args[0] = (protoop_arg_t) path;

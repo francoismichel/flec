@@ -40,6 +40,7 @@
 
 
 
+#define MAX_WINDOW_SOURCE_SYMBOL_ID UINT32_MAX
 
 typedef uint32_t window_source_symbol_id_t; // it is just a contiguous sequence number
 
@@ -148,6 +149,12 @@ typedef struct window_repair_frame {
     repair_symbol_t **symbols;
 } window_repair_frame_t;
 
+
+typedef struct window_rwin_frame {
+    window_source_symbol_id_t smallest_id;
+    int64_t window_size;
+} window_rwin_frame_t;
+
 static __attribute__((always_inline)) window_repair_frame_t *create_repair_frame_without_symbols(picoquic_cnx_t *cnx) {
     window_repair_frame_t *rf = my_malloc(cnx, sizeof(window_repair_frame_t));
     if (!rf)
@@ -166,10 +173,21 @@ static __attribute__((always_inline)) window_repair_frame_t *delete_repair_frame
 }
 
 // if not null, will free rf->symbols but not the symbols themselves
-static __attribute__((always_inline)) window_repair_frame_t *delete_repair_frame(picoquic_cnx_t *cnx, window_repair_frame_t *rf) {
+static __attribute__((always_inline)) void delete_repair_frame(picoquic_cnx_t *cnx, window_repair_frame_t *rf) {
     delete_repair_frame_symbols(cnx, rf);
     my_free(cnx, rf);
-    return rf;
+}
+
+static __attribute__((always_inline)) window_rwin_frame_t *create_window_rwin_frame(picoquic_cnx_t *cnx) {
+    window_rwin_frame_t *rwin_frame = my_malloc(cnx, sizeof(window_rwin_frame_t));
+    if (!rwin_frame)
+        return NULL;
+    my_memset(rwin_frame, 0, sizeof(window_rwin_frame_t));
+    return rwin_frame;
+}
+
+static __attribute__((always_inline)) void delete_window_rwin_frame(picoquic_cnx_t *cnx, window_rwin_frame_t *frame) {
+    my_free(cnx, frame);
 }
 
 #define REPAIR_FRAME_HEADER_SIZE (member_size(window_fec_scheme_specific_t, val) + member_size(window_repair_frame_t, first_protected_symbol) + member_size(window_repair_frame_t, n_protected_symbols) + \
@@ -291,6 +309,53 @@ static __attribute__((always_inline)) window_repair_frame_t *parse_window_repair
     }
     PROTOOP_PRINTF(cnx, "RETURN\n");
     return rf;
+}
+
+static __attribute__((always_inline)) size_t varint_len(uint64_t val) {
+    if (val <= 63) {
+        return 1;
+    } else if (val <= 16383) {
+        return 2;
+    } else if (val <= 1073741823) {
+        return 4;
+    } else if (val <= 4611686018427387903) {
+        return 8;
+    }
+    return 0;
+}
+
+static __attribute__((always_inline)) int parse_window_rwin_frame(uint8_t *buffer, size_t buffer_length,
+                                                                         window_rwin_frame_t *frame, size_t *consumed) {
+    if (buffer_length == 0)
+        return PICOQUIC_ERROR_MEMORY;
+    *consumed = 0;
+    uint64_t decoded = 0;
+    *consumed += picoquic_varint_decode(buffer + *consumed, buffer_length - *consumed, &decoded);
+    if (decoded > MAX_WINDOW_SOURCE_SYMBOL_ID) {
+        return -1;
+    }
+    frame->smallest_id = (window_source_symbol_id_t) decoded;
+    if (buffer_length - *consumed == 0)
+        return PICOQUIC_ERROR_MEMORY;
+    *consumed += picoquic_varint_decode(buffer + *consumed, buffer_length - *consumed, &decoded);
+    frame->window_size = decoded;
+    if (frame->window_size < 0) {
+        return -2;
+    }
+    return 0;
+}
+
+static __attribute__((always_inline)) int serialize_window_rwin_frame(uint8_t *out_buffer, size_t buffer_length, window_rwin_frame_t *frame, size_t *consumed) {
+    *consumed = 0;
+    if (buffer_length - *consumed < varint_len(frame->smallest_id)) {
+        return PICOQUIC_ERROR_MEMORY;
+    }
+    *consumed += picoquic_varint_encode(out_buffer + *consumed, buffer_length - *consumed, frame->smallest_id);
+    if (buffer_length - *consumed < varint_len(frame->window_size)) {
+        return PICOQUIC_ERROR_MEMORY;
+    }
+    *consumed += picoquic_varint_encode(out_buffer + *consumed, buffer_length - *consumed, frame->window_size);
+    return 0;
 }
 
 typedef struct recovered_frame {

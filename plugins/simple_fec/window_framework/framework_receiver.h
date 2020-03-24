@@ -3,7 +3,7 @@
 #include "window_receive_buffers.h"
 #include "types.h"
 
-#define MAX_RECEIVE_BUFFER_SIZE 1001
+//#define MAX_RECEIVE_BUFFER_SIZE 1001
 
 
 #define MAX_AMBIGUOUS_ID_GAP ((uint32_t) 0x200*2)       // the max ambiguous ID gap depends on the max number of source symbols that can be protected by a Repair Symbol
@@ -17,6 +17,12 @@ typedef struct {
     bool has_received_a_repair_symbol;
 
     uint32_t highest_removed;
+    uint32_t receive_buffer_size;
+
+    window_source_symbol_id_t last_acknowledged_smallest_considered_id;
+    window_source_symbol_id_t smallest_considered_id_for_which_rwin_frame_has_been_sent;
+    window_source_symbol_id_t smallest_considered_id_to_advertise;
+
     fec_scheme_t fs;
     received_symbols_tracker_t symbols_tracker;
     received_source_symbols_buffer_t *received_source_symbols;
@@ -30,14 +36,14 @@ typedef struct {
     
 } window_fec_framework_receiver_t;
 
-static __attribute__((always_inline)) window_fec_framework_receiver_t *create_framework_receiver(picoquic_cnx_t *cnx, fec_scheme_t fs, uint16_t symbol_size, uint64_t bytes_repair_buffer) {
+static __attribute__((always_inline)) window_fec_framework_receiver_t *create_framework_receiver(picoquic_cnx_t *cnx, fec_scheme_t fs, uint16_t symbol_size, uint64_t bytes_repair_buffer, size_t receive_buffer_size) {
 
     window_fec_framework_receiver_t *wff = my_malloc(cnx, sizeof(window_fec_framework_receiver_t));
     if (!wff)
         return NULL;
     my_memset(wff, 0, sizeof(window_fec_framework_receiver_t));
     wff->fs = fs;
-    wff->received_source_symbols = new_source_symbols_buffer(cnx, MAX_RECEIVE_BUFFER_SIZE);
+    wff->received_source_symbols = new_source_symbols_buffer(cnx, receive_buffer_size);
     if (!wff->received_source_symbols) {
         my_free(cnx, wff);
         return NULL;
@@ -48,14 +54,14 @@ static __attribute__((always_inline)) window_fec_framework_receiver_t *create_fr
         my_free(cnx, wff);
         return NULL;
     }
-    wff->ss_recovery_buffer = my_malloc(cnx, MAX_RECEIVE_BUFFER_SIZE*sizeof(window_source_symbol_t *));
+    wff->ss_recovery_buffer = my_malloc(cnx, receive_buffer_size*sizeof(window_source_symbol_t *));
     if (!wff->ss_recovery_buffer) {
         release_source_symbols_buffer(cnx, wff->received_source_symbols);
         release_repair_symbols_buffer(cnx, wff->received_repair_symbols);
         my_free(cnx, wff);
         return NULL;
     }
-    wff->rs_recovery_buffer = my_malloc(cnx, MAX_RECEIVE_BUFFER_SIZE*sizeof(window_repair_symbol_t *));
+    wff->rs_recovery_buffer = my_malloc(cnx, receive_buffer_size*sizeof(window_repair_symbol_t *));
     if (!wff->rs_recovery_buffer) {
         release_source_symbols_buffer(cnx, wff->received_source_symbols);
         release_repair_symbols_buffer(cnx, wff->received_repair_symbols);
@@ -63,7 +69,7 @@ static __attribute__((always_inline)) window_fec_framework_receiver_t *create_fr
         my_free(cnx, wff);
         return NULL;
     }
-    wff->missing_symbols_buffer = my_malloc(cnx, MAX_RECEIVE_BUFFER_SIZE*sizeof(window_source_symbol_id_t));
+    wff->missing_symbols_buffer = my_malloc(cnx, receive_buffer_size*sizeof(window_source_symbol_id_t));
     if (!wff->missing_symbols_buffer) {
         release_source_symbols_buffer(cnx, wff->received_source_symbols);
         release_repair_symbols_buffer(cnx, wff->received_repair_symbols);
@@ -82,7 +88,7 @@ static __attribute__((always_inline)) window_fec_framework_receiver_t *create_fr
         my_free(cnx, wff);
         return NULL;
     }
-    wff->recovered_packets = create_min_max_pq(cnx, MAX_RECEIVE_BUFFER_SIZE);
+    wff->recovered_packets = create_min_max_pq(cnx, receive_buffer_size);
     if (!wff->symbols_tracker) {
         release_source_symbols_buffer(cnx, wff->received_source_symbols);
         release_repair_symbols_buffer(cnx, wff->received_repair_symbols);
@@ -93,6 +99,8 @@ static __attribute__((always_inline)) window_fec_framework_receiver_t *create_fr
         my_free(cnx, wff);
         return NULL;
     }
+    wff->receive_buffer_size = receive_buffer_size;
+    wff->smallest_considered_id_to_advertise = 1;
     return wff;
 }
 
@@ -104,7 +112,7 @@ static __attribute__((always_inline)) void select_source_and_repair_symbols(pico
                                                                             window_source_symbol_id_t *missing_source_symbols
                                                                             ) {
     window_source_symbol_id_t first_id = 0, last_id = 0;
-    *n_repair_symbols = get_repair_symbols(cnx, wff->received_repair_symbols, repair_symbols, &first_id, &last_id, get_highest_contiguous_received_source_symbol(wff->symbols_tracker), MAX_RECEIVE_BUFFER_SIZE);
+    *n_repair_symbols = get_repair_symbols(cnx, wff->received_repair_symbols, repair_symbols, &first_id, &last_id, get_highest_contiguous_received_source_symbol(wff->symbols_tracker), wff->receive_buffer_size);
     *n_considered_source_symbols = last_id + 1 - first_id;
     if (*n_repair_symbols > 0) {
         uint16_t n_added_source_symbols = get_source_symbols_between_bounds(cnx, wff->received_source_symbols, source_symbols, first_id, last_id);
@@ -146,6 +154,14 @@ static __attribute__((always_inline)) int recover_lost_symbols(picoquic_cnx_t *c
     return (int) run_noparam(cnx, FEC_PROTOOP_WINDOW_FEC_SCHEME_RECOVER, 9, args, recovered);
 }
 
+static __attribute__((always_inline)) int window_update_flow_control_infos(picoquic_cnx_t *cnx, window_fec_framework_receiver_t *wff){
+    window_source_symbol_id_t highest_contiguous = get_highest_contiguous_received_source_symbol(wff->symbols_tracker);
+//    if (wff->smallest_considered_id_to_advertise + wff->receive_buffer_size/2 <= highest_contiguous) {
+        wff->smallest_considered_id_to_advertise = highest_contiguous;
+//    }
+    return 0;
+}
+
 // returns true if the symbol has been successfully processed
 // returns false otherwise: the symbol can be destroyed
 static __attribute__((always_inline)) int window_receive_source_symbol(picoquic_cnx_t *cnx, window_fec_framework_receiver_t *wff, window_source_symbol_t *ss){
@@ -169,6 +185,7 @@ static __attribute__((always_inline)) int window_receive_source_symbol(picoquic_
         // we don't recover symbols if we already are in recovery mode
         remove_and_free_unused_repair_symbols(cnx, wff->received_repair_symbols, get_highest_contiguous_received_source_symbol(wff->symbols_tracker) + 1);
     }
+    window_update_flow_control_infos(cnx, wff);
     return 0;
 }
 
@@ -197,8 +214,10 @@ static __attribute__((always_inline)) int window_receive_packet_payload(picoquic
 // returns true if the symbol has been successfully processed
 // returns false otherwise: the symbol can be destroyed
 static __attribute__((always_inline)) int window_receive_repair_symbol(picoquic_cnx_t *cnx, window_fec_framework_receiver_t *wff, window_repair_symbol_t *rs) {
-    if (rs->metadata.first_id + rs->metadata.n_protected_symbols - 1 <= get_highest_contiguous_received_source_symbol(wff->symbols_tracker))
+    if (rs->metadata.first_id + rs->metadata.n_protected_symbols - 1 <= get_highest_contiguous_received_source_symbol(wff->symbols_tracker)) {
+        PROTOOP_PRINTF(cnx, "DON'T ADD REPAIR SYMBOL: CONCERN NO INTERESTING SOURCE SYMBOL\n");
         return false;
+    }
     repair_symbol_t *removed = add_repair_symbol(cnx, wff->received_repair_symbols, rs);
     if (removed)
         delete_repair_symbol(cnx, removed);
@@ -290,6 +309,40 @@ static __attribute__((always_inline)) bool reassemble_packet_from_recovered_symb
     return true;
 }
 
+static __attribute__((always_inline)) int _reserve_window_rwin_frame(picoquic_cnx_t *cnx, window_fec_framework_receiver_t *wff) {
+    window_rwin_frame_t *frame = create_window_rwin_frame(cnx);
+    if (frame) {
+        reserve_frame_slot_t *slot = (reserve_frame_slot_t *) my_malloc(cnx, sizeof(reserve_frame_slot_t));
+        if (!slot) {
+            my_free(cnx, frame);
+            return PICOQUIC_ERROR_MEMORY;
+        }
+        my_memset(slot, 0, sizeof(reserve_frame_slot_t));
+        // !!! this will likely be overwritten by the frame writer it it wants the most up to date flow control information
+        frame->smallest_id = wff->smallest_considered_id_to_advertise;
+        frame->window_size = wff->receive_buffer_size;
+        slot->frame_type = FRAME_WINDOW_RWIN;
+        slot->nb_bytes = 17;    // at worst: type byte + 8 + 8
+        slot->frame_ctx = frame;
+        slot->is_congestion_controlled = false;
+        if (reserve_frames(cnx, 1, slot) != slot->nb_bytes) {
+            return PICOQUIC_ERROR_MEMORY;
+        }
+        wff->smallest_considered_id_for_which_rwin_frame_has_been_sent = wff->smallest_considered_id_to_advertise;
+        return 0;
+    }
+    return PICOQUIC_ERROR_MEMORY;
+}
+
+static __attribute__((always_inline)) int reserve_window_rwin_frame_if_needed(picoquic_cnx_t *cnx, window_fec_framework_receiver_t *wff) {
+//    if (wff->last_acknowledged_smallest_considered_id < wff->smallest_considered_id_to_advertise) {
+    window_source_symbol_id_t highest_contiguous = get_highest_contiguous_received_source_symbol(wff->symbols_tracker);
+    if (wff->last_acknowledged_smallest_considered_id == 0 || wff->last_acknowledged_smallest_considered_id + wff->receive_buffer_size/2 < highest_contiguous) {
+        return _reserve_window_rwin_frame(cnx, wff);
+    }
+    return 0;
+}
+
 
 static __attribute__((always_inline)) window_recovered_frame_t *get_recovered_frame(picoquic_cnx_t *cnx, window_fec_framework_receiver_t *wff, size_t max_bytes) {
     size_t minimum_size = 2*sizeof(uint64_t);
@@ -315,8 +368,8 @@ static __attribute__((always_inline)) int try_to_recover(picoquic_cnx_t *cnx, wi
     remove_and_free_unused_repair_symbols(cnx, wff->received_repair_symbols, get_highest_contiguous_received_source_symbol(wff->symbols_tracker) + 1);
     uint16_t selected_source_symbols = 0, selected_repair_symbols = 0, n_missing_source_symbols = 0;
     window_source_symbol_id_t first_selected_id = 0;
-    my_memset(wff->ss_recovery_buffer, 0, MAX_RECEIVE_BUFFER_SIZE*sizeof(window_source_symbol_t *));
-    my_memset(wff->rs_recovery_buffer, 0, MAX_RECEIVE_BUFFER_SIZE*sizeof(window_repair_symbol_t *));
+    my_memset(wff->ss_recovery_buffer, 0, wff->receive_buffer_size*sizeof(window_source_symbol_t *));
+    my_memset(wff->rs_recovery_buffer, 0, wff->receive_buffer_size*sizeof(window_repair_symbol_t *));
     select_source_and_repair_symbols(cnx, wff, wff->ss_recovery_buffer, &selected_source_symbols, &first_selected_id, wff->rs_recovery_buffer,
             &selected_repair_symbols, &n_missing_source_symbols, wff->missing_symbols_buffer);
     if (selected_source_symbols == 0 || selected_repair_symbols == 0 ||
@@ -391,4 +444,20 @@ static __attribute__((always_inline)) int try_to_recover(picoquic_cnx_t *cnx, wi
         }
     }
     return err;
+}
+
+static __attribute__((always_inline)) int window_set_buffers_sizes(picoquic_cnx_t *cnx, size_t source_symbols_buffer_size, size_t repair_symbols_buffer_size) {
+    plugin_state_t *state = get_plugin_state(cnx);
+    if (!state)
+        return PICOQUIC_ERROR_MEMORY;
+    window_fec_framework_receiver_t *wff = (window_fec_framework_receiver_t *) state->framework_receiver;
+    release_repair_symbols_buffer(cnx, wff->received_repair_symbols);
+    wff->received_repair_symbols = new_repair_symbols_buffer(cnx, repair_symbols_buffer_size);
+
+    wff->receive_buffer_size = source_symbols_buffer_size;
+    wff->received_source_symbols = new_source_symbols_buffer(cnx, source_symbols_buffer_size);
+    wff->smallest_considered_id_to_advertise = 1;
+    wff->smallest_considered_id_for_which_rwin_frame_has_been_sent = 0;
+    wff->last_acknowledged_smallest_considered_id = 0;
+    return 0;
 }

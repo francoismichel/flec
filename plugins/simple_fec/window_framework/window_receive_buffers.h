@@ -77,7 +77,7 @@ static __attribute__((always_inline)) void release_repair_symbols_buffer(picoqui
 static __attribute__((always_inline)) repair_symbol_t *add_repair_symbol(picoquic_cnx_t *cnx, received_repair_symbols_buffer_t *buffer, window_repair_symbol_t *rs) {
     // FIXME: do a simple ring buffer (is it still needed ?)
     // we order it by the last protected symbol
-    PROTOOP_PRINTF(cnx, "ADD SYMBOL WITH KEY %u\n", rs->metadata.first_id + rs->metadata.n_protected_symbols - 1);
+    PROTOOP_PRINTF(cnx, "ADD SYMBOL WITH KEY %u\n", decode_u32(rs->metadata.fss.val));
 //    return pq_insert_and_pop_min_if_full(buffer->pq, rs->metadata.first_id + rs->metadata.n_protected_symbols - 1, rs);
     return pq_insert_and_pop_min_if_full(buffer->pq, decode_u32(rs->metadata.fss.val), rs);
 }
@@ -100,7 +100,7 @@ static __attribute__((always_inline)) int get_repair_symbols(picoquic_cnx_t *cnx
         window_source_symbol_id_t *smallest_protected, uint32_t *highest_protected, window_source_symbol_id_t highest_contiguously_received_id, uint16_t max_concerned_source_symbols) {
     if (pq_is_empty(buffer->pq))
         return 0;
-    my_memset(symbols, 0, buffer->pq->max_size);
+    my_memset(symbols, 0, buffer->pq->max_size*sizeof(window_repair_symbol_t *));
     PROTOOP_PRINTF(cnx, "HIGHEST RECEIVED = %lu, MIN : %lu, MAX = %lu\n", highest_contiguously_received_id, pq_get_min_key(buffer->pq), pq_get_max_key(buffer->pq));
     uint64_t max_key_in_pq = pq_get_max_key(buffer->pq);
     uint64_t min_key_in_pq = pq_get_min_key(buffer->pq);

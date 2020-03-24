@@ -118,6 +118,10 @@ static __attribute__((always_inline)) symbol_deadline_t protected_stream_chunks_
     return min_deadline;
 }
 
+typedef struct window_control {
+    window_source_symbol_id_t lowest_considered_id_by_peer;
+    window_source_symbol_id_t largest_authorized_id_by_peer;
+} window_control_t;
 
 typedef struct {
     fec_scheme_t fec_scheme;
@@ -140,6 +144,8 @@ typedef struct {
 
     symbol_deadline_t min_deadline_in_current_packet;
 
+    window_control_t window_control;
+
     red_black_tree_t *symbols_from_deadlines;
     red_black_tree_t *deadlines_from_symbols;
     red_black_tree_t *unreliable_messages_from_deadlines;
@@ -150,6 +156,11 @@ typedef struct {
     int64_t stream_id;
     size_t length;
 } unreliable_message_metadata_t;
+
+static __attribute__((always_inline)) bool can_send_new_source_symbol(picoquic_cnx_t *cnx, window_fec_framework_t *wff) {
+    return wff->highest_in_transit < wff->window_control.largest_authorized_id_by_peer;
+}
+
 
 static __attribute__((always_inline)) unreliable_message_metadata_t *new_unreliable_message_metadata(picoquic_cnx_t *cnx, int64_t stream_id, size_t length) {
     unreliable_message_metadata_t *md = my_malloc(cnx, sizeof(unreliable_message_metadata_t));
@@ -429,7 +440,10 @@ static __attribute__((always_inline)) int window_reserve_repair_frames(picoquic_
 }
 
 
-static __attribute__((always_inline)) bool _remove_source_symbol_from_window(picoquic_cnx_t *cnx, window_fec_framework_t *wff, source_symbol_t *ss, window_source_symbol_id_t id){
+static __attribute__((always_inline)) bool __remove_source_symbol_from_window(picoquic_cnx_t *cnx,
+                                                                              window_fec_framework_t *wff,
+                                                                              source_symbol_t *ss,
+                                                                              window_source_symbol_id_t id){
 
     int idx = (int) (id % MAX_SENDING_WINDOW_SIZE);
     // wrong symbol ?
@@ -445,19 +459,27 @@ static __attribute__((always_inline)) bool _remove_source_symbol_from_window(pic
     return true;
 }
 
-static __attribute__((always_inline)) bool remove_source_symbol_from_window(picoquic_cnx_t *cnx, window_fec_framework_t *wff, source_symbol_t *ss, window_source_symbol_id_t id) {
+static __attribute__((always_inline)) bool _remove_source_symbol_from_window(picoquic_cnx_t *cnx,
+                                                                             window_fec_framework_t *wff,
+                                                                             source_symbol_t *ss,
+                                                                             window_source_symbol_id_t id) {
     if (ss) {
         if (id != wff->smallest_in_transit || is_fec_window_empty(wff)) {
+            PROTOOP_PRINTF(cnx, "ERROR != SMALLEST\n");
             return false;
         }
 
-        if (!_remove_source_symbol_from_window(cnx, wff, ss, id))
+        if (!__remove_source_symbol_from_window(cnx, wff, ss, id)) {
+            PROTOOP_PRINTF(cnx, "ERROR __\n");
             return false;
+        }
         wff->smallest_in_transit++;
 
         while(!is_fec_window_empty(wff) && wff->fec_window[wff->smallest_in_transit % MAX_SENDING_WINDOW_SIZE].received) {
 
-            if (!_remove_source_symbol_from_window(cnx, wff, wff->fec_window[wff->smallest_in_transit % MAX_SENDING_WINDOW_SIZE].symbol, wff->smallest_in_transit)) {
+            if (!__remove_source_symbol_from_window(cnx, wff, wff->fec_window[wff->smallest_in_transit %
+                                                                              MAX_SENDING_WINDOW_SIZE].symbol,
+                                                    wff->smallest_in_transit)) {
                 return false;
             }
             wff->smallest_in_transit++;
@@ -466,9 +488,39 @@ static __attribute__((always_inline)) bool remove_source_symbol_from_window(pico
         if (is_fec_window_empty(wff)) {
             wff->smallest_in_transit = wff->highest_in_transit = INITIAL_SYMBOL_ID-1;
         }
+        PROTOOP_PRINTF(cnx, "REMOVED, SMALLEST = %lu\n", wff->smallest_in_transit);
         return true;
     }
     return false;
+}
+static __attribute__((always_inline)) int remove_source_symbol_id_from_window(picoquic_cnx_t *cnx, window_fec_framework_t *wff, window_source_symbol_id_t id) {
+    uint32_t idx = id % MAX_SENDING_WINDOW_SIZE;
+    if (wff->fec_window[idx].id == id && wff->fec_window[idx].symbol) {
+        PROTOOP_PRINTF(cnx, "TRY TO REMOVE SYMBOL %lu FROM WINDOW, SMALLEST %lu\n", id, wff->smallest_in_transit);
+        if (rbt_contains(cnx, wff->deadlines_from_symbols, id)) {
+            rbt_val val;
+            bool found = (symbol_deadline_t) rbt_get(cnx, wff->deadlines_from_symbols, id, &val);
+            if (found) {
+                symbol_deadline_t deadline = (symbol_deadline_t) val;
+                // remove the symbol from the state
+                rbt_delete(cnx, wff->deadlines_from_symbols, id);
+                rbt_delete(cnx, wff->symbols_from_deadlines, deadline);
+            } else {
+                // should not happen given the guarding if
+                PROTOOP_PRINTF(cnx, "ERROR: COULD NOT FIND DEADLINE FOR MESSAGE\n");
+            }
+        }
+        // if it is the first symbol of the window, let's prune the window
+        if (!is_fec_window_empty(wff) && id == wff->smallest_in_transit) {
+            PROTOOP_PRINTF(cnx, "REMOVE SYMBOL %lu FROM WINDOW\n", id);
+            if (!_remove_source_symbol_from_window(cnx, wff, wff->fec_window[idx].symbol, id)) {
+                return -1;
+            }
+        }
+    } else {
+        PROTOOP_PRINTF(cnx, "ID IN WINDOW WAS %u INSTEAD OF %u\n", wff->fec_window[idx].id, id);
+    }
+    return 0;
 }
 
 static __attribute__((always_inline)) bool add_source_symbol_to_window(picoquic_cnx_t *cnx, window_fec_framework_t *wff, source_symbol_t *ss, window_source_symbol_id_t id) {
@@ -495,35 +547,34 @@ static __attribute__((always_inline)) bool add_source_symbol_to_window(picoquic_
 
 }
 
+static __attribute__((always_inline)) int update_window_bounds(picoquic_cnx_t *cnx, window_fec_framework_t *wff, window_source_symbol_id_t smallest_id, window_source_symbol_id_t largest_id) {
+    PROTOOP_PRINTF(cnx, "UPDATE BOUNDS, CURRENT SMALLEST = %u, FRAME SMALLEST  %u\n", wff->smallest_in_transit, smallest_id);
+    wff->window_control.lowest_considered_id_by_peer = MAX(wff->window_control.lowest_considered_id_by_peer, smallest_id);
+    wff->window_control.largest_authorized_id_by_peer = MAX(wff->window_control.largest_authorized_id_by_peer, largest_id);
+    for (window_source_symbol_id_t id = wff->smallest_in_transit ; id < wff->window_control.lowest_considered_id_by_peer ; id++) {
+        if (remove_source_symbol_id_from_window(cnx, wff, id) != 0) {
+            PROTOOP_PRINTF(cnx, "ERROR WHEN UPDATING WINDOW BOUNDS\n");
+            return -1;
+        }
+    }
+    wff->smallest_in_transit = MAX(wff->smallest_in_transit, wff->window_control.lowest_considered_id_by_peer);
+    wff->min_id = wff->window_control.lowest_considered_id_by_peer;
+    return 0;
+}
+
 static __attribute__((always_inline)) int sfpid_has_landed(picoquic_cnx_t *cnx, window_fec_framework_t *wff, window_source_symbol_id_t id, bool received) {
     PROTOOP_PRINTF(cnx, "SYMBOL %d LANDED, RECEIVED = %d\n", id, received);
     // remove all the needed symbols from the window
     uint32_t idx = id % MAX_SENDING_WINDOW_SIZE;
-    if (received && wff->fec_window[idx].symbol) {
-        if (wff->fec_window[idx].id == id) {
-            if (rbt_contains(cnx, wff->deadlines_from_symbols, id)) {
-                rbt_val val;
-                bool found = (symbol_deadline_t) rbt_get(cnx, wff->deadlines_from_symbols, id, &val);
-                if (found) {
-                    symbol_deadline_t deadline = (symbol_deadline_t) val;
-                    // remove the symbol from the state
-                    rbt_delete(cnx, wff->deadlines_from_symbols, id);
-                    rbt_delete(cnx, wff->symbols_from_deadlines, deadline);
-                } else {
-                    // should not happen given the guarding if
-                    PROTOOP_PRINTF(cnx, "ERROR: COULD NOT FIND DEADLINE FOR MESSAGE\n");
-                }
-            }
+    if (received) {
+        int err = remove_source_symbol_id_from_window(cnx, wff, id);
+        if (!err) {
             wff->fec_window[idx].received = true;
-            // if it is the first symbol of the window, let's prune the window
-            if (!is_fec_window_empty(wff) && id == wff->smallest_in_transit) {
-                if (!remove_source_symbol_from_window(cnx, wff, wff->fec_window[idx].symbol, id)) {
-                    return -1;
-                }
-            }
         }
+        return err;
     }
-    return 0;
+    return -1;
+
 }
 
 static __attribute__((always_inline)) void sfpid_takes_off(window_fec_framework_t *wff, window_source_symbol_id_t id) {
@@ -531,15 +582,6 @@ static __attribute__((always_inline)) void sfpid_takes_off(window_fec_framework_
     wff->smallest_in_transit = MIN(wff->smallest_in_transit, id);
 }
 
-
-
-static __attribute__((always_inline)) void remove_source_symbols_from_window(picoquic_cnx_t *cnx, window_fec_framework_t *wff, source_symbol_t **symbols, uint16_t n_symbols, window_source_symbol_id_t first_symbol_id){
-    for (int i = 0 ; i < n_symbols ; i++) {
-        source_symbol_t *ss = symbols[i];
-        remove_source_symbol_from_window(cnx, wff, ss, first_symbol_id + i);
-        symbols[i] = NULL;
-    }
-}
 
 static __attribute__((always_inline)) int generate_and_queue_repair_symbols(picoquic_cnx_t *cnx, window_fec_framework_t *wff, bool flush,
                                                                             uint16_t n_symbols_to_generate, uint16_t symbol_size,

@@ -72,9 +72,17 @@ static __attribute__((always_inline)) bool stream_can_be_scheduled(picoquic_stre
  */
 protoop_arg_t deadline_scheduler(picoquic_cnx_t *cnx) {
     plugin_state_t *state = get_plugin_state(cnx);
+    if (!state) {
+        return (protoop_arg_t) NULL;
+    }
+    window_fec_framework_t *wff = (window_fec_framework_t *) state->framework_sender;
+    if (!can_send_new_source_symbol(cnx, wff)) {
+        PROTOOP_PRINTF(cnx, "FEC FLOW-CONTROL BLOCKED\n");
+        return (protoop_arg_t) NULL;
+    }
     picoquic_stream_head *best_stream = NULL;
 
-    if (state && get_cnx(cnx, AK_CNX_MAXDATA_REMOTE, 0) > get_cnx(cnx, AK_CNX_DATA_SENT, 0)) {
+    if (get_cnx(cnx, AK_CNX_MAXDATA_REMOTE, 0) > get_cnx(cnx, AK_CNX_DATA_SENT, 0)) {
         window_fec_framework_t *framework = (window_fec_framework_t *) state->framework_sender;
         if (!rbt_is_empty(cnx, framework->unreliable_messages_from_deadlines)) {
             symbol_deadline_t current_deadline = UNDEFINED_SYMBOL_DEADLINE;

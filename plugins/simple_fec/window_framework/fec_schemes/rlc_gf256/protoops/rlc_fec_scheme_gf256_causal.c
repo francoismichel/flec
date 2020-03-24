@@ -312,7 +312,7 @@ protoop_arg_t fec_recover(picoquic_cnx_t *cnx)
                             // check if lower symbols are concerned by this rs
                             trivial =
                                     (index_in_missing == 0 ||
-                                     missing_source_symbols[index_in_missing - 1] < smallest_protected)
+                                     missing_source_symbols[index_in_missing - 1] < smallest_protected_by_rs)
                                     // check if lower symbols are concerned by this rs
                                     && (index_in_missing == n_missing_source_symbols - 1 ||
                                         missing_source_symbols[index_in_missing + 1] >

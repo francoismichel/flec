@@ -26,13 +26,14 @@ protoop_arg_t bulk_causal_ew(picoquic_cnx_t *cnx) {
         return PICOQUIC_ERROR_MEMORY;
     }
 
-    if (controller->n_fec_in_flight >= 2*MAX(1, uniform_loss_rate_times_granularity*window_size(current_window)/granularity)) {
+    int n_unprotected = current_window->end - addon->last_packet_since_ew;
+    bool fc_blocked = !fec_has_protected_data_to_send(cnx);
+    if ((fc_blocked && (n_unprotected == 0 && addon->n_ew_for_last_packet >= addon->max_trigger && controller->n_fec_in_flight >= 2*MAX(1, uniform_loss_rate_times_granularity*window_size(current_window)/granularity))) || (!fc_blocked && controller->n_fec_in_flight >= 2*MAX(1, uniform_loss_rate_times_granularity*window_size(current_window)/granularity))) {
         return false;
     }
 
 //    uint64_t smoothed_rtt_microsec = get_path(path, AK_PATH_SMOOTHED_RTT, 0);
 //    bool one_rtt_has_elapsed = addon->last_ew_triggered_microsec + smoothed_rtt_microsec/4 <= current_time;
-    int n_unprotected = current_window->end - addon->last_packet_since_ew;
 //    uint64_t n_symbols_likely_to_be_lost = 1+MAX((gemodel_r_times_granularity == GRANULARITY) ? 0 : (granularity/MAX(1, gemodel_r_times_granularity)), n_unprotected*uniform_loss_rate_times_granularity/GRANULARITY);
 
 
@@ -51,7 +52,6 @@ protoop_arg_t bulk_causal_ew(picoquic_cnx_t *cnx) {
 //        addon->last_packet_since_ew = current_window->end;
     }
 
-    bool fc_blocked = !fec_has_protected_data_to_send(cnx);
     bool protect = fc_blocked || should_send_fec;
     PROTOOP_PRINTF(cnx, "CURRENT N ELAPSED = %lu, WAITS FOR %lu\n", n_unprotected, MIN(window_size(current_window), granularity/(MAX(1, gemodel_p_times_granularity))));
     PROTOOP_PRINTF(cnx, "LAST PACKET SINCE EW = %lu, CURRENT END = %lu\n", addon->last_packet_since_ew, current_window->end);

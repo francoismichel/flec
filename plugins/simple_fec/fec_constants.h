@@ -6,6 +6,7 @@
 #define FEC_PROTOOP_AVAILABLE_SLOT "fec_available_slot"
 #define FEC_PROTOOP_CHECK_FOR_AVAILABLE_SLOT "fec_check_for_available_slot"
 #define FEC_PROTOOP_WHAT_TO_SEND   "fec_what_to_send"
+#define FEC_PROTOOP_CANCELLED_PACKET   "fec_cancelled_packet"
 #define FEC_PROTOOP_HAS_PROTECTED_DATA_TO_SEND   "fec_has_protected_data_to_send"
 #define FEC_PROTOOP_GET_NEXT_SOURCE_SYMBOL_ID   "fec_next_sfpid"
 #define FEC_RECEIVE_PACKET_PAYLOAD "fec_receive_packet_payload"
@@ -27,6 +28,7 @@
 #define FRAME_FEC_SRC_FPI 0x29
 #define FRAME_REPAIR 0x2a
 #define FRAME_RECOVERED 0x2b
+#define FRAME_WINDOW_RWIN 0x28
 
 #define REPAIR_FRAME_TYPE_BYTE_SIZE 1
 #define FPI_FRAME_TYPE_BYTE_SIZE 1

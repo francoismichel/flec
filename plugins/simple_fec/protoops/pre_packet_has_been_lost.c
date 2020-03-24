@@ -20,6 +20,7 @@ protoop_arg_t pre_packet_has_been_lost(picoquic_cnx_t *cnx) {
     int err = 0;
     if ((err = add_lost_packet(cnx, &state->lost_packets, lost_packet_number, slot, first_symbol_id, n_symbols, send_time)) != 0)
         return err;
+    PROTOOP_PRINTF(cnx, "PACKET HAS BEEN LOST\n");
     if ((err = fec_check_for_available_slot(cnx, available_slot_reason_nack)) != 0)
         return err;
     return 0;
