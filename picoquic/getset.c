@@ -978,6 +978,8 @@ protoop_arg_t get_stream_head(picoquic_stream_head *stream_head, access_key_t ak
         return stream_head->stream_id;
     case AK_STREAMHEAD_MAX_DATA_REMOTE:
         return stream_head->maxdata_remote;
+    case AK_STREAMHEAD_MAX_DATA_LOCAL:
+        return stream_head->maxdata_local;
     case AK_STREAMHEAD_SENT_OFFSET:
         return stream_head->sent_offset;
     case AK_STREAMHEAD_STREAM_FLAGS:

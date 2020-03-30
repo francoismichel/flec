@@ -662,6 +662,8 @@ void set_preq(plugin_req_pid_t *preq, access_key_t ak, protoop_arg_t val);
 #define AK_STREAMHEAD_STREAM_FLAGS 0x06
 /** The offset at which new app data will be queued for sending */
 #define AK_STREAMHEAD_SENDING_OFFSET 0x07
+/** The maximum offset allowed by us */
+#define AK_STREAMHEAD_MAX_DATA_LOCAL 0x08
 
 /**
  * @}
