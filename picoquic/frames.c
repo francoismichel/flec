@@ -3099,6 +3099,25 @@ protoop_arg_t process_max_stream_data_frame(picoquic_cnx_t *cnx)
     return 0;
 }
 
+protoop_arg_t is_max_stream_data_frame_required(picoquic_cnx_t *cnx) {
+    picoquic_stream_head *stream = (picoquic_stream_head *) cnx->protoop_inputv[0];
+    uint64_t desired_offset = stream->maxdata_local + 2 * stream->consumed_offset;
+    uint64_t largest_possible_offset = stream->consumed_offset + MIN(cnx->max_stream_receive_window_size, UINT64_MAX - stream->consumed_offset); // avoid overflow
+    bool should_update = (desired_offset < largest_possible_offset &&  2 * stream->consumed_offset > stream->maxdata_local)   // we're not rwin-limited
+                         || (desired_offset >= largest_possible_offset && stream->maxdata_local - stream->consumed_offset < 0.5*cnx->max_stream_receive_window_size);  // we are rwin-limited, only update when 50% of the buffer has been read
+    protoop_save_outputs(cnx, MIN(desired_offset, largest_possible_offset));
+    return (stream->stream_flags & (picoquic_stream_flag_fin_received | picoquic_stream_flag_reset_received)) == 0
+           && should_update;
+}
+
+bool picoquic_is_max_stream_data_frame_required(picoquic_cnx_t *cnx, picoquic_stream_head* stream, uint64_t *new_offset) {
+    protoop_arg_t outs[PROTOOPARGS_MAX];
+    int ret = (int) protoop_prepare_and_run_noparam(cnx, &PROTOOP_NOPARAM_IS_MAX_STREAM_DATA_FRAME_REQUIRED, outs,
+                                                    stream);
+    *new_offset = (size_t)outs[0];
+    return ret;
+}
+
 /**
  * See PROTOOP_NOPARAM_PREPARE_REQUIRED_MAX_STREAM_DATA_FRAME
  */
@@ -3114,17 +3133,14 @@ protoop_arg_t prepare_required_max_stream_data_frames(picoquic_cnx_t* cnx)
     picoquic_stream_head* stream = cnx->first_stream;
 
     while (stream != NULL && ret == 0 && byte_index < bytes_max) {
-        uint64_t desired_offset = stream->maxdata_local + 2 * stream->consumed_offset;
-        uint64_t largest_possible_offset = stream->consumed_offset + MIN(cnx->max_stream_receive_window_size, UINT64_MAX - stream->consumed_offset); // avoid overflow
-        bool should_update = (desired_offset < largest_possible_offset &&  2 * stream->consumed_offset > stream->maxdata_local)   // we're not rwin-limited
-                            || (desired_offset >= largest_possible_offset && stream->maxdata_local - stream->consumed_offset < 0.5*cnx->max_stream_receive_window_size);  // we are rwin-limited, only update when 50% of the buffer has been read
-        if ((stream->stream_flags & (picoquic_stream_flag_fin_received | picoquic_stream_flag_reset_received)) == 0
-            && should_update) {
+        uint64_t new_offset = 0;
+        bool update_needed = picoquic_is_max_stream_data_frame_required(cnx, stream, &new_offset);
+        if (update_needed) {
             size_t bytes_in_frame = 0;
 
             ret = picoquic_prepare_max_stream_data_frame(stream,
                 bytes + byte_index, bytes_max - byte_index,
-                MIN(desired_offset, largest_possible_offset),
+                new_offset,
                 &bytes_in_frame);
             if (ret == 0) {
                 byte_index += bytes_in_frame;
@@ -4280,6 +4296,7 @@ void frames_register_noparam_protoops(picoquic_cnx_t *cnx)
     register_noparam_protoop(cnx, &PROTOOP_NOPARAM_PREPARE_MAX_DATA_FRAME, &prepare_max_data_frame);
     register_noparam_protoop(cnx, &PROTOOP_NOPARAM_PREPARE_FIRST_MISC_FRAME, &prepare_first_misc_frame);
     register_noparam_protoop(cnx, &PROTOOP_NOPARAM_PREPARE_REQUIRED_MAX_STREAM_DATA_FRAME, &prepare_required_max_stream_data_frames);
+    register_noparam_protoop(cnx, &PROTOOP_NOPARAM_IS_MAX_STREAM_DATA_FRAME_REQUIRED, &is_max_stream_data_frame_required);
     register_noparam_protoop(cnx, &PROTOOP_NOPARAM_PREPARE_STREAM_FRAME, &prepare_stream_frame);
     register_noparam_protoop(cnx, &PROTOOP_NOPARAM_PREPARE_PLUGIN_FRAME, &prepare_plugin_frame);
 

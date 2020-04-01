@@ -470,6 +470,17 @@ static int helper_prepare_required_max_stream_data_frames(picoquic_cnx_t* cnx,
     return ret;
 }
 
+static int helper_is_max_stream_data_frame_required(picoquic_cnx_t *cnx,
+    picoquic_stream_head* stream, uint64_t *new_offset)
+{
+    protoop_arg_t args[1];
+    protoop_arg_t outs[1];
+    args[0] = (protoop_arg_t) stream;
+    int ret = (int) run_noparam(cnx, PROTOOPID_NOPARAM_IS_MAX_STREAM_DATA_FRAME_REQUIRED, 1, args, outs);
+    *new_offset = (size_t)outs[0];
+    return ret;
+}
+
 static int helper_stream_bytes_max(picoquic_cnx_t* cnx, size_t bytes_max, size_t header_length, uint8_t* bytes)
 {
     protoop_arg_t outs[1];

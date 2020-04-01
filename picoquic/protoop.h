@@ -569,6 +569,15 @@ extern protoop_id_t PROTOOP_NOPARAM_PREPARE_MAX_DATA_FRAME;
 #define PROTOOPID_NOPARAM_PREPARE_REQUIRED_MAX_STREAM_DATA_FRAME "prepare_required_max_stream_data_frames"
 extern protoop_id_t PROTOOP_NOPARAM_PREPARE_REQUIRED_MAX_STREAM_DATA_FRAME;
 /**
+ * Tells whether a MAX_STREAM_DATA is needed for the specified stream..
+ * \param[in] stream \b picoquic_stream_head* Pointer to the stream for which we want the information
+ *
+ * \return \b int Error code, 0 means it's ok
+ * \param[out] new_offset \b uint64_t the offset to announce in a MAX_STREAM_DATA frame when the return value is true
+ */
+#define PROTOOPID_NOPARAM_IS_MAX_STREAM_DATA_FRAME_REQUIRED "is_max_stream_data_frame_required"
+extern protoop_id_t PROTOOP_NOPARAM_IS_MAX_STREAM_DATA_FRAME_REQUIRED;
+/**
  * Prepare the first miscellanious frame.
  * \param[in] bytes \b uint8_t* Pointer to the buffer to write the frame 
  * \param[in] bytes_max \b size_t Max size that can be written
