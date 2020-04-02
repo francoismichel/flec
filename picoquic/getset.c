@@ -114,6 +114,8 @@ protoop_arg_t get_cnx(picoquic_cnx_t *cnx, access_key_t ak, uint16_t param)
         return cnx->maxdata_local;
     case AK_CNX_MAXDATA_REMOTE:
         return cnx->maxdata_remote;
+    case AK_CNX_MAX_STREAM_RECEIVE_WINDOW_SIZE:
+        return cnx->max_stream_receive_window_size;
     case AK_CNX_MAX_STREAM_ID_BIDIR_LOCAL:
         return cnx->max_stream_id_bidir_local;
     case AK_CNX_MAX_STREAM_ID_UNIDIR_LOCAL:
@@ -355,6 +357,9 @@ void set_cnx(picoquic_cnx_t *cnx, access_key_t ak, uint16_t param, protoop_arg_t
         break;
     case AK_CNX_MAXDATA_REMOTE:
         cnx->maxdata_remote = (uint64_t) val;
+        break;
+    case AK_CNX_MAX_STREAM_RECEIVE_WINDOW_SIZE:
+        cnx->max_stream_receive_window_size = (uint64_t) val;
         break;
     case AK_CNX_MAX_STREAM_ID_BIDIR_LOCAL:
         cnx->max_stream_id_bidir_local = (uint64_t) val;
