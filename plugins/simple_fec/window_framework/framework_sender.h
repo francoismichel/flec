@@ -158,7 +158,7 @@ typedef struct {
 } unreliable_message_metadata_t;
 
 static __attribute__((always_inline)) bool can_send_new_source_symbol(picoquic_cnx_t *cnx, window_fec_framework_t *wff) {
-    return wff->highest_in_transit < wff->window_control.largest_authorized_id_by_peer;
+    return wff->max_id < wff->window_control.largest_authorized_id_by_peer;
 }
 
 

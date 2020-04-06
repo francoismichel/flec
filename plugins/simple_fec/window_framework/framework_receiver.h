@@ -15,6 +15,8 @@ typedef struct {
     // afterwards
     bool has_received_a_source_symbol;
     bool has_received_a_repair_symbol;
+    bool a_window_frame_has_been_written;
+    bool a_window_frame_has_been_lost;
 
     uint32_t highest_removed;
     uint32_t receive_buffer_size;
@@ -334,10 +336,25 @@ static __attribute__((always_inline)) int _reserve_window_rwin_frame(picoquic_cn
     return PICOQUIC_ERROR_MEMORY;
 }
 
+static __attribute__((always_inline)) bool needs_a_rwin_frame(picoquic_cnx_t *cnx, window_fec_framework_receiver_t *wff) {
+
+    picoquic_stream_head *stream = (picoquic_stream_head *) get_cnx(cnx, AK_CNX_FIRST_STREAM, 0);
+    if (wff->last_acknowledged_smallest_considered_id == 0 ||
+        //wff->last_acknowledged_smallest_considered_id + wff->receive_buffer_size/2 < get_highest_contiguous_received_source_symbol(wff->symbols_tracker);
+        (wff->a_window_frame_has_been_lost || wff->smallest_considered_id_for_which_rwin_frame_has_been_sent + 1*wff->receive_buffer_size/3 < get_highest_contiguous_received_source_symbol(wff->symbols_tracker))) {
+        return true;
+    }
+    bool maxdata_ready = false;
+    uint64_t new_offset = 0;
+    while(!maxdata_ready && stream) {
+        maxdata_ready |= helper_is_max_stream_data_frame_required(cnx, stream, &new_offset);
+        stream = (picoquic_stream_head *) get_stream_head(stream, AK_STREAMHEAD_NEXT_STREAM);
+    }
+    return maxdata_ready;
+}
+
 static __attribute__((always_inline)) int reserve_window_rwin_frame_if_needed(picoquic_cnx_t *cnx, window_fec_framework_receiver_t *wff) {
-//    if (wff->last_acknowledged_smallest_considered_id < wff->smallest_considered_id_to_advertise) {
-    window_source_symbol_id_t highest_contiguous = get_highest_contiguous_received_source_symbol(wff->symbols_tracker);
-    if (wff->last_acknowledged_smallest_considered_id == 0 || wff->last_acknowledged_smallest_considered_id + wff->receive_buffer_size/2 < highest_contiguous) {
+    if (needs_a_rwin_frame(cnx, wff)) {
         return _reserve_window_rwin_frame(cnx, wff);
     }
     return 0;
@@ -455,6 +472,7 @@ static __attribute__((always_inline)) int window_set_buffers_sizes(picoquic_cnx_
     wff->received_repair_symbols = new_repair_symbols_buffer(cnx, repair_symbols_buffer_size);
 
     wff->receive_buffer_size = source_symbols_buffer_size;
+    release_source_symbols_buffer(cnx, wff->received_source_symbols);
     wff->received_source_symbols = new_source_symbols_buffer(cnx, source_symbols_buffer_size);
     wff->smallest_considered_id_to_advertise = 1;
     wff->smallest_considered_id_for_which_rwin_frame_has_been_sent = 0;
