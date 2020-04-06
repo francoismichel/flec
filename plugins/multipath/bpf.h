@@ -20,10 +20,11 @@
 #define PREPARE_MP_ACK_FRAME (PROTOOPID_SENDER + 0x49)
 #define PREPARE_ADD_ADDRESS_FRAME (PROTOOPID_SENDER + 0x4a)
 
+#define MP_NEW_CONNECTION_ID_TYPE 0x40
+#define MP_ACK_TYPE 0x42
+#define ADD_ADDRESS_TYPE 0x44
+
 #define PATH_UPDATE_TYPE 0x21
-#define ADD_ADDRESS_TYPE 0x22
-#define MP_NEW_CONNECTION_ID_TYPE 0x26
-#define MP_ACK_TYPE 0x27
 
 #define RTT_PROBE_TYPE 0x42
 #define RTT_PROBE_INTERVAL 100000
@@ -288,7 +289,7 @@ static __attribute__((always_inline)) void mp_sending_path_ready(picoquic_cnx_t 
     my_memcpy(remote_cnxid, &pd->cnxid, sizeof(picoquic_connection_id_t));
     uint8_t *reset_secret = (uint8_t *) get_path(pd->path, AK_PATH_RESET_SECRET, 0);
     my_memcpy(reset_secret, pd->reset_secret, 16);
-    LOG_EVENT(cnx, "multipath", "sending_path_ready", "", "{\"path_id\": %lu, \"path\": \"%p\"}", pd->path_id, (protoop_arg_t) pd->path);
+    LOG_EVENT(cnx, "multipath", "sending_path_ready", "", "{\"path_id\": %" PRIu64 ", \"path\": \"%p\"}", pd->path_id, (protoop_arg_t) pd->path);
 }
 
 static __attribute__((always_inline)) void mp_receive_path_active(picoquic_cnx_t *cnx, path_data_t *pd, uint64_t current_time)
@@ -307,7 +308,7 @@ static __attribute__((always_inline)) void mp_receive_path_active(picoquic_cnx_t
     my_memcpy(local_cnxid, &pd->cnxid, sizeof(picoquic_connection_id_t));
     uint8_t *reset_secret = (uint8_t *) get_path(pd->path, AK_PATH_RESET_SECRET, 0);
     my_memcpy(reset_secret, pd->reset_secret, 16);
-    LOG_EVENT(cnx, "multipath", "receive_path_ready", "", "{\"path_id\": %lu, \"path\": \"%p\"}", pd->path_id, (protoop_arg_t) pd->path);
+    LOG_EVENT(cnx, "multipath", "receive_path_ready", "", "{\"path_id\": %" PRIu64 ", \"path\": \"%p\"}", pd->path_id, (protoop_arg_t) pd->path);
 }
 
 static __attribute__((always_inline)) size_t varint_len(uint64_t val) {
@@ -579,9 +580,9 @@ static void manage_paths(picoquic_cnx_t *cnx) {
     run_noparam(cnx, "manage_paths", 0, NULL, NULL);
 }
 
-static picoquic_packet_t* mp_update_rtt(picoquic_cnx_t* cnx, uint64_t largest,
+static __attribute__((always_inline)) picoquic_packet_t* mp_update_rtt(picoquic_cnx_t* cnx, uint64_t largest,
     uint64_t current_time, uint64_t ack_delay, picoquic_packet_context_enum pc,
-    picoquic_path_t* sending_path, picoquic_path_t* receive_path)
+    picoquic_path_t* sending_path, picoquic_path_t* receive_path, int *is_new_ack)
 {
     protoop_arg_t args[6];
     args[0] = (protoop_arg_t) largest;
@@ -590,5 +591,10 @@ static picoquic_packet_t* mp_update_rtt(picoquic_cnx_t* cnx, uint64_t largest,
     args[3] = (protoop_arg_t) pc;
     args[4] = (protoop_arg_t) sending_path;
     args[5] = (protoop_arg_t) receive_path;
-    return (picoquic_packet_t *) run_noparam(cnx, PROTOOPID_NOPARAM_UPDATE_RTT, 6, args, NULL);
+    protoop_arg_t outs[1];
+    picoquic_packet_t *p = (picoquic_packet_t *) run_noparam(cnx, PROTOOPID_NOPARAM_UPDATE_RTT, 6, args, outs);
+    if (is_new_ack) {
+        *is_new_ack = outs[0];
+    }
+    return p;
 }

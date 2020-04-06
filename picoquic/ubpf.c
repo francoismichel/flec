@@ -23,6 +23,7 @@
 #include "getset.h"
 #include "picoquic_logger.h"
 #include "red_black_tree.h"
+#include "cc_common.h"
 
 #if defined(NS3)
 #define JIT false
@@ -33,7 +34,7 @@
 #endif
 
 void picoquic_memory_bound_error(uint64_t val, uint64_t mem_ptr, uint64_t stack_ptr) {
-    printf("Out of bound access with val 0x%llx, start of mem is 0x%llx, top of stack is 0x%llx\n", val, mem_ptr, stack_ptr);
+    printf("Out of bound access with val 0x%" PRIx64 ", start of mem is 0x%" PRIx64 ", top of stack is 0x%" PRIx64 "\n", val, mem_ptr, stack_ptr);
 }
 
 static void
@@ -107,6 +108,7 @@ register_functions(struct ubpf_vm *vm) {
     ubpf_register(vm, current_idx++, "picoquic_decode_frames_without_current_time", picoquic_decode_frames_without_current_time);
     ubpf_register(vm, current_idx++, "picoquic_varint_decode", picoquic_varint_decode);
     ubpf_register(vm, current_idx++, "picoquic_varint_encode", picoquic_varint_encode);
+    ubpf_register(vm, current_idx++, "picoquic_varint_skip", picoquic_varint_skip);
     ubpf_register(vm, current_idx++, "picoquic_create_random_cnx_id_for_cnx", picoquic_create_random_cnx_id_for_cnx);
     ubpf_register(vm, current_idx++, "picoquic_create_cnxid_reset_secret_for_cnx", picoquic_create_cnxid_reset_secret_for_cnx);
     ubpf_register(vm, current_idx++, "picoquic_register_cnx_id_for_cnx", picoquic_register_cnx_id_for_cnx);
@@ -123,6 +125,10 @@ register_functions(struct ubpf_vm *vm) {
     ubpf_register(vm, current_idx++, "picoquic_set_cnx_state", picoquic_set_cnx_state);
     ubpf_register(vm, current_idx++, "picoquic_frames_varint_decode", picoquic_frames_varint_decode);
     ubpf_register(vm, current_idx++, "picoquic_record_pn_received", picoquic_record_pn_received);
+    ubpf_register(vm, current_idx++, "picoquic_cc_get_sequence_number", picoquic_cc_get_sequence_number);
+    ubpf_register(vm, current_idx++, "picoquic_cc_was_cwin_blocked", picoquic_cc_was_cwin_blocked);
+    ubpf_register(vm, current_idx++, "picoquic_is_sending_authorized_by_pacing", picoquic_is_sending_authorized_by_pacing);
+    ubpf_register(vm, current_idx++, "picoquic_update_pacing_data", picoquic_update_pacing_data);
 
     ubpf_register(vm, current_idx++, "queue_peek", queue_peek);
     /* FIXME remove this function */

@@ -43,7 +43,7 @@ protoop_arg_t congestion_algorithm_notify(picoquic_cnx_t *cnx)
                 switch (westwood_state->alg_state) {
                     case westwood_alg_slow_start:
                         /* Only increase when the app is CWIN limited */
-                        if (cwin <= bytes_in_transit + nb_bytes_acknowledged) {
+                        if (picoquic_cc_was_cwin_blocked(path_x, westwood_state->last_sequence_blocked)) {
                             cwin += nb_bytes_acknowledged;
                             /* if cnx->cwin exceeds SSTHRESH, exit and go to CA */
                             if (cwin >= westwood_state->ssthresh) {
@@ -126,6 +126,9 @@ protoop_arg_t congestion_algorithm_notify(picoquic_cnx_t *cnx)
                     }
                 }
                 break;
+            case picoquic_congestion_notification_cwin_blocked:
+                westwood_state->last_sequence_blocked = picoquic_cc_get_sequence_number(path_x);
+                break;
             default:
                 /* ignore */
                 break;
@@ -133,8 +136,7 @@ protoop_arg_t congestion_algorithm_notify(picoquic_cnx_t *cnx)
     }
 
     /* Compute pacing data */
-    update_pacing_data(path_x);
-    PROTOOP_PRINTF(cnx, "CWIN = %lu\n", cwin);
+    picoquic_update_pacing_data(path_x);
     PROTOOP_PRINTF(cnx, "EVENT::{\"time\": %ld, \"type\": \"cwin\", \"cwin\": %lu}\n", picoquic_current_time(), cwin);
     set_path(path_x, AK_PATH_CWIN, 0, cwin);
     set_path(path_x, AK_PATH_BYTES_IN_TRANSIT, 0, bytes_in_transit);

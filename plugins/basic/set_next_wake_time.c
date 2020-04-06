@@ -87,12 +87,9 @@ static void cnx_set_next_wake_time_init(picoquic_cnx_t* cnx, uint64_t current_ti
                     if (helper_should_send_max_data(cnx) ||
                         helper_is_tls_stream_ready(cnx) ||
                         (crypto_context_1_aead_encrypt != NULL && (stream = helper_find_ready_stream(cnx)) != NULL)) {
-                        uint64_t next_pacing_time_x = (uint64_t) get_path(path_x, AK_PATH_NEXT_PACING_TIME, 0);
-                        uint64_t pacing_margin_micros_x = (uint64_t) get_path(path_x, AK_PATH_PACING_MARGIN_MICROS, 0);
-                        if (next_pacing_time_x < current_time + pacing_margin_micros_x) {
+                        if (picoquic_is_sending_authorized_by_pacing(path_x, current_time, &next_time)) {
                             blocked = 0;
-                        }
-                        else {
+                        } else {
                             pacing = 1;
                         }
                     }
@@ -102,11 +99,7 @@ static void cnx_set_next_wake_time_init(picoquic_cnx_t* cnx, uint64_t current_ti
 
         if (blocked == 0) {
             next_time = current_time;
-        }
-        else if (pacing != 0) {
-            next_time = (uint64_t) get_path(path_x, AK_PATH_NEXT_PACING_TIME, 0);
-        }
-        else {
+        } else if (pacing == 0) {
             for (picoquic_packet_context_enum pc = 0; pc < picoquic_nb_packet_context; pc++) {
                 for (int i = 0; i < nb_paths; i++) {
                     path_x = (picoquic_path_t *) get_cnx(cnx, AK_CNX_PATH, i);
@@ -210,18 +203,6 @@ protoop_arg_t set_next_wake_time(picoquic_cnx_t *cnx)
 
     int nb_paths = (int) get_cnx(cnx, AK_CNX_NB_PATHS, 0);
 
-    for (int i = 0; last_pkt_length > 0 && blocked != 0 && i < nb_paths; i++) {
-        picoquic_path_t * path_x = (picoquic_path_t *) get_cnx(cnx, AK_CNX_PATH, i);
-        uint64_t cwin_x = (uint64_t) get_path(path_x, AK_PATH_CWIN, 0);
-        uint64_t bytes_in_transit_x = (uint64_t) get_path(path_x, AK_PATH_BYTES_IN_TRANSIT, 0);
-        if (cwin_x > bytes_in_transit_x && helper_is_mtu_probe_needed(cnx, path_x)) {
-            blocked = 0;
-        }
-        if (cwin_x > bytes_in_transit_x && picoquic_has_booked_plugin_frames(cnx)) {
-            blocked = 0;
-        }
-    }
-
     picoquic_path_t * path_x = (picoquic_path_t *) get_cnx(cnx, AK_CNX_PATH, 0);
     picoquic_packet_context_t *pkt_ctx;
     if (blocked != 0) {
@@ -247,12 +228,9 @@ protoop_arg_t set_next_wake_time(picoquic_cnx_t *cnx)
                         helper_is_tls_stream_ready(cnx) ||
                         ((cnx_state == picoquic_state_client_ready || cnx_state == picoquic_state_server_ready) &&
                         ((stream = helper_find_ready_stream(cnx)) != NULL || run_noparam(cnx, PROTOOPID_NOPARAM_HAS_CONGESTION_CONTROLLED_PLUGIN_FRAMEMS_TO_SEND, 0, NULL, NULL)))) {
-                        uint64_t next_pacing_time_x = (uint64_t) get_path(path_x, AK_PATH_NEXT_PACING_TIME, 0);
-                        uint64_t pacing_margin_micros_x = (uint64_t) get_path(path_x, AK_PATH_PACING_MARGIN_MICROS, 0);
-                        if (next_pacing_time_x < current_time + pacing_margin_micros_x) {
+                        if (picoquic_is_sending_authorized_by_pacing(path_x, current_time, &next_time)) {
                             blocked = 0;
-                        }
-                        else {
+                        } else {
                             pacing = 1;
                         }
                     }
@@ -261,11 +239,21 @@ protoop_arg_t set_next_wake_time(picoquic_cnx_t *cnx)
         }
     }
 
+    for (int i = 0; last_pkt_length > 0 && blocked != 0 && pacing == 0 && i < nb_paths; i++) {
+        picoquic_path_t * path_x = (picoquic_path_t *) get_cnx(cnx, AK_CNX_PATH, i);
+        uint64_t cwin_x = (uint64_t) get_path(path_x, AK_PATH_CWIN, 0);
+        uint64_t bytes_in_transit_x = (uint64_t) get_path(path_x, AK_PATH_BYTES_IN_TRANSIT, 0);
+        if (cwin_x > bytes_in_transit_x && helper_is_mtu_probe_needed(cnx, path_x)) {
+            blocked = 0;
+        }
+        if (cwin_x > bytes_in_transit_x && picoquic_has_booked_plugin_frames(cnx)) {
+            blocked = 0;
+        }
+    }
+
     if (blocked == 0 || (wake_now && pacing == 0)) {
         next_time = current_time;
-    } else if (pacing != 0) {
-        next_time = (uint64_t) get_path(path_x, AK_PATH_NEXT_PACING_TIME, 0);
-    } else {
+    } else if (pacing == 0) {
         for (picoquic_packet_context_enum pc = 0; pc < picoquic_nb_packet_context; pc++) {
             for (int i = 0; i < nb_paths; i++) {
                 path_x = (picoquic_path_t *) get_cnx(cnx, AK_CNX_PATH, i);

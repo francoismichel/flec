@@ -80,7 +80,7 @@ SET(PICOQUIC_LIBRARY_FILES
         picoquic/michelfralloc/sbrk.h
         picoquic/michelfralloc/michelfralloc.c
         picoquic/michelfralloc/michelfralloc.h
-)
+    picoquic/cc_common.c picoquic/cc_common.h picoquic/bbr.c)
 
 SET(PICOQUIC_TEST_LIBRARY_FILES
     picoquictest/ack_of_ack_test.c
@@ -162,6 +162,7 @@ SET(PLUGINS_MULTIPATH
     plugins/multipath/process_path_update.c
     plugins/multipath/write_path_update.c
     plugins/multipath/addresses_filters/no_v6_no_10.c
+    plugins/multipath/update_rtt.c
 )
 
 SET(PLUGINS_STREAM_SCHEDULER
@@ -215,7 +216,9 @@ SET(PLUGINS_QLOG
     plugins/qlog/log_frame.c
     plugins/qlog/receiver/header_parsed.c
         plugins/qlog/receiver/segment_received.c
-        plugins/qlog/frames/stream_frame_parsed.c)
+        plugins/qlog/frames/stream_frame_parsed.c
+        plugins/qlog/frames/handshake_done_parsed.c
+)
 
 #
 SET(PLUGINS_FEC
