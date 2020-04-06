@@ -1,7 +1,7 @@
-SUBDIRS := basic monitoring datagram simple_fec multipath westwood no_pacing loss_monitor
+SUBDIRS := basic monitoring datagram simple_fec multipath westwood qlog no_pacing loss_monitor
 
 all: $(SUBDIRS)
 $(SUBDIRS):
-	$(MAKE) -C $@
+	$(MAKE) -j$(nproc) -C $@
 
 .PHONY: all $(SUBDIRS)

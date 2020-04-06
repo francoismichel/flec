@@ -33,6 +33,28 @@
 #include "uthash.h"
 #include "plugin.h"
 
+#ifdef __APPLE__
+#include <machine/endian.h>
+#include <libkern/OSByteOrder.h>
+
+#define htobe16(x) OSSwapHostToBigInt16(x)
+#define htole16(x) OSSwapHostToLittleInt16(x)
+#define be16toh(x) OSSwapBigToHostInt16(x)
+#define le16toh(x) OSSwapLittleToHostInt16(x)
+
+#define htobe32(x) OSSwapHostToBigInt32(x)
+#define htole32(x) OSSwapHostToLittleInt32(x)
+#define be32toh(x) OSSwapBigToHostInt32(x)
+#define le32toh(x) OSSwapLittleToHostInt32(x)
+
+#define htobe64(x) OSSwapHostToBigInt64(x)
+#define htole64(x) OSSwapHostToLittleInt64(x)
+#define be64toh(x) OSSwapBigToHostInt64(x)
+#define le64toh(x) OSSwapLittleToHostInt64(x)
+#else
+#include <endian.h>
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -91,7 +113,7 @@ typedef enum {
     picoquic_version_no_flag = 0
 } picoquic_version_feature_flags;
 
-/* 
+/*
  * Codes used for representing the various types of packet encodings
  */
 typedef enum {
@@ -111,7 +133,7 @@ extern const size_t picoquic_nb_supported_versions;
 int picoquic_get_version_index(uint32_t proposed_version);
 
 /*
-     * Definition of the session ticket store that can be associated with a 
+     * Definition of the session ticket store that can be associated with a
      * client context.
      */
 typedef struct st_picoquic_stored_ticket_t {
@@ -231,8 +253,10 @@ typedef struct st_picoquic_quic_t {
     char* plugin_store_path;
     /* List of supported plugins in plugin cache store */
     plugin_list_t supported_plugins;
-    /* List of plugins we want to inject locally */
+    /* List of plugins we want to inject both locally and remotely */
     plugin_list_t plugins_to_inject;
+    /* List of local plugins to forcefully inject */
+    plugin_list_t local_plugins;
 } picoquic_quic_t;
 
 picoquic_packet_context_enum picoquic_context_from_epoch(int epoch);
@@ -276,7 +300,7 @@ typedef struct st_picoquic_tp_t {
     uint32_t idle_timeout;
     uint32_t max_packet_size;
     uint8_t ack_delay_exponent;
-    unsigned int migration_disabled; 
+    unsigned int migration_disabled;
     picoquic_tp_preferred_address_t preferred_address;
     char* supported_plugins;
     char* plugins_to_inject;
@@ -535,7 +559,7 @@ typedef struct {
     bool intern;  /* intern operations can only be called by pluglets and have observers,
                    * extern operations can only be called by the application and have no observers */
     bool running; /* Indicates if the protocol operation is in the current call stack or not.
-                   * Efficient way to figure out if there are loops in protocol operation calls */ 
+                   * Efficient way to figure out if there are loops in protocol operation calls */
     observer_node_t *pre; /* List of observers, probing just before function invocation */
     observer_node_t *post; /* List of observers, probing just after function returns */
     UT_hash_handle hh; /* Make the structure hashable */
@@ -577,7 +601,7 @@ void quicctx_register_noparam_protoops(picoquic_cnx_t *cnx);
 
 #define MAX_PLUGIN_DATA_LEN (1024 * 1000) /* In bytes */
 
-/* 
+/*
  * Per connection context.
  * This is the structure that will be passed to pluglets.
  */
@@ -597,7 +621,7 @@ typedef struct st_picoquic_cnx_t {
     /* Series of flags showing the state or choices of the connection */
     unsigned int is_0RTT_accepted : 1; /* whether 0-RTT is accepted */
     unsigned int remote_parameters_received : 1; /* whether remote parameters where received */
-    unsigned int current_spin : 1; /* Current value of the spin bit */             
+    unsigned int current_spin : 1; /* Current value of the spin bit */
     unsigned int client_mode : 1; /* Is this connection the client side? */
     unsigned int prev_spin : 1;  /* previous Spin bit */
     unsigned int spin_vec : 2;   /* Valid Edge Counter, makes spin bit RTT measurements more reliable */
@@ -994,11 +1018,12 @@ size_t  picoquic_decrypt_packet(picoquic_cnx_t* cnx,
 
 uint32_t picoquic_protect_packet(picoquic_cnx_t* cnx,
     picoquic_packet_type_enum ptype,
-    uint8_t * bytes, 
+    uint8_t * bytes,
     picoquic_path_t* path_x,
     uint64_t sequence_number,
     uint32_t length, uint32_t header_length,
     uint8_t* send_buffer, uint32_t send_buffer_max,
+    picoquic_packet_header *ph,
     void * aead_context, void* pn_enc);
 
 void picoquic_finalize_and_protect_packet(picoquic_cnx_t *cnx, picoquic_packet_t * packet, int ret,
@@ -1048,15 +1073,11 @@ char const* picoquic_log_state_name(picoquic_state_enum state);
 
 #define PICOQUIC_SET_TLS_SECRETS_LOG(quic, F) (quic)->F_tls_secrets = (void*)(F)
 
-/* Small internal function */
-uint8_t* picoquic_decode_frame(picoquic_cnx_t* cnx, uint8_t first_byte, uint8_t* bytes, const uint8_t* bytes_max,
-    uint64_t current_time, int epoch, int* ack_needed, picoquic_path_t* path_x);
-
 /* handling of ACK logic */
-int picoquic_is_ack_needed(picoquic_cnx_t* cnx, uint64_t current_time, picoquic_packet_context_enum pc, 
+int picoquic_is_ack_needed(picoquic_cnx_t* cnx, uint64_t current_time, picoquic_packet_context_enum pc,
     picoquic_path_t* path_x);
 
-int picoquic_is_pn_already_received(picoquic_path_t* path_x, 
+int picoquic_is_pn_already_received(picoquic_path_t* path_x,
     picoquic_packet_context_enum pc, uint64_t pn64);
 int picoquic_record_pn_received(picoquic_cnx_t* cnx, picoquic_path_t* path_x,
     picoquic_packet_context_enum pc, uint64_t pn64, uint64_t current_microsec);
@@ -1144,9 +1165,12 @@ int picoquic_receive_transport_extensions(picoquic_cnx_t* cnx, int extension_mod
 /* Hooks for reception and sending of packets */
 void picoquic_received_packet(picoquic_cnx_t *cnx, SOCKET_TYPE socket);
 void picoquic_before_sending_packet(picoquic_cnx_t *cnx, SOCKET_TYPE socket);
+void picoquic_received_segment(picoquic_cnx_t *cnx);
+void picoquic_segment_prepared(picoquic_cnx_t *cnx, picoquic_packet_t *pkt);
+void picoquic_segment_aborted(picoquic_cnx_t *cnx);
 /* Hooks for reception and sending of QUIC packets before encryption */  // TODO: Maybe the two above and below should be merged
-void picoquic_received_segment(picoquic_cnx_t *cnx, picoquic_packet_header *ph, picoquic_path_t *path, size_t length);
-void picoquic_before_sending_segment(picoquic_cnx_t *cnx, picoquic_packet_header *ph, picoquic_path_t *path, picoquic_packet_t *packet, size_t length);
+void picoquic_header_parsed(picoquic_cnx_t *cnx, picoquic_packet_header *ph, picoquic_path_t *path, size_t length);
+void picoquic_header_prepared(picoquic_cnx_t *cnx, picoquic_packet_header *ph, picoquic_path_t *path, picoquic_packet_t *packet, size_t length);
 
 /* Queue stateless reset */
 void picoquic_queue_stateless_reset(picoquic_cnx_t* cnx,

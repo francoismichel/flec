@@ -1,7 +1,7 @@
 CMAKE_MINIMUM_REQUIRED(VERSION 2.8.11)
 CMAKE_POLICY(SET CMP0003 NEW)
 
-PROJECT(picoquic)
+PROJECT(picoquic C)
 SET(CMAKE_C_STANDARD 11)
 
 # FIND_PACKAGE(PkgConfig REQUIRED)
@@ -10,6 +10,12 @@ if((NOT DEFINED ENV{NS3}) OR !$ENV{NS3})
     SET(CMAKE_C_FLAGS "-std=gnu99 -Wall -O2 -g ${CC_WARNING_FLAGS} ${CMAKE_C_FLAGS}")
     SET(GCC_COVERAGE_LINK_FLAGS    "-Wl,--no-as-needed,-lprofiler,--as-needed")
     SET(CMAKE_EXE_LINKER_FLAGS  "${CMAKE_EXE_LINKER_FLAGS} ${GCC_COVERAGE_LINK_FLAGS}")
+endif()
+
+if(DEFINED OSX_SYSROOT)
+    MESSAGE("Before, CMAKE_OSX_SYSROOT set at: ${CMAKE_OSX_SYSROOT}")
+    SET(CMAKE_OSX_SYSROOT ${OSX_SYSROOT})
+    MESSAGE("CMAKE_OSX_SYSROOT now set at: ${CMAKE_OSX_SYSROOT}")
 endif()
 
 if($ENV{DISABLE_DEBUG_PRINTF})
@@ -104,7 +110,6 @@ SET(PLUGINS_DATAGRAM
     plugins/datagram/parse_datagram_frame.c
     plugins/datagram/send_datagram.c
     plugins/datagram/process_datagram_frame.c
-    plugins/datagram/is_datagram_frame_congestion_controlled.c
     plugins/datagram/write_datagram_frame.c
     plugins/datagram/get_datagram_socket.c
     plugins/datagram/cnx_state_changed.c
@@ -184,14 +189,21 @@ SET(PLUGINS_QLOG
     plugins/qlog/frames/stream_blocked_frame_parsed.c
     plugins/qlog/frames/stream_id_blocked_frame_parsed.c
     plugins/qlog/frames/padding_or_ping_parsed.c
+    plugins/qlog/frames/frame_prepared.c
     plugins/qlog/sender/retransmit_needed_by_packet.c
     plugins/qlog/sender/retransmit_needed.c
     plugins/qlog/sender/congestion_algorithm_notified.c
     plugins/qlog/sender/ready_stream.c
     plugins/qlog/sender/next_stream_scheduled.c
+    plugins/qlog/sender/next_wake_time.c
+    plugins/qlog/sender/header_prepared.c
+        plugins/qlog/sender/segment_prepared.c
     plugins/qlog/push_log_context.c
     plugins/qlog/pop_log_context.c
-        plugins/qlog/sender/next_wake_time.c)
+    plugins/qlog/log_frame.c
+    plugins/qlog/receiver/header_parsed.c
+        plugins/qlog/receiver/segment_received.c
+        plugins/qlog/frames/stream_frame_parsed.c)
 
 FIND_LIBRARY(PTLS_CORE picotls-core PATH ../picotls)
 MESSAGE(STATUS "Found picotls-core at : ${PTLS_CORE} " )
@@ -243,61 +255,63 @@ if($ENV{COMPILE_CLION})
     )
 endif()
 
-ADD_EXECUTABLE(picoquicdemo picoquicfirst/picoquicdemo.c
-                            picoquicfirst/getopt.c )
-TARGET_LINK_LIBRARIES(picoquicdemo picoquic-core
-    ${PTLS_CORE}
-    ${PTLS_OPENSSL}    
-    ${PTLS_MINICRYPTO}
-    ${OPENSSL_LIBRARIES}
-    ${UBPF}
-    ${CMAKE_DL_LIBS}
-    ${LibArchive_LIBRARIES}
-    ${MICHELFRALLOC_STATIC_LIBS}
-)
+if(NOT DEFINED ONLY_LIB)
+    ADD_EXECUTABLE(picoquicdemo picoquicfirst/picoquicdemo.c
+                                picoquicfirst/getopt.c )
+    TARGET_LINK_LIBRARIES(picoquicdemo picoquic-core
+        ${PTLS_CORE}
+        ${PTLS_OPENSSL}
+        ${PTLS_MINICRYPTO}
+        ${OPENSSL_LIBRARIES}
+        ${UBPF}
+        ${CMAKE_DL_LIBS}
+        ${LibArchive_LIBRARIES}
+        ${MICHELFRALLOC_STATIC_LIBS}
+    )
 
-ADD_EXECUTABLE(picoquicvpn picoquicfirst/picoquicvpn.c
-                            picoquicfirst/getopt.c )
-TARGET_LINK_LIBRARIES(picoquicvpn picoquic-core
-    ${PTLS_CORE}
-    ${PTLS_OPENSSL}
-    ${PTLS_MINICRYPTO}
-    ${OPENSSL_LIBRARIES}
-    ${UBPF}
-    ${CMAKE_DL_LIBS}
-    ${LibArchive_LIBRARIES}
-    ${MICHELFRALLOC_STATIC_LIBS}
-)
+    ADD_EXECUTABLE(picoquicvpn picoquicfirst/picoquicvpn.c
+                                picoquicfirst/getopt.c )
+    TARGET_LINK_LIBRARIES(picoquicvpn picoquic-core
+        ${PTLS_CORE}
+        ${PTLS_OPENSSL}
+        ${PTLS_MINICRYPTO}
+        ${OPENSSL_LIBRARIES}
+        ${UBPF}
+        ${CMAKE_DL_LIBS}
+        ${LibArchive_LIBRARIES}
+        ${MICHELFRALLOC_STATIC_LIBS}
+    )
 
-ADD_EXECUTABLE(picoquicdemobench picoquicfirst/picoquicdemobench.c
-                            picoquicfirst/getopt.c )
-TARGET_LINK_LIBRARIES(picoquicdemobench picoquic-core
-    ${PTLS_CORE}
-    ${PTLS_OPENSSL}
-    ${PTLS_MINICRYPTO}
-    ${OPENSSL_LIBRARIES}
-    ${UBPF}
-    ${CMAKE_DL_LIBS}
-    ${LibArchive_LIBRARIES}
-    ${MICHELFRALLOC_STATIC_LIBS}
-)
+    ADD_EXECUTABLE(picoquicdemobench picoquicfirst/picoquicdemobench.c
+                                picoquicfirst/getopt.c )
+    TARGET_LINK_LIBRARIES(picoquicdemobench picoquic-core
+        ${PTLS_CORE}
+        ${PTLS_OPENSSL}
+        ${PTLS_MINICRYPTO}
+        ${OPENSSL_LIBRARIES}
+        ${UBPF}
+        ${CMAKE_DL_LIBS}
+        ${LibArchive_LIBRARIES}
+        ${MICHELFRALLOC_STATIC_LIBS}
+    )
 
-ADD_EXECUTABLE(picoquic_ct picoquic_t/picoquic_t.c
- ${PICOQUIC_TEST_LIBRARY_FILES} )
-TARGET_LINK_LIBRARIES(picoquic_ct picoquic-core
-    ${PTLS_CORE}
-    ${PTLS_OPENSSL}    
-    ${PTLS_MINICRYPTO}
-    ${PTLS_OPENSSL}
-    ${PTLS_CORE}
-    ${OPENSSL_LIBRARIES}
-    ${UBPF}
-    ${CMAKE_DL_LIBS}
-    ${LibArchive_LIBRARIES}
-    ${MICHELFRALLOC_STATIC_LIBS}
-)
+    ADD_EXECUTABLE(picoquic_ct picoquic_t/picoquic_t.c
+     ${PICOQUIC_TEST_LIBRARY_FILES} )
+    TARGET_LINK_LIBRARIES(picoquic_ct picoquic-core
+        ${PTLS_CORE}
+        ${PTLS_OPENSSL}
+        ${PTLS_MINICRYPTO}
+        ${PTLS_OPENSSL}
+        ${PTLS_CORE}
+        ${OPENSSL_LIBRARIES}
+        ${UBPF}
+        ${CMAKE_DL_LIBS}
+        ${LibArchive_LIBRARIES}
+        ${MICHELFRALLOC_STATIC_LIBS}
+    )
 
-SET(TEST_EXES picoquic_ct)
+    SET(TEST_EXES picoquic_ct)
+endif()
 
 # get all project files for formatting
 file(GLOB_RECURSE CLANG_FORMAT_SOURCE_FILES *.c *.h)

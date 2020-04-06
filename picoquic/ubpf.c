@@ -24,14 +24,16 @@
 #include "picoquic_logger.h"
 #include "red_black_tree.h"
 
-#ifndef NS3
-#define JIT true /* putting to false show out of memory access */
-#else
+#if defined(NS3)
 #define JIT false
+#elif defined(__APPLE__)
+#define JIT false
+#else
+#define JIT true  /* putting to false show out of memory access */
 #endif
 
 void picoquic_memory_bound_error(uint64_t val, uint64_t mem_ptr, uint64_t stack_ptr) {
-    printf("Out of bound access with val 0x%lx, start of mem is 0x%lx, top of stack is 0x%lx\n", val, mem_ptr, stack_ptr);
+    printf("Out of bound access with val 0x%llx, start of mem is 0x%llx, top of stack is 0x%llx\n", val, mem_ptr, stack_ptr);
 }
 
 static void
@@ -152,6 +154,27 @@ register_functions(struct ubpf_vm *vm) {
 
     ubpf_register(vm, current_idx++, "strcmp", strncmp);
     ubpf_register(vm, current_idx++, "crc32", crc32);
+
+    /* red black tree */
+    ubpf_register(vm, current_idx++, "rbt_init", rbt_init);
+    ubpf_register(vm, current_idx++, "rbt_is_empty", rbt_is_empty);
+    ubpf_register(vm, current_idx++, "rbt_size", rbt_size);
+    ubpf_register(vm, current_idx++, "rbt_put", rbt_put);
+    ubpf_register(vm, current_idx++, "rbt_get", rbt_get);
+    ubpf_register(vm, current_idx++, "rbt_contains", rbt_contains);
+    ubpf_register(vm, current_idx++, "rbt_min_val", rbt_min_val);
+    ubpf_register(vm, current_idx++, "rbt_min_key", rbt_min_key);
+    ubpf_register(vm, current_idx++, "rbt_min", rbt_min);
+    ubpf_register(vm, current_idx++, "rbt_max_key", rbt_max_key);
+    ubpf_register(vm, current_idx++, "rbt_max_val", rbt_max_val);
+    ubpf_register(vm, current_idx++, "rbt_ceiling_val", rbt_ceiling_val);
+    ubpf_register(vm, current_idx++, "rbt_ceiling_key", rbt_ceiling_key);
+    ubpf_register(vm, current_idx++, "rbt_ceiling", rbt_ceiling);
+    ubpf_register(vm, current_idx++, "rbt_delete", rbt_delete);
+    ubpf_register(vm, current_idx++, "rbt_delete_min", rbt_delete_min);
+    ubpf_register(vm, current_idx++, "rbt_delete_max", rbt_delete_max);
+    ubpf_register(vm, current_idx++, "rbt_delete_and_get_min", rbt_delete_and_get_min);
+    ubpf_register(vm, current_idx++, "rbt_delete_and_get_max", rbt_delete_and_get_max);
 
     /* red black tree */
     ubpf_register(vm, current_idx++, "rbt_init", rbt_init);

@@ -477,9 +477,7 @@ int picoquic_get_supported_plugins(picoquic_quic_t* quic)
     return 0;
 }
 
-
-int picoquic_set_plugins_to_inject(picoquic_quic_t* quic, const char** plugin_fnames, int plugins)
-{
+static int inject_plugin(plugin_list_t *quic_plugins, const char** plugin_fnames, int plugins) {
     int err = 0;
     char buf[256];
     size_t buf_len;
@@ -490,30 +488,29 @@ int picoquic_set_plugins_to_inject(picoquic_quic_t* quic, const char** plugin_fn
             break;
         }
         buf_len = strlen(buf);
-        quic->plugins_to_inject.elems[i].plugin_name = malloc(sizeof(char) * (buf_len + 1));
-        if (quic->plugins_to_inject.elems[i].plugin_name == NULL) {
+        quic_plugins->elems[i].plugin_name = malloc(sizeof(char) * (buf_len + 1));
+        if (quic_plugins->elems[i].plugin_name == NULL) {
             break;
         }
-        quic->plugins_to_inject.elems[i].plugin_path = malloc(sizeof(char) * (strlen(plugin_fnames[i]) + 1));
-        if (quic->plugins_to_inject.elems[i].plugin_path == NULL) {
-            free(quic->plugins_to_inject.elems[i].plugin_name);
+        quic_plugins->elems[i].plugin_path = malloc(sizeof(char) * (strlen(plugin_fnames[i]) + 1));
+        if (quic_plugins->elems[i].plugin_path == NULL) {
+            free(quic_plugins->elems[i].plugin_name);
             break;
         }
-        strcpy(quic->plugins_to_inject.elems[i].plugin_name, buf);
-        strcpy(quic->plugins_to_inject.elems[i].plugin_path, plugin_fnames[i]);
-        printf("Plugin with path %s and name %s\n", quic->plugins_to_inject.elems[i].plugin_path, quic->plugins_to_inject.elems[i].plugin_name);
-        quic->plugins_to_inject.name_num_bytes += buf_len;
-        quic->plugins_to_inject.size++;
+        strcpy(quic_plugins->elems[i].plugin_name, buf);
+        strcpy(quic_plugins->elems[i].plugin_path, plugin_fnames[i]);
+        quic_plugins->name_num_bytes += buf_len;
+        quic_plugins->size++;
     }
 
     if (err != 0) {
         /* Free everything! */
         for (int j = 0; j < i; j++) {
-            free(quic->plugins_to_inject.elems[i].plugin_name);
-            free(quic->plugins_to_inject.elems[i].plugin_path);
+            free(quic_plugins->elems[i].plugin_name);
+            free(quic_plugins->elems[i].plugin_path);
         }
-        quic->plugins_to_inject.size = 0;
-        quic->plugins_to_inject.name_num_bytes = 0;
+        quic_plugins->size = 0;
+        quic_plugins->name_num_bytes = 0;
         return 1;
     }
 
@@ -521,10 +518,21 @@ int picoquic_set_plugins_to_inject(picoquic_quic_t* quic, const char** plugin_fn
 }
 
 
+int picoquic_set_plugins_to_inject(picoquic_quic_t* quic, const char** plugin_fnames, int plugins)
+{
+    return inject_plugin(&quic->plugins_to_inject, plugin_fnames, plugins);
+}
+
+int picoquic_set_local_plugins(picoquic_quic_t* quic, const char** plugin_fnames, int plugins)
+{
+    return inject_plugin(&quic->local_plugins, plugin_fnames, plugins);
+}
+
+
 /* QUIC context create and dispose */
 picoquic_quic_t* picoquic_create(uint32_t nb_connections,
     char const* cert_file_name,
-    char const* key_file_name, 
+    char const* key_file_name,
     char const * cert_root_file_name,
     char const* default_alpn,
     picoquic_stream_data_cb_fn default_callback_fn,
@@ -588,7 +596,7 @@ picoquic_quic_t* picoquic_create(uint32_t nb_connections,
         }
         else if (picoquic_master_tlscontext(quic, cert_file_name, key_file_name, cert_root_file_name, ticket_encryption_key, ticket_encryption_key_length) != 0) {
                 ret = -1;
-                DBG_PRINTF("%s", "Cannot create TLS context \n");     
+                DBG_PRINTF("%s", "Cannot create TLS context \n");
         } else {
             /* the random generator was initialized as part of the TLS context.
              * Use it to create the seed for generating the per context stateless
@@ -616,6 +624,8 @@ picoquic_quic_t* picoquic_create(uint32_t nb_connections,
             /* If plugins should be inserted, a dedicated call will occur */
             quic->plugins_to_inject.size = 0;
             quic->plugins_to_inject.name_num_bytes = 0;
+            quic->local_plugins.size = 0;
+            quic->local_plugins.name_num_bytes = 0;
         }
     }
 
@@ -931,7 +941,7 @@ static void picoquic_remove_cnx_from_wake_list(picoquic_cnx_t* cnx)
     } else {
         cnx->next_by_wake_time->previous_by_wake_time = cnx->previous_by_wake_time;
     }
-    
+
     if (cnx->previous_by_wake_time == NULL) {
         cnx->quic->cnx_wake_first = cnx->next_by_wake_time;
     } else {
@@ -947,7 +957,7 @@ static void picoquic_insert_cnx_by_wake_time(picoquic_quic_t* quic, picoquic_cnx
         previous = cnx_next;
         cnx_next = cnx_next->next_by_wake_time;
     }
-    
+
     cnx->previous_by_wake_time = previous;
     if (previous == NULL) {
         quic->cnx_wake_first = cnx;
@@ -955,12 +965,12 @@ static void picoquic_insert_cnx_by_wake_time(picoquic_quic_t* quic, picoquic_cnx
     } else {
         previous->next_by_wake_time = cnx;
     }
-    
+
     cnx->next_by_wake_time = cnx_next;
 
     if (cnx_next == NULL) {
         quic->cnx_wake_last = cnx;
-    } else { 
+    } else {
         cnx_next->previous_by_wake_time = cnx;
     }
 }
@@ -997,7 +1007,7 @@ int64_t picoquic_get_next_wake_delay(picoquic_quic_t* quic,
     if (quic->cnx_wake_first != NULL) {
         if (quic->cnx_wake_first->next_wake_time > current_time) {
             wake_delay = quic->cnx_wake_first->next_wake_time - current_time;
-            
+
             if (wake_delay > delay_max) {
                 wake_delay = delay_max;
             }
@@ -1095,7 +1105,7 @@ int picoquic_create_path(picoquic_cnx_t* cnx, uint64_t start_time, struct sockad
             path_x->remote_cnxid = picoquic_null_connection_id;
             /* Initialize the reset secret to a random value. This
 			 * will prevent spurious matches to an all zero value, for example.
-			 * The real value will be set when receiving the transport parameters. 
+			 * The real value will be set when receiving the transport parameters.
 			 */
             picoquic_public_random(path_x->reset_secret, PICOQUIC_RESET_SECRET_SIZE);
 
@@ -1163,7 +1173,7 @@ void picoquic_create_random_cnx_id_for_cnx(picoquic_cnx_t* cnx, picoquic_connect
 }
 
 picoquic_cnx_t* picoquic_create_cnx_with_transport_parameters(picoquic_quic_t* quic,
-    picoquic_connection_id_t initial_cnx_id, picoquic_connection_id_t remote_cnx_id, 
+    picoquic_connection_id_t initial_cnx_id, picoquic_connection_id_t remote_cnx_id,
     struct sockaddr* addr, uint64_t start_time, uint32_t preferred_version,
     char const* sni, char const* alpn, char client_mode, picoquic_tp_t tp)
 {
@@ -1350,7 +1360,7 @@ picoquic_cnx_t* picoquic_create_cnx_with_transport_parameters(picoquic_quic_t* q
     return cnx;
 }
 
-picoquic_cnx_t *picoquic_create_cnx(picoquic_quic_t* quic,
+picoquic_cnx_t* picoquic_create_cnx(picoquic_quic_t* quic,
                                     picoquic_connection_id_t initial_cnx_id, picoquic_connection_id_t remote_cnx_id,
                                     struct sockaddr* addr, uint64_t start_time, uint32_t preferred_version,
                                     char const* sni, char const* alpn, char client_mode) {
@@ -1755,7 +1765,7 @@ void picoquic_reset_packet_context(picoquic_cnx_t* cnx,
     while (pkt_ctx->retransmit_newest != NULL) {
         picoquic_dequeue_retransmit_packet(cnx, pkt_ctx->retransmit_newest, 1);
     }
-    
+
     while (pkt_ctx->retransmitted_newest != NULL) {
         picoquic_dequeue_retransmitted_packet(cnx, pkt_ctx->retransmitted_newest);
     }
@@ -1903,7 +1913,7 @@ protoop_arg_t connection_error(picoquic_cnx_t* cnx)
 
     cnx->offending_frame_type = frame_type;
 
-    LOG_EVENT(cnx, "CONNECTION", "ERROR", "", "{\"local_error\": %d, \"frame_type\": %lu}", local_error, frame_type);
+    LOG_EVENT(cnx, "CONNECTION", "ERROR", "", "{\"local_error\": %d, \"frame_type\": %llu}", local_error, frame_type);
 
     return (protoop_arg_t) PICOQUIC_ERROR_DETECTED;
 }
@@ -1961,7 +1971,7 @@ void picoquic_delete_cnx(picoquic_cnx_t* cnx)
                 picohash_item_delete(cnx->quic->table_cnx_by_net, item, 1);
             }
         }
-        
+
         picoquic_remove_cnx_from_list(cnx);
         picoquic_remove_cnx_from_wake_list(cnx);
 
@@ -2273,21 +2283,31 @@ void picoquic_set_client_authentication(picoquic_quic_t* quic, int client_authen
 }
 
 void picoquic_received_packet(picoquic_cnx_t *cnx, SOCKET_TYPE socket) {
-    protoop_prepare_and_run_noparam(cnx, &PROTOOP_NOPARAM_RECEIVED_PACKET, NULL,
-        socket);
+    protoop_prepare_and_run_noparam(cnx, &PROTOOP_NOPARAM_RECEIVED_PACKET, NULL, socket);
 }
 
 void picoquic_before_sending_packet(picoquic_cnx_t *cnx, SOCKET_TYPE socket) {
-    protoop_prepare_and_run_noparam(cnx, &PROTOOP_NOPARAM_BEFORE_SENDING_PACKET, NULL,
-        socket);
+    protoop_prepare_and_run_noparam(cnx, &PROTOOP_NOPARAM_BEFORE_SENDING_PACKET, NULL, socket);
 }
 
-void picoquic_received_segment(picoquic_cnx_t *cnx, picoquic_packet_header *ph, picoquic_path_t* path, size_t length) {
-    protoop_prepare_and_run_noparam(cnx, &PROTOOP_NOPARAM_RECEIVED_SEGMENT, NULL, ph, path, length);
+void picoquic_received_segment(picoquic_cnx_t *cnx) {
+    protoop_prepare_and_run_noparam(cnx, &PROTOOP_NOPARAM_RECEIVED_SEGMENT, NULL, NULL);
 }
 
-void picoquic_before_sending_segment(picoquic_cnx_t *cnx, picoquic_packet_header *ph, picoquic_path_t *path, picoquic_packet_t *packet, size_t length) {
-    protoop_prepare_and_run_noparam(cnx, &PROTOOP_NOPARAM_BEFORE_SENDING_SEGMENT, NULL, ph, path, packet, length);
+void picoquic_segment_prepared(picoquic_cnx_t *cnx, picoquic_packet_t *pkt) {
+    protoop_prepare_and_run_noparam(cnx, &PROTOOP_NOPARAM_SEGMENT_PREPARED, NULL, pkt);
+}
+
+void picoquic_segment_aborted(picoquic_cnx_t *cnx) {
+    protoop_prepare_and_run_noparam(cnx, &PROTOOP_NOPARAM_SEGMENT_ABORTED, NULL, NULL);
+}
+
+void picoquic_header_parsed(picoquic_cnx_t *cnx, picoquic_packet_header *ph, picoquic_path_t* path, size_t length) {
+    protoop_prepare_and_run_noparam(cnx, &PROTOOP_NOPARAM_HEADER_PARSED, NULL, ph, path, length);
+}
+
+void picoquic_header_prepared(picoquic_cnx_t *cnx, picoquic_packet_header *ph, picoquic_path_t *path, picoquic_packet_t *packet, size_t length) {
+    protoop_prepare_and_run_noparam(cnx, &PROTOOP_NOPARAM_HEADER_PREPARED, NULL, ph, path, packet, length);
 }
 
 /*
@@ -2331,7 +2351,8 @@ int picoquic_getaddrs(struct sockaddr_storage *sas, uint32_t *if_indexes, int sa
                 struct sockaddr_storage *sai = (struct sockaddr_storage *) ifa->ifa_addr;
                 if (family == AF_INET6) {
                     struct sockaddr_in6 *sai6 = (struct sockaddr_in6 *) ifa->ifa_addr;
-                    if (sai6->sin6_addr.__in6_u.__u6_addr16[0] == 0x80fe) {
+                    // Using sai6->sin6_addr.__in6_u.__u6_addr16[0] is not portable...
+                    if (sai6->sin6_addr.s6_addr[0] == 0xfe && sai6->sin6_addr.s6_addr[1] == 0x80) {
                         continue;
                     }
                 }
@@ -2342,7 +2363,7 @@ int picoquic_getaddrs(struct sockaddr_storage *sas, uint32_t *if_indexes, int sa
                     memcpy(&start_ptr[count++], sai, sockaddr_size);
                 }
             }
-        }   
+        }
     }
 
     freeifaddrs(ifaddr);
@@ -2394,7 +2415,7 @@ protoop_arg_t protoop_snprintf(picoquic_cnx_t *cnx)
         case 9: return snprintf(buf, buf_len, fmt, fmt_args[0], fmt_args[1], fmt_args[2], fmt_args[3], fmt_args[4], fmt_args[5], fmt_args[6], fmt_args[7], fmt_args[8]);
         case 10: return snprintf(buf, buf_len, fmt, fmt_args[0], fmt_args[1], fmt_args[2], fmt_args[3], fmt_args[4], fmt_args[5], fmt_args[6], fmt_args[7], fmt_args[8], fmt_args[9]);
         default:
-            printf("protoop snprintf cannot handle more than 10 arguments, %lu were given\n", cnx->protoop_inputv[4]);
+            printf("protoop snprintf cannot handle more than 10 arguments, %llu were given\n", cnx->protoop_inputv[4]);
     }
     fflush(stdout);
     return 0;
@@ -2420,7 +2441,7 @@ protoop_arg_t protoop_false(picoquic_cnx_t *cnx)
 }
 
 
-protocol_operation_param_struct_t *create_protocol_operation_param(param_id_t param, protocol_operation op) 
+protocol_operation_param_struct_t *create_protocol_operation_param(param_id_t param, protocol_operation op)
 {
     protocol_operation_param_struct_t *popst = malloc(sizeof(protocol_operation_param_struct_t));
     if (!popst) {
@@ -2452,7 +2473,7 @@ int register_noparam_protoop(picoquic_cnx_t* cnx, protoop_id_t *pid, protocol_op
         printf("ERROR: trying to register twice the non-parametrable protocol operation %s\n", pid->id);
         return 1;
     }
-    
+
     post = malloc(sizeof(protocol_operation_struct_t));
     if (!post) {
         printf("ERROR: failed to allocate memory to register non-parametrable protocol operation %s\n", pid->id);
@@ -2593,7 +2614,7 @@ size_t reserve_frames(picoquic_cnx_t* cnx, uint8_t nb_frames, reserve_frame_slot
         char ftypes_str[250];
         size_t ftypes_ofs = 0;
         for (int i = 0; i < nb_frames; i++) {
-            ftypes_ofs += snprintf(ftypes_str + ftypes_ofs, sizeof(ftypes_str) - ftypes_ofs, "%lu%s", block->frames[i].frame_type, i < nb_frames - 1 ? ", " : "");
+            ftypes_ofs += snprintf(ftypes_str + ftypes_ofs, sizeof(ftypes_str) - ftypes_ofs, "%llu%s", block->frames[i].frame_type, i < nb_frames - 1 ? ", " : "");
         }
         ftypes_str[ftypes_ofs] = 0;
         LOG_EVENT(cnx, "PLUGINS", "RESERVE_FRAMES", "", "{\"nb_frames\": %d, \"total_bytes\": %lu, \"is_cc\": %d, \"frames\": [%s]}", block->nb_frames, block->total_bytes, block->is_congestion_controlled, ftypes_str);
@@ -2623,7 +2644,7 @@ reserve_frame_slot_t* cancel_head_reservation(picoquic_cnx_t* cnx, uint8_t *nb_f
         char ftypes_str[250];
         size_t ftypes_ofs = 0;
         for (int i = 0; i < *nb_frames; i++) {
-            ftypes_ofs += snprintf(ftypes_str + ftypes_ofs, sizeof(ftypes_str) - ftypes_ofs, "%lu%s", block->frames[i].frame_type, i < *nb_frames - 1 ? ", " : "");
+            ftypes_ofs += snprintf(ftypes_str + ftypes_ofs, sizeof(ftypes_str) - ftypes_ofs, "%llu%s", block->frames[i].frame_type, i < *nb_frames - 1 ? ", " : "");
         }
         ftypes_str[ftypes_ofs] = 0;
 
@@ -2658,9 +2679,11 @@ void quicctx_register_noparam_protoops(picoquic_cnx_t *cnx)
     /** \todo Those should be replaced by a pre/post of incoming_encrypted or incoming_segment */
     register_noparam_protoop(cnx, &PROTOOP_NOPARAM_RECEIVED_PACKET, &protoop_noop);
     register_noparam_protoop(cnx, &PROTOOP_NOPARAM_BEFORE_SENDING_PACKET, &protoop_noop);
+    register_noparam_protoop(cnx, &PROTOOP_NOPARAM_SEGMENT_PREPARED, &protoop_noop);
+    register_noparam_protoop(cnx, &PROTOOP_NOPARAM_SEGMENT_ABORTED, &protoop_noop);
     register_noparam_protoop(cnx, &PROTOOP_NOPARAM_RECEIVED_SEGMENT, &protoop_noop);
-    register_noparam_protoop(cnx, &PROTOOP_NOPARAM_BEFORE_SENDING_SEGMENT, &protoop_noop);
-
+    register_noparam_protoop(cnx, &PROTOOP_NOPARAM_HEADER_PARSED, &protoop_noop);
+    register_noparam_protoop(cnx, &PROTOOP_NOPARAM_HEADER_PREPARED, &protoop_noop);
     /** \todo document these */
     register_noparam_protoop(cnx, &PROTOOP_NOPARAM_LOG_EVENT, &protoop_noop);
     register_noparam_protoop(cnx, &PROTOOP_NOPARAM_PUSH_LOG_CONTEXT, &protoop_noop);
