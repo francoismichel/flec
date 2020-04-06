@@ -10,6 +10,7 @@ if((NOT DEFINED ENV{NS3}) OR !$ENV{NS3})
     SET(CMAKE_C_FLAGS "-std=gnu99 -Wall -O2 -g ${CC_WARNING_FLAGS} ${CMAKE_C_FLAGS}")
     SET(GCC_COVERAGE_LINK_FLAGS    "-Wl,--no-as-needed,-lprofiler,--as-needed")
     SET(CMAKE_EXE_LINKER_FLAGS  "${CMAKE_EXE_LINKER_FLAGS} ${GCC_COVERAGE_LINK_FLAGS}")
+    find_library(AVUTIL_LIBRARY avutil)
 endif()
 
 if(DEFINED OSX_SYSROOT)
@@ -104,7 +105,8 @@ SET(PICOQUIC_TEST_LIBRARY_FILES
     picoquictest/transport_param_test.c
     picoquictest/datagram.c
     picoquictest/microbench.c
-        picoquictest/util.c)
+        picoquictest/util.c
+        )
 
 SET(PLUGINS_DATAGRAM
     plugins/datagram/parse_datagram_frame.c
@@ -166,6 +168,16 @@ SET(PLUGINS_STREAM_SCHEDULER
     plugins/stream_scheduling_rr/stream_scheduling_rr.c
 )
 
+SET(PLUGINS_WESTWOOD
+    plugins/westwood/westwood.h
+    plugins/westwood/westwood_notify.c
+)
+
+SET(PLUGINS_NO_PACING
+    plugins/no_pacing/set_next_wake_time_without_pacing_with_event.c
+    plugins/no_pacing/no_pacing_with_event.h
+)
+
 SET(PLUGINS_QLOG
     plugins/qlog/cnx_state_changed.c
     plugins/qlog/set_output_file.c
@@ -205,6 +217,170 @@ SET(PLUGINS_QLOG
         plugins/qlog/receiver/segment_received.c
         plugins/qlog/frames/stream_frame_parsed.c)
 
+#
+SET(PLUGINS_FEC
+        )
+
+
+SET(PLUGINS_LOSS_MONITOR
+        plugins/loss_monitor/loss_monitor.h
+        plugins/loss_monitor/packet_acknowledged.c
+        plugins/loss_monitor/packet_lost.c
+        plugins/loss_monitor/get_loss_parameters.c
+        )
+SET(PLUGINS_SIMPLE_FEC
+        plugins/simple_fec/utils.h
+        plugins/simple_fec/fec.h
+        plugins/simple_fec/fec_constants.h
+        plugins/simple_fec/protoops/post_write_src_fpi_frame.c
+        plugins/simple_fec/protoops/post_write_repair_frame.c
+        plugins/simple_fec/protoops/before_schedule_frames.c
+        plugins/simple_fec/protoops/after_schedule_frames.c
+        plugins/simple_fec/protoops/available_slot.c
+        plugins/simple_fec/protoops/pre_incoming_encrypted.c
+        plugins/simple_fec/protoops/after_incoming_encrypted.c
+        plugins/simple_fec/protoops/check_for_available_slot.c
+        plugins/simple_fec/protoops/disable_retransmissions.c
+        plugins/simple_fec/protoops/process_ack_range.c
+        plugins/simple_fec/protoops/maybe_notify_recovered_packets_to_everybody.c
+        plugins/simple_fec/protoops/has_protected_data_to_send.c
+        plugins/simple_fec/protoops/stream_bytes_max_no_stream_frame_with_repair_frame.c
+
+        plugins/simple_fec/protoops/pre_skip_frame.c
+        plugins/simple_fec/protoops/post_skip_frame.c
+
+        plugins/simple_fec/protoops/pre_packet_has_been_received.c
+        plugins/simple_fec/protoops/pre_packet_has_been_lost.c
+        plugins/simple_fec/protoops/sent_packet.c
+
+
+        plugins/simple_fec/window_framework/framework_sender.h
+        plugins/simple_fec/window_framework/framework_receiver.h
+        plugins/simple_fec/window_framework/window_receive_buffers_old.h
+        plugins/simple_fec/window_framework/window_receive_buffers.h
+        plugins/simple_fec/window_framework/types.h
+        plugins/simple_fec/window_framework/search_structures.h
+        plugins/simple_fec/window_framework/protoops/compressed_repair_frame.h
+
+        plugins/simple_fec/window_framework/protoops/window_get_next_source_symbol_id.c
+
+        plugins/simple_fec/window_framework/protoops/window_create_framework.c
+        plugins/simple_fec/window_framework/protoops/window_write_src_fpi_frame.c
+        plugins/simple_fec/window_framework/protoops/window_parse_src_fpi_frame.c
+        plugins/simple_fec/window_framework/protoops/window_process_src_fpi_frame.c
+        plugins/simple_fec/window_framework/protoops/window_notify_src_fpi_frame.c
+        plugins/simple_fec/window_framework/protoops/window_write_repair_frame.c
+        plugins/simple_fec/window_framework/protoops/window_parse_repair_frame.c
+        plugins/simple_fec/window_framework/protoops/window_predict_repair_frame_length.c
+        plugins/simple_fec/window_framework/protoops/window_predict_compressed_repair_frame_length.c
+        plugins/simple_fec/window_framework/protoops/window_parse_compressed_repair_frame.c
+        plugins/simple_fec/window_framework/protoops/window_process_repair_frame.c
+        plugins/simple_fec/window_framework/protoops/window_process_window_rwin_frame.c
+        plugins/simple_fec/window_framework/protoops/window_write_window_rwin_frame.c
+        plugins/simple_fec/window_framework/protoops/window_parse_window_rwin_frame.c
+        plugins/simple_fec/window_framework/protoops/window_notify_window_rwin_frame.c
+        plugins/simple_fec/window_framework/protoops/window_notify_repair_frame.c
+        plugins/simple_fec/window_framework/protoops/window_write_recovered_frame.c
+        plugins/simple_fec/window_framework/protoops/window_write_compressed_repair_frame.c
+        plugins/simple_fec/window_framework/protoops/window_parse_recovered_frame.c
+        plugins/simple_fec/window_framework/protoops/window_process_recovered_frame.c
+        plugins/simple_fec/window_framework/protoops/window_notify_recovered_frame.c
+
+        plugins/simple_fec/window_framework/protoops/window_receive_packet_payload.c
+        plugins/simple_fec/window_framework/protoops/window_protect_packet_payload.c
+        plugins/simple_fec/window_framework/protoops/window_reserve_repair_frames.c
+        plugins/simple_fec/window_framework/protoops/get_current_window_bounds.c
+        plugins/simple_fec/window_framework/protoops/window_packet_has_been_lost.c
+        plugins/simple_fec/window_framework/protoops/window_packet_has_been_received.c
+        plugins/simple_fec/window_framework/protoops/window_packet_sent.c
+        plugins/simple_fec/window_framework/protoops/window_select_symbols_to_protect.c
+        plugins/simple_fec/window_framework/protoops/window_try_to_recover_after_incoming_packet.c
+        plugins/simple_fec/window_framework/protoops/connection_state_changed.c
+
+        plugins/simple_fec/window_framework/protoops/window_stream_frame_written.c
+        plugins/simple_fec/window_framework/protoops/is_max_stream_data_frame_required.c
+
+        plugins/simple_fec/window_framework/protoops/reserve_window_rwin_frame_if_needed.c
+
+
+        plugins/simple_fec/window_framework/fec_schemes/rlc_gf256/gf256/generated_table_code.c
+        plugins/simple_fec/window_framework/fec_schemes/rlc_gf256/gf256/gf256.h
+        plugins/simple_fec/window_framework/fec_schemes/rlc_gf256/gf256/swif_symbol.c
+        plugins/simple_fec/window_framework/fec_schemes/rlc_gf256/gf256/swif_symbol.h
+        plugins/simple_fec/window_framework/fec_schemes/rlc_gf256/gf256/prng/tinymt32.c
+
+        plugins/simple_fec/window_framework/fec_schemes/rlc_gf256/protoops/create_rlc_fec_scheme_gf256.c
+        plugins/simple_fec/window_framework/fec_schemes/rlc_gf256/protoops/rlc_fec_scheme_generate_gf256.c
+        plugins/simple_fec/window_framework/fec_schemes/rlc_gf256/protoops/rlc_fec_scheme_gf256.h
+        plugins/simple_fec/window_framework/fec_schemes/rlc_gf256/protoops/rlc_fec_scheme_gf256_causal.c
+
+        plugins/simple_fec/causal_redundancy_controller_protoops/causal_redundancy_controller.h
+        plugins/simple_fec/causal_redundancy_controller_protoops/causal_what_to_send.c
+        plugins/simple_fec/causal_redundancy_controller_protoops/causal_sent_packet.c
+        plugins/simple_fec/causal_redundancy_controller_protoops/causal_cancelled_packet.c
+
+        plugins/simple_fec/bulk_redundancy_controller_protoops/bulk_causal_ew.c
+        plugins/simple_fec/bulk_redundancy_controller_protoops/bulk_causal_threshold.c
+
+        plugins/simple_fec/buffer_limited_redundancy_controller_protoops/buffer_limited_causal.h
+        plugins/simple_fec/buffer_limited_redundancy_controller_protoops/buffer_limited_causal_ew.c
+        plugins/simple_fec/buffer_limited_redundancy_controller_protoops/buffer_limited_causal_threshold.c
+
+        plugins/simple_fec/message_based_redundancy_controller_protoops/message_causal_ew.c
+        plugins/simple_fec/message_based_redundancy_controller_protoops/message_causal_threshold.c
+        plugins/simple_fec/message_based_redundancy_controller_protoops/message_causal_update_state.c
+
+
+        plugins/simple_fec/tetrys_framework/tetrys_framework_sender.c
+        plugins/simple_fec/tetrys_framework/tetrys_framework_receiver.c
+        plugins/simple_fec/tetrys_framework/tetrys_framework.h
+
+
+        plugins/simple_fec/window_framework/extern/protoops/next_message_microsec.c
+        plugins/simple_fec/window_framework/extern/protoops/window_framework_send_fec_protected_message.c
+        plugins/simple_fec/window_framework/extern/protoops/window_framework_send_fec_protected_unreliable_message.c
+        plugins/simple_fec/window_framework/extern/protoops/window_framework_cancel_expired_fec_protected_unreliable_messages.c
+        plugins/simple_fec/window_framework/extern/protoops/set_rwin_size.c
+        plugins/simple_fec/window_framework/extern/protoops/set_repair_rwin_size.c
+
+        plugins/simple_fec/window_framework/stream_scheduler_protoops/unreliable_messages_stream_scheduler.c
+        plugins/simple_fec/window_framework/stream_scheduler_protoops/fec_flow_control_aware_stream_scheduler.c
+
+
+        plugins/simple_fec/tetrys_framework/protoops/tetrys_create_framework.c
+        plugins/simple_fec/tetrys_framework/protoops/tetrys_receive_packet_payload.c
+        plugins/simple_fec/tetrys_framework/protoops/tetrys_protect_packet_payload.c
+        plugins/simple_fec/tetrys_framework/protoops/tetrys_flush_repair_symbols.c
+        plugins/simple_fec/tetrys_framework/protoops/tetrys_what_to_send.c
+        plugins/simple_fec/tetrys_framework/protoops/tetrys_pre_notify_sfpid_frame.c
+        plugins/simple_fec/tetrys_framework/protoops/tetrys_reserve_recovered_frames.c
+        plugins/simple_fec/tetrys_framework/protoops/tetrys_reserve_repair_frames.c
+        plugins/simple_fec/tetrys_framework/protoops/tetrys_write_ack_frame.c
+        plugins/simple_fec/tetrys_framework/protoops/tetrys_parse_ack_frame.c
+        plugins/simple_fec/tetrys_framework/protoops/tetrys_process_ack_frame.c
+        plugins/simple_fec/tetrys_framework/wire.h
+        plugins/simple_fec/tetrys_framework/search_structures.h
+
+        plugins/simple_fec/tetrys_framework/protoops/tetrys_write_src_fpi_frame.c
+        plugins/simple_fec/tetrys_framework/protoops/tetrys_write_recovered_frame.c
+        plugins/simple_fec/tetrys_framework/protoops/tetrys_write_repair_frame.c
+        plugins/simple_fec/tetrys_framework/protoops/tetrys_parse_src_fpi_frame.c
+        plugins/simple_fec/tetrys_framework/protoops/tetrys_parse_recovered_frame.c
+        plugins/simple_fec/tetrys_framework/protoops/tetrys_parse_repair_frame.c
+        plugins/simple_fec/tetrys_framework/protoops/tetrys_process_src_fpi_frame.c
+        plugins/simple_fec/tetrys_framework/protoops/tetrys_process_recovered_frame.c
+        plugins/simple_fec/tetrys_framework/protoops/tetrys_process_repair_frame.c
+        plugins/simple_fec/tetrys_framework/protoops/tetrys_notify_src_fpi_frame.c
+        plugins/simple_fec/tetrys_framework/protoops/tetrys_notify_recovered_frame.c
+        plugins/simple_fec/tetrys_framework/protoops/tetrys_notify_repair_frame.c
+        plugins/simple_fec/tetrys_framework/protoops/tetrys_packet_has_been_lost.c
+        plugins/simple_fec/tetrys_framework/protoops/tetrys_packet_has_been_received.c
+
+        )
+
+
+
+FIND_LIBRARY(ZLIB z)
 FIND_LIBRARY(PTLS_CORE picotls-core PATH ../picotls)
 MESSAGE(STATUS "Found picotls-core at : ${PTLS_CORE} " )
 
@@ -253,62 +429,134 @@ if($ENV{COMPILE_CLION})
     ADD_LIBRARY(plugins-qlog
         ${PLUGINS_QLOG}
     )
+    ADD_LIBRARY(plugins-simple-fec
+        ${PLUGINS_SIMPLE_FEC}
+    )
+    ADD_LIBRARY(plugins-loss-monitor
+        ${PLUGINS_LOSS_MONITOR}
+    )
+    ADD_LIBRARY(plugins-fec
+            ${PLUGINS_SIMPLE_FEC}
+            )
+    ADD_LIBRARY(plugins-loss-monitor
+            ${PLUGINS_LOSS_MONITOR}
+            )
+    ADD_LIBRARY(plugins-westwood
+            ${PLUGINS_WESTWOOD}
+            )
+    ADD_LIBRARY(plugins-no-pacing
+            ${PLUGINS_NO_PACING}
+            )
 endif()
 
 if(NOT DEFINED ONLY_LIB)
     ADD_EXECUTABLE(picoquicdemo picoquicfirst/picoquicdemo.c
                                 picoquicfirst/getopt.c )
     TARGET_LINK_LIBRARIES(picoquicdemo picoquic-core
-        ${PTLS_CORE}
-        ${PTLS_OPENSSL}
-        ${PTLS_MINICRYPTO}
-        ${OPENSSL_LIBRARIES}
-        ${UBPF}
-        ${CMAKE_DL_LIBS}
-        ${LibArchive_LIBRARIES}
-        ${MICHELFRALLOC_STATIC_LIBS}
-    )
+            ${PTLS_CORE}
+            ${PTLS_OPENSSL}
+            ${PTLS_MINICRYPTO}
+            ${OPENSSL_LIBRARIES}
+            ${ZLIB}
+            ${UBPF}
+            ${CMAKE_DL_LIBS}
+            ${LibArchive_LIBRARIES}
+            ${MICHELFRALLOC_STATIC_LIBS})
 
     ADD_EXECUTABLE(picoquicvpn picoquicfirst/picoquicvpn.c
-                                picoquicfirst/getopt.c )
+            picoquicfirst/getopt.c )
     TARGET_LINK_LIBRARIES(picoquicvpn picoquic-core
-        ${PTLS_CORE}
-        ${PTLS_OPENSSL}
-        ${PTLS_MINICRYPTO}
-        ${OPENSSL_LIBRARIES}
-        ${UBPF}
-        ${CMAKE_DL_LIBS}
-        ${LibArchive_LIBRARIES}
-        ${MICHELFRALLOC_STATIC_LIBS}
-    )
+            ${PTLS_CORE}
+            ${PTLS_OPENSSL}
+            ${PTLS_MINICRYPTO}
+            ${OPENSSL_LIBRARIES}
+            ${UBPF}
+            ${CMAKE_DL_LIBS}
+            ${LibArchive_LIBRARIES}
+            ${MICHELFRALLOC_STATIC_LIBS}
+            ${ZLIB}
+            )
+
+    ADD_EXECUTABLE(picoquicvideo picoquicfirst/picoquic_video.c
+            picoquicfirst/streamer.h
+            picoquicfirst/video_streamer.h
+            picoquicfirst/streamers_buffer.h
+                                picoquicfirst/getopt.c )
+    TARGET_LINK_LIBRARIES(picoquicvideo avcodec avutil avformat picoquic-core
+            ${PTLS_CORE}
+            ${PTLS_OPENSSL}
+            ${PTLS_MINICRYPTO}
+            ${OPENSSL_LIBRARIES}
+            ${UBPF}
+            ${CMAKE_DL_LIBS}
+            ${LibArchive_LIBRARIES}
+            ${MICHELFRALLOC_STATIC_LIBS}
+            ${ZLIB}
+            )
 
     ADD_EXECUTABLE(picoquicdemobench picoquicfirst/picoquicdemobench.c
-                                picoquicfirst/getopt.c )
+            picoquicfirst/getopt.c )
     TARGET_LINK_LIBRARIES(picoquicdemobench picoquic-core
-        ${PTLS_CORE}
-        ${PTLS_OPENSSL}
-        ${PTLS_MINICRYPTO}
-        ${OPENSSL_LIBRARIES}
-        ${UBPF}
-        ${CMAKE_DL_LIBS}
-        ${LibArchive_LIBRARIES}
-        ${MICHELFRALLOC_STATIC_LIBS}
-    )
+            ${PTLS_CORE}
+            ${PTLS_OPENSSL}
+            ${PTLS_MINICRYPTO}
+            ${OPENSSL_LIBRARIES}
+            ${UBPF}
+            ${CMAKE_DL_LIBS}
+            ${LibArchive_LIBRARIES}
+            ${MICHELFRALLOC_STATIC_LIBS}
+            ${ZLIB}
+            )
 
     ADD_EXECUTABLE(picoquic_ct picoquic_t/picoquic_t.c
-     ${PICOQUIC_TEST_LIBRARY_FILES} )
+            ${PICOQUIC_TEST_LIBRARY_FILES} )
     TARGET_LINK_LIBRARIES(picoquic_ct picoquic-core
-        ${PTLS_CORE}
-        ${PTLS_OPENSSL}
-        ${PTLS_MINICRYPTO}
-        ${PTLS_OPENSSL}
-        ${PTLS_CORE}
-        ${OPENSSL_LIBRARIES}
-        ${UBPF}
-        ${CMAKE_DL_LIBS}
-        ${LibArchive_LIBRARIES}
-        ${MICHELFRALLOC_STATIC_LIBS}
-    )
+            ${PTLS_CORE}
+            ${PTLS_OPENSSL}
+            ${PTLS_MINICRYPTO}
+            ${PTLS_OPENSSL}
+            ${PTLS_CORE}
+            ${OPENSSL_LIBRARIES}
+            ${UBPF}
+            ${CMAKE_DL_LIBS}
+            ${LibArchive_LIBRARIES}
+            ${MICHELFRALLOC_STATIC_LIBS}
+            ${ZLIB}
+            )
+
+
+    ADD_EXECUTABLE(get_video_frames picoquicfirst/get_video_frames.c
+            picoquicfirst/streamer.h
+            picoquicfirst/video_streamer.h
+            picoquicfirst/streamers_buffer.h
+                                picoquicfirst/getopt.c )
+    TARGET_LINK_LIBRARIES(get_video_frames avcodec avutil avformat picoquic-core
+            ${PTLS_CORE}
+            ${PTLS_OPENSSL}
+            ${PTLS_MINICRYPTO}
+            ${OPENSSL_LIBRARIES}
+            ${ZLIB}
+            ${UBPF}
+            ${CMAKE_DL_LIBS}
+            ${LibArchive_LIBRARIES}
+            ${MICHELFRALLOC_STATIC_LIBS})
+    INCLUDE_DIRECTORIES(/usr/include/ffmpeg)
+
+    ADD_EXECUTABLE(picoquicburst_messages picoquicfirst/picoquic_bursty_messages.c
+            picoquicfirst/streamer.h
+            picoquicfirst/streamers_buffer.h
+                                picoquicfirst/getopt.c )
+    TARGET_LINK_LIBRARIES(picoquicburst_messages picoquic-core
+            ${PTLS_CORE}
+            ${PTLS_OPENSSL}
+            ${PTLS_MINICRYPTO}
+            ${OPENSSL_LIBRARIES}
+            ${ZLIB}
+            ${UBPF}
+            ${CMAKE_DL_LIBS}
+            ${LibArchive_LIBRARIES}
+            ${MICHELFRALLOC_STATIC_LIBS}
+            )
 
     SET(TEST_EXES picoquic_ct)
 endif()
