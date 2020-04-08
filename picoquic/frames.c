@@ -2289,6 +2289,11 @@ protoop_arg_t process_ack_range(picoquic_cnx_t *cnx)
 
                 if (p->has_handshake_done) {
                     cnx->handshake_done_acked = 1;
+                    for (int i = 0; i < cnx->nb_paths; i++) {
+                        picoquic_path_t *path = cnx->path[i];
+                        picoquic_implicit_handshake_ack(cnx, path, picoquic_packet_context_initial, current_time);
+                        picoquic_implicit_handshake_ack(cnx, path, picoquic_packet_context_handshake, current_time);
+                    }
                 }
 
                 picoquic_dequeue_retransmit_packet(cnx, p, 1);
