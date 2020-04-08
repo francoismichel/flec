@@ -129,6 +129,7 @@ register_functions(struct ubpf_vm *vm) {
     ubpf_register(vm, current_idx++, "picoquic_cc_was_cwin_blocked", picoquic_cc_was_cwin_blocked);
     ubpf_register(vm, current_idx++, "picoquic_is_sending_authorized_by_pacing", picoquic_is_sending_authorized_by_pacing);
     ubpf_register(vm, current_idx++, "picoquic_update_pacing_data", picoquic_update_pacing_data);
+    ubpf_register(vm, current_idx++, "picoquic_implicit_handshake_ack", picoquic_implicit_handshake_ack);
 
     ubpf_register(vm, current_idx++, "queue_peek", queue_peek);
     /* FIXME remove this function */
