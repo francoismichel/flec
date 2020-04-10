@@ -7,7 +7,7 @@
 
 
 // TODO: 1 packet == 1 symbol here, or it is too complicated
-#define MAX_SLOTS MAX_SENDING_WINDOW_SIZE
+#define MAX_SLOTS MAX_SENDING_WINDOW_SIZE+5
 
 #define GRANULARITY 1000000
 
@@ -642,7 +642,7 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, picoqui
     if (is_buffer_empty_old(controller->what_to_send)) {
         if (controller->flush_dof_mode) {
             PROTOOP_PRINTF(cnx, "FLUSH DOF !!\n");
-            add_elem_to_buffer_old(controller->what_to_send, fec_packet);
+            add_elem_to_buffer_old(controller->what_to_send, fb_fec_packet);
             controller->n_fec_in_flight++;
             controller->ad++;
         } else {

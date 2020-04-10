@@ -24,6 +24,12 @@ protoop_arg_t retransmit_needed(picoquic_cnx_t *cnx)
     int stop = false;
     char *reason = NULL;
 
+    uint64_t *vals_fec = my_malloc(cnx, 8*sizeof(uint64_t));
+    if (!vals_fec)
+        return -1;
+    uint64_t *vals = my_malloc(cnx, 8*sizeof(uint64_t));
+    if (!vals)
+        return -1;
 
     int nb_paths = (int) get_cnx(cnx, AK_CNX_NB_PATHS, 0);
 
@@ -163,12 +169,6 @@ protoop_arg_t retransmit_needed(picoquic_cnx_t *cnx)
                     * in order to enable detection of spurious restransmissions */
                     // if the pc is the application, we want to free the packet: indeed, we disable the retransmissions
 
-                    uint64_t *vals_fec = my_malloc(cnx, 8*sizeof(uint64_t));
-                    if (!vals_fec)
-                        return -1;
-                    uint64_t *vals = my_malloc(cnx, 8*sizeof(uint64_t));
-                    if (!vals)
-                        return -1;
 
 
 
@@ -316,8 +316,6 @@ protoop_arg_t retransmit_needed(picoquic_cnx_t *cnx)
                             break;
                         }
                     }
-                    my_free(cnx, vals);
-                    my_free(cnx, vals_fec);
                 }
             }
             /*
@@ -326,11 +324,13 @@ protoop_arg_t retransmit_needed(picoquic_cnx_t *cnx)
             */
             p = p_next;
         }
-
         if (stop) {
             break;
         }
     }
+    my_free(cnx, vals);
+    my_free(cnx, vals_fec);
+
 
     set_cnx(cnx, AK_CNX_OUTPUT, 0, (protoop_arg_t) is_cleartext_mode);
     set_cnx(cnx, AK_CNX_OUTPUT, 1, (protoop_arg_t) header_length);

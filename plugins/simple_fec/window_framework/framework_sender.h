@@ -721,8 +721,9 @@ static __attribute__((always_inline)) int window_protect_packet_payload(picoquic
         window_source_symbol_id_t id = 0;
         int err = protect_source_symbol(cnx, wff, sss[i], &id);
         if (err) {
-           my_free(cnx, sss);
-           return err;
+            delete_source_symbol(cnx, sss[i]);
+            my_free(cnx, sss);
+            return err;
         }
         if (i == 0)
             *first_symbol_id = id;

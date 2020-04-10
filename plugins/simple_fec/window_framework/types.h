@@ -166,6 +166,11 @@ static __attribute__((always_inline)) window_repair_frame_t *create_repair_frame
 // if not null, will free rf->symbols but not the symbols themselves
 static __attribute__((always_inline)) window_repair_frame_t *delete_repair_frame_symbols(picoquic_cnx_t *cnx, window_repair_frame_t *rf) {
     if (rf->symbols) {
+        for (int i = 0 ; i < rf->n_repair_symbols ; i++) {
+            if (rf->symbols[i]) {
+                delete_repair_symbol(cnx, rf->symbols[i]);
+            }
+        }
         my_free(cnx, rf->symbols);
         rf->symbols = NULL;
     }
@@ -174,6 +179,7 @@ static __attribute__((always_inline)) window_repair_frame_t *delete_repair_frame
 
 // if not null, will free rf->symbols but not the symbols themselves
 static __attribute__((always_inline)) void delete_repair_frame(picoquic_cnx_t *cnx, window_repair_frame_t *rf) {
+    PROTOOP_PRINTF(cnx, "DELETE REPAIR FRAME\n");
     delete_repair_frame_symbols(cnx, rf);
     my_free(cnx, rf);
 }
