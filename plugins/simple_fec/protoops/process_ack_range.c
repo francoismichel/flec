@@ -32,6 +32,7 @@ protoop_arg_t process_ack_range(picoquic_cnx_t *cnx)
                     /* TODO: RTT Estimate */
                     picoquic_packet_t* next = (picoquic_packet_t*) get_pkt(p, AK_PKT_NEXT_PACKET);
                     picoquic_path_t * old_path = (picoquic_path_t *) get_pkt(p, AK_PKT_SEND_PATH);
+                    set_path(old_path, AK_PATH_DELIVERED, 0, get_path(old_path, AK_PATH_DELIVERED, 0) + get_pkt(p, AK_PKT_LENGTH));
 
                     uint32_t length = (uint32_t) get_pkt(p, AK_PKT_LENGTH);
                     if ((picoquic_congestion_algorithm_t *) get_cnx(cnx, AK_CNX_CONGESTION_CONTROL_ALGORITHM, 0) != NULL) {
@@ -76,6 +77,16 @@ protoop_arg_t process_ack_range(picoquic_cnx_t *cnx)
                             state->handshake_finished = true;
                         }
                     }
+                    if (get_pkt(p, AK_PKT_HAS_HANDSHAKE_DONE)) {
+                        set_cnx(cnx, AK_CNX_HANDSHAKE_DONE_ACKED, 0,1);
+                        uint64_t nb_paths = get_cnx(cnx, AK_CNX_NB_PATHS, 0);
+                        for (int i = 0; i < nb_paths; i++) {
+                            picoquic_path_t *path = (picoquic_path_t *) get_cnx(cnx, AK_CNX_PATH, i);
+                            picoquic_implicit_handshake_ack(cnx, path, picoquic_packet_context_initial, current_time);
+                            picoquic_implicit_handshake_ack(cnx, path, picoquic_packet_context_handshake, current_time);
+                        }
+                    }
+
                     p = next;
                 }
 
