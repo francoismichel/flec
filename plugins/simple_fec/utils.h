@@ -9,6 +9,11 @@
 
 #define member_size(struct_type, member) (sizeof(((struct_type *) 0)->member))
 
+#define ALIGNMENT 32
+static __attribute__((always_inline)) size_t align(size_t val) {
+    return ( ( val - 1 ) | ( ((ALIGNMENT<<1) - 1 ) )) + 1;
+}
+
 static __attribute__((always_inline)) uint64_t decode_un(uint8_t *bytes, int n) {
     // we put 8 here instead of n because otherwise, we get an access to register 11 after compiling which is forbidden :'-)
     // but don't worry I love my job

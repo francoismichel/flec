@@ -26,7 +26,7 @@
 #define FEC_PROTOOP_WINDOW_CONTROLLER_FREE_SLOT "fec_controller_free_slot"
 #define WINDOW_INITIAL_SYMBOL_ID 1
 
-#define MAX_SENDING_WINDOW_SIZE 1000
+#define MAX_SENDING_WINDOW_SIZE 4000
 
 
 #define for_each_window_source_symbol(____sss, ____ss, ____nss) \
@@ -89,12 +89,12 @@ typedef struct __attribute__((__packed__)) {
 } window_packet_metadata_t;
 
 static __attribute__((always_inline)) window_source_symbol_t *create_window_source_symbol(picoquic_cnx_t *cnx, uint16_t symbol_size) {
-    window_source_symbol_t *ss = my_malloc(cnx, sizeof(window_source_symbol_t));
+    window_source_symbol_t *ss = my_malloc(cnx, MAX(MALLOC_SIZE_FOR_FRAGMENTATION, sizeof(window_source_symbol_t)));
     if (!ss)
         return NULL;
     my_memset(ss, 0, sizeof(window_source_symbol_t));
 
-    ss->source_symbol._whole_data = my_malloc(cnx, symbol_size*sizeof(uint8_t));
+    ss->source_symbol._whole_data = my_malloc(cnx, MAX(MALLOC_SIZE_FOR_FRAGMENTATION, align(symbol_size*sizeof(uint8_t))));
     if (!ss->source_symbol._whole_data) {
         my_free(cnx, ss);
         return NULL;
@@ -115,7 +115,7 @@ static __attribute__((always_inline)) window_repair_symbol_t *create_window_repa
         return NULL;
     my_memset(rs, 0, sizeof(window_repair_symbol_t));
 
-    rs->repair_symbol.repair_payload = my_malloc(cnx, symbol_size*sizeof(uint8_t));
+    rs->repair_symbol.repair_payload = my_malloc(cnx, align(symbol_size*sizeof(uint8_t)));
     if (!rs->repair_symbol.repair_payload) {
         my_free(cnx, rs);
         return NULL;
@@ -409,6 +409,29 @@ static __attribute__((always_inline)) bool add_packet_to_recovered_frame(picoqui
     return true;
 }
 
+static __attribute__((always_inline)) void print_source_symbol(picoquic_cnx_t *cnx, window_source_symbol_t *ss) {
+    PROTOOP_PRINTF(cnx, "PRINT SYMBOL %u\n", ss->id);
+    for (int i = 0 ; i < 9 ; i++) {
+        PROTOOP_PRINTF(cnx, "0x%x, ", ss->source_symbol._whole_data[i]);
+    }
+    PROTOOP_PRINTF(cnx, "... ");
+    for (int i = ss->source_symbol.chunk_size - 3 ; i < ss->source_symbol.chunk_size + 1 ; i++) {
+        PROTOOP_PRINTF(cnx, "0x%x, ", ss->source_symbol._whole_data[i]);
+    }
+    PROTOOP_PRINTF(cnx, "DONE\n");
+}
+
+static __attribute__((always_inline)) void print_source_symbol_payload(picoquic_cnx_t *cnx, uint8_t *data, size_t size) {
+    PROTOOP_PRINTF(cnx, "PRINT SYMBOL PAYLOAD\n");
+    for (int i = 0 ; i < 9 ; i++) {
+        PROTOOP_PRINTF(cnx, "0x%x, ", data[i]);
+    }
+    PROTOOP_PRINTF(cnx, "... ");
+    for (int i = size - 4 ; i < size ; i++) {
+        PROTOOP_PRINTF(cnx, "0x%x, ", data[i]);
+    }
+    PROTOOP_PRINTF(cnx, "DONE\n");
+}
 
 // we do not write the type byte
 static __attribute__((always_inline)) int serialize_window_recovered_frame(picoquic_cnx_t *cnx, uint8_t *bytes, size_t buffer_length, window_recovered_frame_t *rf, size_t *consumed) {
@@ -557,5 +580,49 @@ static __attribute__((always_inline)) uint8_t *parse_window_recovered_frame(pico
 
     return size_and_packets;
 }
+
+#define WINDOW_FEC_SCHEME_RECEIVE_SOURCE_SYMBOL "win_fs_recv_ss"
+static __attribute__((always_inline)) int window_fec_scheme_receive_source_symbol(picoquic_cnx_t *cnx, fec_scheme_t fec_scheme, window_source_symbol_t *ss, void **removed, int *used_in_system) {
+    protoop_arg_t args[2];
+    args[0] = (protoop_arg_t) fec_scheme;
+    args[1] = (protoop_arg_t) ss;
+    protoop_arg_t output[2];
+    int retval = (int) run_noparam(cnx, WINDOW_FEC_SCHEME_RECEIVE_SOURCE_SYMBOL, 2, args, output);
+    *removed = (void *) output[0];
+    *used_in_system = output[1];
+    return retval;
+}
+
+
+#define WINDOW_FEC_SCHEME_RECEIVE_REPAIR_SYMBOL "win_fs_recv_rs"
+static __attribute__((always_inline)) int fec_scheme_receive_repair_symbol(picoquic_cnx_t *cnx, fec_scheme_t fec_scheme, window_repair_symbol_t *rs, void **removed, int *used_in_system) {
+    protoop_arg_t args[2];
+    args[0] = (protoop_arg_t) fec_scheme;
+    args[1] = (protoop_arg_t) rs;
+    protoop_arg_t output[2];
+    int retval = (int) run_noparam(cnx, WINDOW_FEC_SCHEME_RECEIVE_REPAIR_SYMBOL, 2, args, output);
+    *removed = (void *) output[0];
+    *used_in_system = output[1];
+    return retval;
+}
+
+#define WINDOW_FEC_SCHEME_REMOVE_UNUSED_REPAIR_SYMBOLS "win_fs_rmv_rs"
+static __attribute__((always_inline)) int fec_scheme_remove_unused_repair_symbols(picoquic_cnx_t *cnx, fec_scheme_t fec_scheme, window_source_symbol_id_t highest_contiguously_received) {
+    protoop_arg_t args[2];
+    args[0] = (protoop_arg_t) fec_scheme;
+    args[1] = (protoop_arg_t) highest_contiguously_received;
+    int retval = (int) run_noparam(cnx, WINDOW_FEC_SCHEME_REMOVE_UNUSED_REPAIR_SYMBOLS, 2, args, NULL);
+    return retval;
+}
+
+#define WINDOW_FEC_SCHEME_SET_MAXIMUM_NUMBER_OF_REPAIR_SYMBOLS "win_fs_set_max_rs"
+static __attribute__((always_inline)) int fec_scheme_set_max_rs(picoquic_cnx_t *cnx, fec_scheme_t fec_scheme, uint64_t max) {
+    protoop_arg_t args[2];
+    args[0] = (protoop_arg_t) fec_scheme;
+    args[1] = (protoop_arg_t) max;
+    int retval = (int) run_noparam(cnx, WINDOW_FEC_SCHEME_SET_MAXIMUM_NUMBER_OF_REPAIR_SYMBOLS, 2, args, NULL);
+    return retval;
+}
+
 
 #endif //PICOQUIC_TYPES_H

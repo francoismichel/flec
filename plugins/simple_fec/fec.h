@@ -47,6 +47,8 @@ typedef struct {
 
 
     uint16_t symbol_size;
+
+    uint64_t temp_buffer[20];   // to store temp variables that cannot be stored on the stack due to the ridiculous stack size
 } plugin_state_t;
 
 static __attribute__((always_inline)) plugin_state_t *initialize_plugin_state(picoquic_cnx_t *cnx)
@@ -142,11 +144,11 @@ static __attribute__((always_inline)) bool get_ss_metadata_E(source_symbol_t *ss
 static __attribute__((always_inline)) source_symbol_t *create_larger_source_symbol(picoquic_cnx_t *cnx, uint16_t chunk_size, size_t mem_size) {
     if (mem_size < sizeof(source_symbol_t))
         return NULL;
-    source_symbol_t *ret = my_malloc(cnx, mem_size);
+    source_symbol_t *ret = my_malloc(cnx, align(MAX(MALLOC_SIZE_FOR_FRAGMENTATION, mem_size)));
     if (!ret)
         return NULL;
     my_memset(ret, 0, mem_size);
-    ret->_whole_data = my_malloc(cnx, chunk_size + 1);
+    ret->_whole_data = my_malloc(cnx, MAX(MALLOC_SIZE_FOR_FRAGMENTATION, chunk_size + 1));
     if (!ret->_whole_data){
         my_free(cnx, ret);
         return NULL;
@@ -177,7 +179,7 @@ static __attribute__((always_inline)) repair_symbol_t *create_repair_symbol(pico
     if (!ret)
         return NULL;
     my_memset(ret, 0, sizeof(repair_symbol_t));
-    ret->repair_payload = my_malloc(cnx, symbol_size);
+    ret->repair_payload = my_malloc(cnx, align(symbol_size));
     if (!ret->repair_payload){
         my_free(cnx, ret);
         return NULL;
@@ -218,11 +220,13 @@ static __attribute__((always_inline)) int preprocess_packet_payload(picoquic_cnx
 
 
 // TODO: maybe move this in utils.h
+// tmp_buffer is >= MAX_PACKET_SIZE bytes
 static __attribute__((always_inline)) source_symbol_t **packet_payload_to_source_symbols(picoquic_cnx_t *cnx, uint8_t *payload,
-        uint16_t payload_length, uint16_t symbol_size, uint64_t packet_number, uint16_t *n_chunks, size_t source_symbol_memory_size) {
+        uint16_t payload_length, uint16_t symbol_size, uint64_t packet_number, uint16_t *n_chunks, size_t source_symbol_memory_size, uint8_t *tmp_buffer) {
     if (payload_length == 0)
         return NULL;
-    uint8_t *processed_payload = my_malloc(cnx, payload_length + sizeof(uint64_t));
+//    uint8_t *processed_payload = my_malloc(cnx, payload_length + sizeof(uint64_t));
+    uint8_t *processed_payload = tmp_buffer;
     if (!processed_payload) {
         return NULL;
     }
@@ -243,7 +247,7 @@ static __attribute__((always_inline)) source_symbol_t **packet_payload_to_source
     uint16_t padding_length = padded_length - processed_length;
     *n_chunks = padded_length / chunk_size;
     PROTOOP_PRINTF(cnx, "PROCESSED LENGTH = %u, PADDED LENGTH = %u, CHUNK SIZE = %u, N_CHUNKS = %u\n", processed_length, padded_length, chunk_size, *n_chunks);
-    source_symbol_t **retval = (source_symbol_t **) my_malloc(cnx, MAX(*n_chunks, 1)*sizeof(source_symbol_t *));
+    source_symbol_t **retval = (source_symbol_t **) my_malloc(cnx, MAX(MALLOC_SIZE_FOR_FRAGMENTATION, MAX(*n_chunks, 1)*sizeof(source_symbol_t *)));
     if (!retval)
         return NULL;
     my_memset(retval, 0, MAX(*n_chunks, 1)*sizeof(source_symbol_t *));
@@ -275,7 +279,6 @@ static __attribute__((always_inline)) source_symbol_t **packet_payload_to_source
 
         retval[current_symbol] = symbol;
     }
-    my_free(cnx, processed_payload);
     set_ss_metadata_E(retval[*n_chunks-1], true);   // this is the last symbol of the packet
     return retval;
 }
@@ -335,7 +338,7 @@ static __attribute__((always_inline)) int maybe_notify_recovered_packets_to_ever
                 fec_packet_symbols_have_been_received(cnx, pn64, slot, first_id, n_source_symbols, true, false, send_time);
             } else {
                 // this is not normal
-                PROTOOP_PRINTF(cnx, "ERROR: THE RECOVERED PACKET %lx (%lu) IS NEITHER IN THE RETRANSMIT QUEUE, NEITHER IN THE LOST PACKETS\n", pn64, pn64);
+                PROTOOP_PRINTF(cnx, "ERROR: THE FRECOVERED PACKET %lx (%lu) IS NEITHER IN THE RETRANSMIT QUEUE, NEITHER IN THE LOST PACKETS\n", pn64, pn64);
                 return -1;
             }
         } // else, do nothing, try the next packet

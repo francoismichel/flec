@@ -1,10 +1,11 @@
 #include <picoquic.h>
 #include <getset.h>
 #include <zlib.h>
-#include "../gf256/swif_symbol.c"
+#include "../gf256/swif_symbol.h"
 #include "../../prng/tinymt32.c"
-#include "rlc_fec_scheme_gf256.h"
+#include "fec_scheme_gf256.h"
 #include "../../../types.h"
+#include "../headers/online_gf256_fec_scheme.h"
 
 
 static inline void get_coefs(picoquic_cnx_t *cnx, tinymt32_t *prng, uint32_t seed, int n, uint8_t coefs[n]) {
@@ -25,7 +26,7 @@ static inline void get_coefs(picoquic_cnx_t *cnx, tinymt32_t *prng, uint32_t see
 protoop_arg_t get_one_coded_symbol(picoquic_cnx_t *cnx)
 {
 
-    rlc_gf256_fec_scheme_t *fs = (rlc_gf256_fec_scheme_t *) get_cnx(cnx, AK_CNX_INPUT, 0);
+    online_gf256_fec_scheme_t *fs = (online_gf256_fec_scheme_t *) get_cnx(cnx, AK_CNX_INPUT, 0);
     source_symbol_t **source_symbols = (source_symbol_t **) get_cnx(cnx, AK_CNX_INPUT, 1);
     uint16_t n_source_symbols = (uint16_t ) get_cnx(cnx, AK_CNX_INPUT, 2);
     window_repair_symbol_t **repair_symbols = (window_repair_symbol_t **) get_cnx(cnx, AK_CNX_INPUT, 3);
@@ -41,18 +42,18 @@ protoop_arg_t get_one_coded_symbol(picoquic_cnx_t *cnx)
     prng.mat1 = 0x8f7011ee;
     prng.mat2 = 0xfc78ff1f;
     prng.tmat = 0x3793fdff;
-    uint8_t **mul = fs->table_mul;
+    uint8_t **mul = fs->wrapper.mul_table;
     if (n_source_symbols < 1) {
         PROTOOP_PRINTF(cnx, "IMPOSSIBLE TO GENERATE\n");
         return 1;
     }
 
 
-    uint8_t *coefs = my_malloc(cnx, n_source_symbols*sizeof(uint8_t));
+    uint8_t *coefs = my_malloc(cnx, align(n_source_symbols*sizeof(uint8_t)));
     uint8_t **knowns = my_malloc(cnx, n_source_symbols*sizeof(uint8_t *));
 
     for (int i = 0 ; i < n_source_symbols ; i++) {
-        knowns[i] = my_malloc(cnx, symbol_size);
+        knowns[i] = my_malloc(cnx, align(symbol_size));
         my_memset(knowns[i], 0, symbol_size);
         my_memcpy(knowns[i], source_symbols[i]->_whole_data, symbol_size);
     }
@@ -70,7 +71,10 @@ protoop_arg_t get_one_coded_symbol(picoquic_cnx_t *cnx)
         if (!rs)
             return PICOQUIC_ERROR_MEMORY;
         for (int j = 0 ; j < n_source_symbols ; j++) {
-            PROTOOP_PRINTF(cnx, "SYMBOL %d, COEF %d, CRC = 0x%x\n", first_protected_id + j, coefs[j], crc32(0, knowns[j], symbol_size));
+            PROTOOP_PRINTF(cnx, "SYMBOL %d, COEF %d, CRC = 0x%x, first = 0x%x\n", first_protected_id + j, coefs[j], crc32(0, source_symbols[j]->_whole_data, symbol_size), source_symbols[j]->_whole_data[0]);
+            print_source_symbol(cnx, (window_source_symbol_t *) source_symbols[j]);
+            print_source_symbol_payload(cnx, knowns[j], symbol_size);
+            PROTOOP_PRINTF(cnx, "MUL[%u] = %p, size = %u\n", coefs[j], (protoop_arg_t) mul[coefs[j]], symbol_size);
             symbol_add_scaled(rs->repair_symbol.repair_payload, coefs[j], knowns[j], symbol_size, mul);
         }
         rs->metadata.n_protected_symbols = n_source_symbols;

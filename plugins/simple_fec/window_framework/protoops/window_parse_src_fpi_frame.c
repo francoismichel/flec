@@ -15,7 +15,7 @@ protoop_arg_t parse_frame(picoquic_cnx_t *cnx) {
         return PICOQUIC_ERROR_MEMORY;
 
     // we are forced to malloc something because it will be freed by the core in skip_frame...
-    window_source_symbol_id_t *id = my_malloc(cnx, sizeof(window_source_symbol_id_t));
+    window_source_symbol_id_t *id = my_malloc(cnx, MAX(MALLOC_SIZE_FOR_FRAGMENTATION, sizeof(window_source_symbol_id_t)));
     if (!id)
         return PICOQUIC_ERROR_MEMORY;
     *id = 0;

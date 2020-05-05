@@ -5,7 +5,7 @@
 #include "../framework_sender.h"
 #include "../framework_receiver.h"
 
-#define RECEIVE_BUFFER_SIZE 100000
+#define RECEIVE_BUFFER_SIZE 4000
 
 protoop_arg_t create_framework(picoquic_cnx_t *cnx)
 {

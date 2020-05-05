@@ -1,6 +1,6 @@
 #include <picoquic.h>
 #include <zlib.h>
-#include "../gf256/prng/tinymt32.c"
+#include "../../prng/tinymt32.c"
 #include "../gf256/swif_symbol.c"
 #include "rlc_fec_scheme_gf256.h"
 #include "../../../types.h"
@@ -286,6 +286,7 @@ protoop_arg_t fec_recover(picoquic_cnx_t *cnx)
 
     window_source_symbol_id_t *new_missing_source_symbols = NULL;
 
+
     if (n_missing_source_symbols > n_repair_symbols) {
         // see if there are symbols that can be trivially recovered
         window_repair_symbol_t **trivial_repairs = my_malloc(cnx, n_repair_symbols*sizeof(repair_symbol_t *));
@@ -341,8 +342,8 @@ protoop_arg_t fec_recover(picoquic_cnx_t *cnx)
                 }
                 my_memcpy(repair_symbols, trivial_repairs, n_trivial*sizeof(window_repair_symbol_t *));
                 n_repair_symbols = n_trivial;
-                my_free(cnx, trivial_repairs);
             }
+            my_free(cnx, trivial_repairs);
     }
 
     PROTOOP_PRINTF(cnx, "N TRIVIAL = %lu\n", n_trivial);
@@ -374,6 +375,8 @@ protoop_arg_t fec_recover(picoquic_cnx_t *cnx)
     uint8_t **system_coefs = my_malloc(cnx, n_eq*sizeof(uint8_t *));//[n_eq][n_unknowns + 1];
     uint8_t **constant_terms = my_malloc(cnx, n_eq*sizeof(uint8_t *));
     bool *undetermined = my_malloc(cnx, n_missing_source_symbols*sizeof(bool));
+
+    uint64_t now = picoquic_current_time();
 
     if (!coefs || !unknowns || !system_coefs || !undetermined) {
         PROTOOP_PRINTF(cnx, "NOT ENOUGH MEM\n");
@@ -475,16 +478,16 @@ protoop_arg_t fec_recover(picoquic_cnx_t *cnx)
             }
         }
     }
-    PROTOOP_PRINTF(cnx, "SYSTEM BUILT\n");
     my_free(cnx, protected_symbols);
     int n_effective_equations = i;
+    PROTOOP_PRINTF(cnx, "SYSTEM BUILT, %lu EFFECTIVE EQUATIONS, %lu MISSING SS, CONTAINS TRIVIAL = %d\n", n_effective_equations, n_missing_source_symbols, contains_trivial_equations);
 
     // the system is built: let's recover it
     bool can_recover = contains_trivial_equations || n_effective_equations >= n_missing_source_symbols;
     if (can_recover)
         gaussElimination(cnx, n_effective_equations, n_missing_source_symbols, system_coefs, constant_terms, unknowns, undetermined, symbol_size, mul, fs->table_inv);
     else
-        PROTOOP_PRINTF(cnx, "CANNOT RECOVER, %d EQUATIONS, %d MISSING SYMBOLS\n", n_effective_equations, n_missing_source_symbols);
+        PROTOOP_PRINTF(cnx, "CANNOT RECOVER, %d EQUATIONS, %d MISSING SYMBOLS %lu RS\n", n_effective_equations, n_missing_source_symbols, n_repair_symbols);
     PROTOOP_PRINTF(cnx, "END GAUSSIAN\n");
     int current_unknown = 0;
     int err = 0;
@@ -527,6 +530,7 @@ protoop_arg_t fec_recover(picoquic_cnx_t *cnx)
     my_free(cnx, missing_indexes);
     if (new_missing_source_symbols)
         my_free(cnx, new_missing_source_symbols);
-    PROTOOP_PRINTF(cnx, "END RECOVER\n");
+
+    PROTOOP_PRINTF(cnx, "END RECOVER: ELAPSED %luµs\n", picoquic_current_time() - now);
     return err;
 }

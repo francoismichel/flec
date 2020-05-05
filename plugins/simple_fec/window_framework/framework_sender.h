@@ -7,7 +7,6 @@
 #include "types.h"
 #include <red_black_tree.h>
 
-#define INITIAL_SYMBOL_ID 1
 #define MAX_QUEUED_REPAIR_SYMBOLS 6
 #define MAX_SLOT_VALUE 0x7FFFFF
 
@@ -150,6 +149,8 @@ typedef struct {
     red_black_tree_t *deadlines_from_symbols;
     red_black_tree_t *unreliable_messages_from_deadlines;
     protected_stream_chunks_queue_t stream_chunks_queue;    // useful when sending stream chunks as a deadline-limited message
+    uint8_t packet_sized_buffer[PICOQUIC_MAX_PACKET_SIZE];
+
 } window_fec_framework_t;
 
 typedef struct {
@@ -196,15 +197,15 @@ static __attribute__((always_inline)) window_fec_framework_t *create_framework_s
 //    if (!wff->fec_window)
 //        return NULL;
 //    my_memset(wff, 0, sizeof(window_fec_framework_t));
-    my_memset(wff, 0, MAX_SENDING_WINDOW_SIZE*sizeof(window_slot_t));
+    my_memset(wff, 0, sizeof(window_fec_framework_t));
     wff->rps = create_recovered_packets_buffer(cnx);
     if (!wff->rps) {
         my_free(cnx, wff);
         return NULL;
     }
-    wff->highest_sent_id = INITIAL_SYMBOL_ID-1;
-    wff->highest_in_transit = INITIAL_SYMBOL_ID-1;
-    wff->smallest_in_transit = INITIAL_SYMBOL_ID-1;
+    wff->highest_sent_id = WINDOW_INITIAL_SYMBOL_ID - 1;
+    wff->highest_in_transit = WINDOW_INITIAL_SYMBOL_ID - 1;
+    wff->smallest_in_transit = WINDOW_INITIAL_SYMBOL_ID - 1;
     wff->controller = create_window_redundancy_controller(cnx);
     if (!wff->controller) {
         delete_recovered_packets_buffer(cnx, wff->rps);
@@ -486,7 +487,7 @@ static __attribute__((always_inline)) bool _remove_source_symbol_from_window(pic
         }
 
         if (is_fec_window_empty(wff)) {
-            wff->smallest_in_transit = wff->highest_in_transit = INITIAL_SYMBOL_ID-1;
+            wff->smallest_in_transit = wff->highest_in_transit = WINDOW_INITIAL_SYMBOL_ID - 1;
         }
         PROTOOP_PRINTF(cnx, "REMOVED, SMALLEST = %lu\n", wff->smallest_in_transit);
         return true;
@@ -518,7 +519,11 @@ static __attribute__((always_inline)) int remove_source_symbol_id_from_window(pi
             }
         }
     } else {
-        PROTOOP_PRINTF(cnx, "ID IN WINDOW WAS %u INSTEAD OF %u\n", wff->fec_window[idx].id, id);
+        if (wff->fec_window[idx].symbol) {
+            PROTOOP_PRINTF(cnx, "COULD NOT REMOVE SYMBOL AS THERE WAS NO SYMBOL\n");
+        } else {
+            PROTOOP_PRINTF(cnx, "ID IN WINDOW WAS %u INSTEAD OF %u\n", wff->fec_window[idx].id, id);
+        }
     }
     return 0;
 }
@@ -714,7 +719,7 @@ static __attribute__((always_inline)) int window_protect_packet_payload(picoquic
     // reset the value that is specific to this packet processing loop iteration
     wff->min_deadline_in_current_packet = UNDEFINED_SYMBOL_DEADLINE;
     *n_chunks = 0;
-    source_symbol_t **sss = packet_payload_to_source_symbols(cnx, payload, payload_length, symbol_size, packet_number, n_chunks, sizeof(window_source_symbol_t));
+    source_symbol_t **sss = packet_payload_to_source_symbols(cnx, payload, payload_length, symbol_size, packet_number, n_chunks, sizeof(window_source_symbol_t), wff->packet_sized_buffer);
     if (!sss)
         return PICOQUIC_ERROR_MEMORY;
     for (int i = 0 ; i < *n_chunks ; i++) {

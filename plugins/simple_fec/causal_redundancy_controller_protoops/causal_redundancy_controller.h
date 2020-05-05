@@ -54,6 +54,8 @@ typedef struct {
     int max_size;
 } slots_history_t;
 
+#define AD_MD_NONE UINT64_MAX
+
 typedef struct {
     buffer_rbt_t *acked_slots;
     buffer_rbt_t *nacked_slots;
@@ -310,7 +312,6 @@ static __attribute__((always_inline)) causal_redundancy_controller_t *create_cau
     causal_redundancy_controller_t *controller = my_malloc(cnx, sizeof(causal_redundancy_controller_t));
     if (!controller) return NULL;
     my_memset(controller, 0, sizeof(causal_redundancy_controller_t));
-
     controller->m = m;
     controller->acked_slots = create_buffer(cnx, MAX_SLOTS);
     if (!controller->acked_slots) {
@@ -449,6 +450,13 @@ static __attribute__((always_inline)) bool is_slot_in_flight(picoquic_cnx_t *cnx
     return !(is_elem_in_buffer(cnx, controller->acked_slots, slot) || is_elem_in_buffer(cnx, controller->nacked_slots, slot));
 }
 
+static __attribute__((always_inline)) bool is_ad(picoquic_cnx_t *cnx, causal_redundancy_controller_t *controller, fec_window_t *current_window, uint64_t slot) {
+    fec_window_t sent_window;
+    int err = get_window_sent_at_slot(cnx, controller, controller->slots_history, slot, &sent_window);
+
+    return (!err && is_fec_or_fb_fec(cnx, controller, slot) && is_slot_in_flight(cnx, controller, slot) && window_intersects(&sent_window, current_window));
+}
+
 static __attribute__((always_inline)) uint32_t compute_ad(picoquic_cnx_t *cnx, causal_redundancy_controller_t *controller, fec_window_t *current_window) {
     int err = 0;
     if (window_size(current_window) == 0) {
@@ -475,6 +483,20 @@ static __attribute__((always_inline)) uint32_t compute_ad(picoquic_cnx_t *cnx, c
 
 static __attribute__((always_inline)) uint32_t inc(uint32_t md) {
     return md+1;
+}
+
+
+static __attribute__((always_inline)) bool is_md(picoquic_cnx_t *cnx, causal_redundancy_controller_t *controller, window_source_symbol_id_t id) {
+    rbt_val val;
+    bool found = (uint64_t) rbt_get(cnx, &controller->source_symbols_to_slot, id, &val);
+    if (!found) {
+        PROTOOP_PRINTF(cnx, "ERROR: COULD NOT FIND SLOT FOD SYMBOL %u\n", id);
+        return 0;
+    }
+    uint64_t slot = (uint64_t) val;
+//        bool is_contained = is_elem_in_buffer(cnx, controller->nacked_slots, slot);
+    uint64_t is_contained = rbt_contains(cnx, &controller->nacked_slots->collection, slot);
+    return is_contained;
 }
 
 static __attribute__((always_inline)) uint32_t compute_md(picoquic_cnx_t *cnx, causal_redundancy_controller_t *controller, fec_window_t *current_window) {
@@ -625,7 +647,6 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, picoqui
         PROTOOP_PRINTF(cnx, "MEMORY ERROR\n");
         return;
     }
-    PROTOOP_PRINTF(cnx, "CURRENT WINDOW = [%u, %u[, N FEC IN FLIGHT = %lu\n", current_window->start, current_window->end, controller->n_fec_in_flight);
     // FIXME: wrap-around when the sampling period or bytes sent are too high
     controller->md = compute_md(cnx, controller, current_window);
     controller->ad = compute_ad(cnx, controller, current_window);
@@ -763,6 +784,7 @@ static __attribute__((always_inline)) void slot_nacked(picoquic_cnx_t *cnx, wind
     controller->n_received_feedbacks++;
     controller->n_lost_slots++;
     window_packet_metadata_t md;
+
     int err = history_get_sent_slot_metadata(controller->slots_history, slot, &md);
     if (err) {
         PROTOOP_PRINTF(cnx, "ERROR: NACKED A SLOT NEVER SENT !\n");

@@ -18,16 +18,22 @@ protoop_arg_t retransmit_needed(picoquic_cnx_t *cnx)
     int is_cleartext_mode = (int) get_cnx(cnx, AK_CNX_INPUT, 5);
     uint16_t header_length = (uint32_t) get_cnx(cnx, AK_CNX_INPUT, 6);
 
+    plugin_state_t *state = get_plugin_state(cnx);
+    if (!state) {
+        return PICOQUIC_ERROR_MEMORY;
+    }
 //    PROTOOP_PRINTF(cnx, "DISABLE RETRANS\n");
 
     uint16_t length = 0;
     int stop = false;
     char *reason = NULL;
 
-    uint64_t *vals_fec = my_malloc(cnx, 8*sizeof(uint64_t));
+//    uint64_t *vals_fec = my_malloc(cnx, 8*sizeof(uint64_t));
+    uint64_t *vals_fec = &state->temp_buffer[0];
     if (!vals_fec)
         return -1;
-    uint64_t *vals = my_malloc(cnx, 8*sizeof(uint64_t));
+//    uint64_t *vals = my_malloc(cnx, 8*sizeof(uint64_t));
+    uint64_t *vals = &state->temp_buffer[8];
     if (!vals)
         return -1;
 
@@ -328,8 +334,6 @@ protoop_arg_t retransmit_needed(picoquic_cnx_t *cnx)
             break;
         }
     }
-    my_free(cnx, vals);
-    my_free(cnx, vals_fec);
 
 
     set_cnx(cnx, AK_CNX_OUTPUT, 0, (protoop_arg_t) is_cleartext_mode);
