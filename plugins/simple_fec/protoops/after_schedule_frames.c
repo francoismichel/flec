@@ -90,7 +90,6 @@ protoop_arg_t schedule_frames_on_path(picoquic_cnx_t *cnx)
 //        reserve_repair_frames(cnx, state->framework_sender, DEFAULT_SLOT_SIZE, state->symbol_size, false, false, 0, 0);
 //        picoquic_frame_fair_reserve(cnx, path, NULL, get_path(path, AK_PATH_SEND_MTU, 0) - 35);
 //    }
-    PROTOOP_PRINTF(cnx, "AFTER SCHEDULE FRAMES, NOW = %lu\n", picoquic_current_time());
 
     return 0;
 }

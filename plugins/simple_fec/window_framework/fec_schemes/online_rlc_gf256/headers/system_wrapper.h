@@ -86,7 +86,6 @@ static __attribute__((always_inline)) int extend_wrapper_and_adjust_repair_symbo
             for (source_symbol_id_t id =  initial_id ; id <= current_id ; id++) {
                 if (!ring_based_source_symbols_buffer_contains(cnx, source_symbols, id)) {
                     // the symbol is missing
-                    PROTOOP_PRINTF(cnx, "ADD %u TO UNKNOWNS, CURRENT ID = %u\n", id, current_id);
                     arraylist_push(cnx, &wrapper->unknowns_ids, id);
                     arraylist_push(cnx, &wrapper->unknown_recovered, false);
                 }
@@ -101,15 +100,15 @@ static __attribute__((always_inline)) int extend_wrapper_and_adjust_repair_symbo
             return -1;
         }
     }
-    PROTOOP_PRINTF(cnx, "AFTER ADJUST LOOP\n");
+//    PROTOOP_PRINTF(cnx, "AFTER ADJUST LOOP\n");
     if (arraylist_size(&wrapper->unknowns_ids) == 0) {
         return 0;
     }
     if (first_wrapper_id_in_new_rs == -1) {
-        PROTOOP_PRINTF(cnx, "FIRT WRAPPER ID IS -1, FIRST IN UNKNOWNS = %u\n", arraylist_get_first(&wrapper->unknowns_ids));
+//        PROTOOP_PRINTF(cnx, "FIRT WRAPPER ID IS -1, FIRST IN UNKNOWNS = %u\n", arraylist_get_first(&wrapper->unknowns_ids));
         first_wrapper_id_in_new_rs = arraylist_index(&wrapper->unknowns_ids, arraylist_get_first(&wrapper->temp_arraylist));
     }
-    PROTOOP_PRINTF(cnx, "FIRST WRAPPER ID IN NEW RS = %d\n", first_wrapper_id_in_new_rs);
+//    PROTOOP_PRINTF(cnx, "FIRST WRAPPER ID IN NEW RS = %d\n", first_wrapper_id_in_new_rs);
     if (wrapper->system->first_id_id != SYMBOL_ID_NONE) {
         first_wrapper_id_in_new_rs += wrapper->system->first_id_id;
     }
@@ -117,7 +116,9 @@ static __attribute__((always_inline)) int extend_wrapper_and_adjust_repair_symbo
     int index_of_last_unknown = arraylist_index(&wrapper->unknowns_ids, arraylist_get_last(&wrapper->temp_arraylist));
     uint8_t *temp_coefs = my_malloc(cnx, rs->_coefs_allocated_size);
     my_memcpy(temp_coefs, rs->coefs, rs->_coefs_allocated_size);
+    PROTOOP_PRINTF(cnx, "MEMSET 0 %u BYTES at %p\n", rs->_coefs_allocated_size, (protoop_arg_t) rs->coefs);
     my_memset(rs->coefs, 0, rs->_coefs_allocated_size);
+    PROTOOP_PRINTF(cnx, "DONE MEMSET\n");
     // build the new ID with coefs concerning only the lost symbols
     for(int i = 0 ; i < arraylist_size(&wrapper->temp_arraylist) ; i++) {
         source_symbol_id_t current_id = arraylist_get(&wrapper->temp_arraylist, i);
@@ -126,9 +127,9 @@ static __attribute__((always_inline)) int extend_wrapper_and_adjust_repair_symbo
         rs->coefs[index_in_unknowns - index_of_first_unknown] = temp_coefs[current_id - rs->constant_term.metadata.first_id];
 //        rs->coefs[i] = rs->coefs[current_id - rs->constant_term.metadata.first_id];
 //        PROTOOP_PRINTF(cnx, "MAP %u TO %u\n", current_id, first_wrapper_id_in_new_rs + i);
-        PROTOOP_PRINTF(cnx, "CURRENT ID = %u, index in unknowns = %u, index of first_unknown = %u\n", current_id, index_in_unknowns, index_of_first_unknown);
-        PROTOOP_PRINTF(cnx, "SET rs->coefs[%u] = rs->coefs[%u] = %u\n", index_in_unknowns - index_of_first_unknown, current_id - rs->constant_term.metadata.first_id, rs->coefs[current_id - rs->constant_term.metadata.first_id]);
-        PROTOOP_PRINTF(cnx, "MAP %u TO %u\n", current_id, first_wrapper_id_in_new_rs + (index_in_unknowns - index_of_first_unknown));
+//        PROTOOP_PRINTF(cnx, "CURRENT ID = %u, index in unknowns = %u, index of first_unknown = %u\n", current_id, index_in_unknowns, index_of_first_unknown);
+//        PROTOOP_PRINTF(cnx, "SET rs->coefs[%u] = rs->coefs[%u] = %u\n", index_in_unknowns - index_of_first_unknown, current_id - rs->constant_term.metadata.first_id, rs->coefs[current_id - rs->constant_term.metadata.first_id]);
+//        PROTOOP_PRINTF(cnx, "MAP %u TO %u\n", current_id, first_wrapper_id_in_new_rs + (index_in_unknowns - index_of_first_unknown));
     }
     rs->constant_term.metadata.first_id = first_wrapper_id_in_new_rs;
     rs->pivot = first_wrapper_id_in_new_rs;
@@ -157,7 +158,7 @@ static __attribute__((always_inline)) int wrapper_receive_repair_symbol(picoquic
 //                    idx, rs->coefs[idx], ring_based_source_symbols_buffer_get(cnx, source_symbols, i)->id);
             rs->coefs[idx] = 0;
         } else {
-            PROTOOP_PRINTF(cnx, "%u UNKNOWN, COEF IS %u\n", i, rs->coefs[idx]);
+//            PROTOOP_PRINTF(cnx, "UNKNOWN %u\n", i);
             arraylist_push(cnx, &wrapper->temp_arraylist, i);
         }
     }
@@ -166,14 +167,13 @@ static __attribute__((always_inline)) int wrapper_receive_repair_symbol(picoquic
     equation_adjust_non_zero_bounds(rs);
     if (equation_has_one_id(rs)) {
         equation_multiply(rs, wrapper->inv_table[equation_get_coef(rs, rs->pivot)], wrapper->mul_table);
-        PROTOOP_PRINTF(cnx, "RS HAS ONE ID ! COEF = %u\n", wrapper->inv_table[equation_get_coef(rs, rs->pivot)]);
-        print_source_symbol_payload(cnx, rs->constant_term.repair_symbol.repair_payload, rs->constant_term.repair_symbol.payload_length);
+        PROTOOP_PRINTF(cnx, "RS HAS ONE ID FOR %u\n", rs->pivot);
     }
     if (arraylist_is_empty(&wrapper->temp_arraylist)) {
         PROTOOP_PRINTF(cnx, "ignore source symbol\n");
         return 0;
     }
-    PROTOOP_PRINTF(cnx, "BEFORE ADJUST RS\n");
+    PROTOOP_PRINTF(cnx, "BEFORE ADJUST RS, temp_arraylist_size = %d\n", arraylist_size(&wrapper->temp_arraylist));
     extend_wrapper_and_adjust_repair_symbol(cnx, wrapper, rs, source_symbols);
 //    PROTOOP_PRINTF(cnx, "rs[0, 1, 2, 3] = %u, %u, %u, %u, %u, %u, %u, %u, %u\n", rs->constant_term.repair_symbol.repair_payload[0], rs->constant_term.repair_symbol.repair_payload[1], rs->constant_term.repair_symbol.repair_payload[2],
 //                   rs->constant_term.repair_symbol.repair_payload[3], rs->constant_term.repair_symbol.repair_payload[4], rs->constant_term.repair_symbol.repair_payload[5], rs->constant_term.repair_symbol.repair_payload[6],
@@ -182,7 +182,6 @@ static __attribute__((always_inline)) int wrapper_receive_repair_symbol(picoquic
 
 
     int decoded = 0;
-    PROTOOP_PRINTF(cnx, "BEFORE WRAPPER ADD ELIM, RECOVERED IDS SIZE = %u\n", arraylist_size(&wrapper->recovered_ids_arraylist));
 
     system_add_with_elimination(cnx, wrapper->system, rs, wrapper->inv_table, wrapper->mul_table, &decoded, removed, used_in_system);
     if (decoded) {
@@ -194,16 +193,11 @@ static __attribute__((always_inline)) int wrapper_receive_repair_symbol(picoquic
                 if (!arraylist_get(&wrapper->unknown_recovered, i) && equation_has_one_id(eq)) {
                     arraylist_set(&wrapper->unknown_recovered, i, true);
                     assert(arraylist_get(&wrapper->unknowns_ids, i) != 0);
-                    PROTOOP_PRINTF(cnx, "PUSH %u TO RECOVERED\n", arraylist_get(&wrapper->unknowns_ids, i));
-                    PROTOOP_PRINTF(cnx, "BEFORE PUSH, RECOVERED IDS SIZE = %u\n", arraylist_size(&wrapper->recovered_ids_arraylist));
                     arraylist_push(cnx, &wrapper->recovered_ids_arraylist, arraylist_get(&wrapper->unknowns_ids, i));
-                    PROTOOP_PRINTF(cnx, "AFTER PUSH, RECOVERED IDS SIZE = %u\n", arraylist_size(&wrapper->recovered_ids_arraylist));
                 }
             }
         }
     }
-    PROTOOP_PRINTF(cnx, "AFTER WRAPPER ADD ELIM\n");
-    PROTOOP_PRINTF(cnx, "AFTER ADD ELEM, RECOVERED IDS SIZE = %u\n", arraylist_size(&wrapper->recovered_ids_arraylist));
     // TODO: update rs bounds to match to the wrapped idx
     return 0;
 }

@@ -20,7 +20,6 @@ protoop_arg_t check_for_available_slot(picoquic_cnx_t *cnx) {
         // there is a slot available
         // we have the guarantee that if we reserve a frame (sufficiently small), it will be put in the packet if we
         // are not rate-limited
-        PROTOOP_PRINTF(cnx, "CALL TO AVAILABLE SLOT\n");
         fec_available_slot(cnx, path, reason);
     }
     // no slot available

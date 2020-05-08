@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include "../fec.h"
 #include "types.h"
+#include "fec_schemes/online_rlc_gf256/headers/arraylist.h"
 #include <red_black_tree.h>
 
 #define MAX_QUEUED_REPAIR_SYMBOLS 6
@@ -326,7 +327,7 @@ static __attribute__((always_inline)) size_t predict_window_repair_frame_length(
     return REPAIR_FRAME_HEADER_SIZE + rf->n_repair_symbols*symbol_size;
 }
 
-static __attribute__((always_inline)) int get_repair_symbols_from_queue(picoquic_cnx_t *cnx, window_fec_framework_t *wff, uint16_t symbol_size, repair_symbol_t **symbols, size_t bytes_max,
+static __attribute__((always_inline)) int get_repair_symbols_from_queue(picoquic_cnx_t *cnx, window_fec_framework_t *wff, uint16_t symbol_size, arraylist_t *ret_symbols, size_t bytes_max,
         uint8_t symbols_max, size_t *consumed, uint8_t *added_symbols, uint16_t *n_protected_symbols, window_source_symbol_id_t *first_protected_symbol,
         window_fec_scheme_specific_t *fss, bool *contains_fb_fec){
     PROTOOP_PRINTF(cnx, "GET RS !\n");
@@ -355,7 +356,7 @@ static __attribute__((always_inline)) int get_repair_symbols_from_queue(picoquic
         }
 
         *contains_fb_fec |= rs->is_fb_fec;
-        symbols[*added_symbols] = rs;
+        arraylist_push(cnx, ret_symbols, (uintmax_t) rs);
         *added_symbols += 1;
         *consumed += symbol_size;
         dequeue_repair_symbol(cnx, wff, &current_protected_symbols, &current_first_protected, &tmp, false);
@@ -365,22 +366,35 @@ static __attribute__((always_inline)) int get_repair_symbols_from_queue(picoquic
 
 static __attribute__((always_inline)) int get_repair_frame_to_send(picoquic_cnx_t *cnx, window_fec_framework_t *wff, uint16_t symbol_size, size_t bytes_max,
                                                                     size_t *predicted_size, window_repair_frame_t *rf) {
+    arraylist_t enqueued_symbols;
+    arraylist_init(cnx, &enqueued_symbols, 5);
+
     uint8_t symbols_max = 100;
     uint8_t added_symbols = 0;
-    repair_symbol_t **symbols = my_malloc(cnx, symbols_max*sizeof(repair_symbol_t *));
-    if (!symbols)
-        return PICOQUIC_ERROR_MEMORY;
+//    repair_symbol_t **symbols = my_malloc(cnx, symbols_max*sizeof(repair_symbol_t *));
+//    if (!symbols)
+//        return PICOQUIC_ERROR_MEMORY;
     my_memset(rf, 0, sizeof(window_repair_frame_t));
-    rf->symbols = symbols;
-    my_memset(rf->symbols, 0, symbols_max*sizeof(repair_symbol_t *));
-    int err = get_repair_symbols_from_queue(cnx, wff, symbol_size, rf->symbols, bytes_max, symbols_max, predicted_size, &added_symbols,
+//    rf->symbols = symbols;
+//    my_memset(rf->symbols, 0, symbols_max*sizeof(repair_symbol_t *));
+    int err = get_repair_symbols_from_queue(cnx, wff, symbol_size, &enqueued_symbols, bytes_max, symbols_max, predicted_size, &added_symbols,
             &rf->n_protected_symbols, &rf->first_protected_symbol, &rf->fss, &rf->is_fb_fec);
     PROTOOP_PRINTF(cnx, "GOT THE RS\n");
     if (err) {
-        my_free(cnx, symbols);
+        arraylist_destroy(cnx, &enqueued_symbols);
         return err;
     }
-    rf->n_repair_symbols = added_symbols;
+    rf->n_repair_symbols = arraylist_size(&enqueued_symbols);
+    rf->symbols = my_malloc(cnx, rf->n_repair_symbols*sizeof(repair_symbol_t *));
+    if (!rf->symbols) {
+        arraylist_destroy(cnx, &enqueued_symbols);
+        return PICOQUIC_ERROR_MEMORY;
+    }
+    my_memset(rf->symbols, 0, rf->n_repair_symbols*sizeof(repair_symbol_t *));
+    for (int i = 0 ; i < rf->n_repair_symbols ; i++) {
+        rf->symbols[i] = (repair_symbol_t *) arraylist_get(&enqueued_symbols, i);
+    }
+    arraylist_destroy(cnx, &enqueued_symbols);
     PROTOOP_PRINTF(cnx, "BEFORE CALL TO PREDICT\n");
     run_noparam(cnx, "window_predict_repair_frame_length", 1, (protoop_arg_t  *) &rf, (protoop_arg_t *) predicted_size);
 //    *predicted_size = predict_window_repair_frame_length(cnx, wff, rf, symbol_size);
@@ -497,7 +511,6 @@ static __attribute__((always_inline)) bool _remove_source_symbol_from_window(pic
 static __attribute__((always_inline)) int remove_source_symbol_id_from_window(picoquic_cnx_t *cnx, window_fec_framework_t *wff, window_source_symbol_id_t id) {
     uint32_t idx = id % MAX_SENDING_WINDOW_SIZE;
     if (wff->fec_window[idx].id == id && wff->fec_window[idx].symbol) {
-        PROTOOP_PRINTF(cnx, "TRY TO REMOVE SYMBOL %lu FROM WINDOW, SMALLEST %lu\n", id, wff->smallest_in_transit);
         if (rbt_contains(cnx, wff->deadlines_from_symbols, id)) {
             rbt_val val;
             bool found = (symbol_deadline_t) rbt_get(cnx, wff->deadlines_from_symbols, id, &val);

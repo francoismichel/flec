@@ -15,10 +15,12 @@ protoop_arg_t pre_packet_has_been_received(picoquic_cnx_t *cnx) {
 //    uint64_t slot = get_cnx(cnx, AK_CNX_INPUT, 1);
     bool fec_protected = get_cnx(cnx, AK_CNX_INPUT, 4);
     if (fec_protected) {
-        uint64_t send_time = get_cnx(cnx, AK_CNX_INPUT, 6);
-        PROTOOP_PRINTF(cnx, "EVENT::{\"time\": %ld, \"type\": \"packet_received_by_peer\", \"pn\": %ld, \"elapsed\": %ld}\n", picoquic_current_time(), received_packet_number, picoquic_current_time() - send_time);
+        if (DEBUG_EVENT) {
+            uint64_t send_time = get_cnx(cnx, AK_CNX_INPUT, 6);
+            PROTOOP_PRINTF(cnx, "EVENT::{\"time\": %ld, \"type\": \"packet_received_by_peer\", \"pn\": %ld, \"elapsed\": %ld}\n", picoquic_current_time(), received_packet_number, picoquic_current_time() - send_time);
 
-        PROTOOP_PRINTF(cnx, "[[PACKET %lx RECEIVED IN %lu]]\n", received_packet_number, picoquic_current_time() - send_time);
+            PROTOOP_PRINTF(cnx, "[[PACKET %lx RECEIVED IN %lu]]\n", received_packet_number, picoquic_current_time() - send_time);
+        }
     }
     int err = 0;
     if ((err = fec_check_for_available_slot(cnx, available_slot_reason_ack)) != 0)

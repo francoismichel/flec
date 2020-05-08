@@ -37,7 +37,6 @@ protoop_arg_t recovver_lost_symbols(picoquic_cnx_t *cnx) {
     }
     // now, empty the arraylist
     arraylist_reset(&wrapper->recovered_ids_arraylist);
-    PROTOOP_PRINTF(cnx, "RECOVERED IDS SIZE AFTER = %u\n", arraylist_size(&wrapper->recovered_ids_arraylist));
 
 
     set_cnx(cnx, AK_CNX_OUTPUT, 0, recovered);

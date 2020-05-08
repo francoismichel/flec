@@ -143,10 +143,12 @@ static __attribute__((always_inline)) int fec_what_to_send(picoquic_cnx_t *cnx, 
 }
 
 
-static __attribute__((always_inline)) int fec_cancelled_packet(picoquic_cnx_t *cnx, what_to_send_t wts) {
-    protoop_arg_t args[1];
+static __attribute__((always_inline)) int fec_cancelled_packet(picoquic_cnx_t *cnx, what_to_send_t wts, source_symbol_id_t first_id, uint64_t n_symbols_to_protect) {
+    protoop_arg_t args[3];
     args[0] = (protoop_arg_t) wts;
-    int err = (what_to_send_t) run_noparam(cnx, FEC_PROTOOP_CANCELLED_PACKET, 1, args, NULL);
+    args[1] = (protoop_arg_t) first_id;
+    args[2] = (protoop_arg_t) n_symbols_to_protect;
+    int err = (what_to_send_t) run_noparam(cnx, FEC_PROTOOP_CANCELLED_PACKET, 3, args, NULL);
     return err;
 }
 

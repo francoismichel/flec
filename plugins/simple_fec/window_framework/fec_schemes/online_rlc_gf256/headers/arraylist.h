@@ -25,6 +25,11 @@ static __attribute__((always_inline)) int arraylist_init(picoquic_cnx_t *cnx, ar
     arraylist->array = malloc_fn(cnx, initial_size * sizeof(uintmax_t));
     return 0;
 }
+
+static __attribute__((always_inline)) int arraylist_destroy(picoquic_cnx_t *cnx, arraylist_t *arraylist) {
+    free_fn(cnx, arraylist->array);
+    return 0;
+}
 static __attribute__((always_inline)) int arraylist_reset(arraylist_t *arraylist) {
     arraylist->current_size = 0;
     return 0;

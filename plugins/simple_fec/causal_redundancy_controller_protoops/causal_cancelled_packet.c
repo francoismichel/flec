@@ -13,6 +13,8 @@ protoop_arg_t causal_cancelled_packet(picoquic_cnx_t *cnx) {
     if (!state)
         return PICOQUIC_ERROR_MEMORY;
     causal_packet_type_t ptype = (causal_packet_type_t) get_cnx(cnx, AK_CNX_INPUT, 0);
-    cancelled_packet(cnx, ((window_fec_framework_t *) state->framework_sender)->controller, ptype);
+    source_symbol_id_t first_id = (source_symbol_id_t) get_cnx(cnx, AK_CNX_INPUT, 1);
+    uint16_t n_symbols_to_protect = (uint16_t) get_cnx(cnx, AK_CNX_INPUT, 2);
+    cancelled_packet(cnx, ((window_fec_framework_t *) state->framework_sender)->controller, ptype, first_id, n_symbols_to_protect);
     return 0;
 }

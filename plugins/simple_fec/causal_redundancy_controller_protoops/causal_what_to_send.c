@@ -31,7 +31,7 @@ protoop_arg_t causal_what_to_send(picoquic_cnx_t *cnx) {
     if (window_size(&window) > 0) {
         run_algo(cnx, path, (causal_redundancy_controller_t *) wff->controller, reason, &window);
     }
-    window_source_symbol_id_t first_id_to_protect;
+    window_source_symbol_id_t first_id_to_protect = 0;
     uint16_t number_of_symbols_to_protect;
     causal_packet_type_t ptype = what_to_send(cnx, wff->controller, &first_id_to_protect, &number_of_symbols_to_protect, &window);
     number_of_symbols_to_protect = MIN(number_of_symbols_to_protect, window_size(&window));

@@ -379,7 +379,6 @@ static __attribute__((always_inline)) int try_to_recover(picoquic_cnx_t *cnx, wi
             PROTOOP_PRINTF(cnx, "BEFORE REASSEMBLE %u\n", ss->id);
             if (reassemble_packet_from_recovered_symbol(cnx, wff, wff->packet_sized_buffer, PICOQUIC_MAX_PACKET_SIZE, wff->received_source_symbols, ss, &packet_size, &packet_number, &first_id_in_packet)) {
                 PROTOOP_PRINTF(cnx, "REASSEMBLED SIZE = %lu, CRC OF SYMBOL = 0x%x\n", packet_size, crc32(0, ss->source_symbol._whole_data, symbol_size));
-                print_source_symbol(cnx, ss);
                 // TODO: maybe process the packets at another moment ??
                 // FIXME: we assume here a single-path context
 

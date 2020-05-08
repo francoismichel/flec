@@ -29,7 +29,7 @@ protoop_arg_t bulk_causal_ew(picoquic_cnx_t *cnx) {
     int n_unprotected = current_window->end - addon->last_packet_since_ew;
     bool fc_blocked = !fec_has_protected_data_to_send(cnx);
     PROTOOP_PRINTF(cnx, "UNIFORM LOSS RATE TIMES RGRANULARITY = %lu, WINDOW SIZE = %lu\n", uniform_loss_rate_times_granularity, window_size(current_window));
-    PROTOOP_PRINTF(cnx, "CANCEL IF FC FLOCKED (%d) AND %lu >= %lu AND %lu >= %lu\n", fc_blocked, addon->n_ew_for_last_packet, addon->max_trigger, controller->n_fec_in_flight, 2*MAX(1, uniform_loss_rate_times_granularity*window_size(current_window)/granularity));
+    PROTOOP_PRINTF(cnx, "1/r = %lu, max_trigger = %lu\n", granularity/MAX(1, gemodel_r_times_granularity), addon->max_trigger);
     if ((fc_blocked && (n_unprotected == 0 && addon->n_ew_for_last_packet >= addon->max_trigger && controller->n_fec_in_flight >= 2*MAX(1, uniform_loss_rate_times_granularity*window_size(current_window)/granularity))) || (!fc_blocked && controller->n_fec_in_flight >= 2*MAX(1, uniform_loss_rate_times_granularity*window_size(current_window)/granularity))) {
         return false;
     }
@@ -47,7 +47,6 @@ protoop_arg_t bulk_causal_ew(picoquic_cnx_t *cnx) {
 
     bool should_send_fec = enough_packets_sent;// && controller->n_fec_in_flight < MIN(max_allowed_fec_in_flight, n_symbols_likely_to_be_lost);
 
-    PROTOOP_PRINTF(cnx, "BEFORE IF\n");
 
     if (should_send_fec) {
 //        addon->last_ew_triggered_microsec = current_time;
@@ -55,9 +54,6 @@ protoop_arg_t bulk_causal_ew(picoquic_cnx_t *cnx) {
     }
 
     bool protect = fc_blocked || should_send_fec;
-    PROTOOP_PRINTF(cnx, "CURRENT N ELAPSED = %lu, WAITS FOR %lu\n", n_unprotected, MIN(window_size(current_window), granularity/(MAX(1, gemodel_p_times_granularity))));
-    PROTOOP_PRINTF(cnx, "LAST PACKET SINCE EW = %lu, CURRENT END = %lu\n", addon->last_packet_since_ew, current_window->end);
-    PROTOOP_PRINTF(cnx, "N EW FOR LAST PACKET = %lu, MAX %lu, N UNPROTECTED %lu\n", addon->n_ew_for_last_packet, addon->max_trigger, n_unprotected /*MIN(max_allowed_fec_in_flight, n_symbols_likely_to_be_lost)*/);
     if (protect && n_unprotected == 0) {
 
 //        if (fc_blocked || MIN(addon->n_ew_for_last_packet, controller->n_fec_in_flight) < n_symbols_likely_to_be_lost/*MIN(max_allowed_fec_in_flight, n_symbols_likely_to_be_lost)*/) {
@@ -73,7 +69,6 @@ protoop_arg_t bulk_causal_ew(picoquic_cnx_t *cnx) {
         addon->max_trigger = 1+MAX((gemodel_r_times_granularity == GRANULARITY) ? 0 : (granularity/MAX(1, gemodel_r_times_granularity)), n_unprotected*uniform_loss_rate_times_granularity/GRANULARITY);//MIN(addon_state->n_ew_for_last_packet, controller->n_fec_in_flight) <= max_fec_threshold;
         addon->last_packet_since_ew = current_window->end;
     }
-    PROTOOP_PRINTF(cnx, "RETURN PROTECT = %d\n", protect);
     // we send FEC to cover the number of lost packets i) given the uniform loss rate ii) given the expected Gilbert Model burst size
 //    return (!fec_has_protected_data_to_send(cnx) && controller->n_fec_in_flight < MIN(max_allowed_fec_in_flight, n_symbols_likely_to_be_lost)) || should_send_fec;
     return protect;

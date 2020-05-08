@@ -108,11 +108,8 @@ static __attribute__((always_inline)) window_source_symbol_t *tree_based_source_
 static __attribute__((always_inline)) void ring_based_source_symbols_buffer_remove_and_free_first(picoquic_cnx_t *cnx, ring_based_received_source_symbols_buffer_t *buffer) {
     if (buffer->current_size > 0) {
         window_source_symbol_t *old_ss = buffer->array[buffer->first_index];
-        PROTOOP_PRINTF(cnx, "REMOVE INDEX %u = %p, array[802] = %p \n", buffer->first_index, (protoop_arg_t) old_ss, (protoop_arg_t) buffer->array[802]);
         if (old_ss) {
-            PROTOOP_PRINTF(cnx, "BEFORE DELETE\n");
             delete_window_source_symbol(cnx, old_ss);
-            PROTOOP_PRINTF(cnx, "AFTER DELETE\n");
         }
         buffer->array[buffer->first_index] = NULL;
         buffer->first_id++;
@@ -188,8 +185,8 @@ static __attribute__((always_inline)) void _ring_based_source_symbols_buffer_rem
 
 static __attribute__((always_inline)) int ring_based_source_symbols_buffer_add_source_symbol(picoquic_cnx_t *cnx, ring_based_received_source_symbols_buffer_t *buffer, window_source_symbol_t *ss) {
 
-    PROTOOP_PRINTF(cnx, "ADD SYMBOL %u, CURRENT SIZE = %u, MAX SIZE = %u, FIRST ID = %u, LAST ID %u, FIRST INDEX = %u\n", ss->id, buffer->current_size,
-            buffer->max_size, buffer->first_id, ring_based_source_symbols_buffer_get_last_source_symbol_id(cnx, buffer), buffer->first_index);
+//    PROTOOP_PRINTF(cnx, "ADD SYMBOL %u, CURRENT SIZE = %u, MAX SIZE = %u, FIRST ID = %u, LAST ID %u, FIRST INDEX = %u\n", ss->id, buffer->current_size,
+//            buffer->max_size, buffer->first_id, ring_based_source_symbols_buffer_get_last_source_symbol_id(cnx, buffer), buffer->first_index);
     if (buffer->current_size > 0 && ss->id > ring_based_source_symbols_buffer_get_last_source_symbol_id(cnx, buffer)) {
         uint32_t added_symbols = ss->id - ring_based_source_symbols_buffer_get_last_source_symbol_id(cnx, buffer);
         if (added_symbols > buffer->max_size) {
@@ -203,16 +200,12 @@ static __attribute__((always_inline)) int ring_based_source_symbols_buffer_add_s
             return 0;
         }
         while (buffer->current_size + added_symbols > buffer->max_size) {
-            PROTOOP_PRINTF(cnx, "REMOVE FIRST\n");
             ring_based_source_symbols_buffer_remove_and_free_first(cnx, buffer);
-            PROTOOP_PRINTF(cnx, "AFTER REMOVE FIRST, array[802] = %p\n", (protoop_arg_t) buffer->array[802]);
         }
         for (window_source_symbol_id_t id = 1 + ring_based_source_symbols_buffer_get_last_source_symbol_id(cnx, buffer) ; id < ss->id ; id++) {
             _ring_based_source_symbols_buffer_remove_and_free(cnx, buffer, (id - buffer->first_id + buffer->first_index) % buffer->max_size);
         }
-        PROTOOP_PRINTF(cnx, "AFTER LOOP AND BEFORE SET, array[802] = %p\n", (protoop_arg_t) buffer->array[802]);
         buffer->array[(ss->id - buffer->first_id + buffer->first_index) % buffer->max_size] = ss;
-        PROTOOP_PRINTF(cnx, "PUT %u AT INDEX %u (FIRST INDEX = %u), array[802] = %p\n", ss->id, (ss->id - buffer->first_id + buffer->first_index) % buffer->max_size, buffer->first_index, (protoop_arg_t) buffer->array[802]);
         buffer->current_size += (ss->id - ring_based_source_symbols_buffer_get_last_source_symbol_id(cnx, buffer));
         return 0;
     }
@@ -238,7 +231,6 @@ static __attribute__((always_inline)) int ring_based_source_symbols_buffer_add_s
     if (buffer->array[idx] != NULL) {
         PROTOOP_PRINTF(cnx, "ERROR: OVERWRITING ALREADY PRESENT SOURCE SYMBOM IN BUFFER\n");
     }
-    PROTOOP_PRINTF(cnx, "PUT SYMBOL %p AT ID %d\n", (protoop_arg_t) ss, idx);
     buffer->array[idx] = ss;
     return 0;
 }
@@ -287,7 +279,6 @@ static __attribute__((always_inline)) void release_repair_symbols_buffer(picoqui
 static __attribute__((always_inline)) repair_symbol_t *add_repair_symbol(picoquic_cnx_t *cnx, received_repair_symbols_buffer_t *buffer, window_repair_symbol_t *rs) {
     // FIXME: do a simple ring buffer (is it still needed ?)
     // we order it by the last protected symbol
-    PROTOOP_PRINTF(cnx, "ADD SYMBOL WITH KEY %u\n", decode_u32(rs->metadata.fss.val));
 //    return pq_insert_and_pop_min_if_full(buffer->pq, rs->metadata.first_id + rs->metadata.n_protected_symbols - 1, rs);
     return pq_insert_and_pop_min_if_full(buffer->pq, decode_u32(rs->metadata.fss.val), rs);
 }

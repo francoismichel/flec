@@ -376,7 +376,7 @@ protoop_arg_t fec_recover(picoquic_cnx_t *cnx)
     uint8_t **constant_terms = my_malloc(cnx, n_eq*sizeof(uint8_t *));
     bool *undetermined = my_malloc(cnx, n_missing_source_symbols*sizeof(bool));
 
-    uint64_t now = picoquic_current_time();
+//    uint64_t now = picoquic_current_time();
 
     if (!coefs || !unknowns || !system_coefs || !undetermined) {
         PROTOOP_PRINTF(cnx, "NOT ENOUGH MEM\n");
@@ -531,6 +531,6 @@ protoop_arg_t fec_recover(picoquic_cnx_t *cnx)
     if (new_missing_source_symbols)
         my_free(cnx, new_missing_source_symbols);
 
-    PROTOOP_PRINTF(cnx, "END RECOVER: ELAPSED %luµs\n", picoquic_current_time() - now);
+//    PROTOOP_PRINTF(cnx, "END RECOVER: ELAPSED %luµs\n", picoquic_current_time() - now);
     return err;
 }

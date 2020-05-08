@@ -45,7 +45,6 @@ protoop_arg_t message_causal_ew(picoquic_cnx_t *cnx) {
     }
 
     uint64_t next_message_time_to_wait_microsec = 0;
-    PROTOOP_PRINTF(cnx, "BEFORE IF\n");
     if (wff->next_message_timestamp_microsec != UNDEFINED_SYMBOL_DEADLINE) {
         next_message_time_to_wait_microsec = (wff->next_message_timestamp_microsec <= current_time) ? 0 : (wff->next_message_timestamp_microsec - current_time);
     }
