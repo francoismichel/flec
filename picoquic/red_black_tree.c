@@ -702,8 +702,20 @@ rbt_node_t *rbt_node_ceiling(picoquic_cnx_t *cnx, rbt_node_t *node, rbt_key key,
 
     int cmp = key_compare(key, node->key);
     if (cmp == 0) {
+        if (out_key) {
+            *out_key = node->key;
+        }
+        if (out_val) {
+            *out_val = node->val;
+        }
         return node;
     } else if (cmp > 0) {
+        if (out_key) {
+            *out_key = node->key;
+        }
+        if (out_val) {
+            *out_val = node->val;
+        }
         return rbt_node_ceiling(cnx, node->right, key, out_key, out_val);
     }
     rbt_node_t *t = rbt_node_ceiling(cnx, node->left, key, out_key, out_val);
@@ -753,7 +765,8 @@ uint64_t rbt_ceiling_key(picoquic_cnx_t *cnx, red_black_tree_t *tree, rbt_key ke
     }
     if (rbt_is_empty(cnx, tree))
         return false;
-    return rbt_node_ceiling(cnx, tree->root, key, out_key, NULL);
+    rbt_node_t *n = rbt_node_ceiling(cnx, tree->root, key, out_key, NULL);
+    return n != NULL;
 }
 /**
      * @pre: the tree must not be empty
