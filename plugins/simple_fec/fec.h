@@ -148,7 +148,7 @@ static __attribute__((always_inline)) source_symbol_t *create_larger_source_symb
     if (!ret)
         return NULL;
     my_memset(ret, 0, mem_size);
-    ret->_whole_data = my_malloc(cnx, MAX(MALLOC_SIZE_FOR_FRAGMENTATION, chunk_size + 1));
+    ret->_whole_data = my_malloc(cnx, align(MAX(MALLOC_SIZE_FOR_FRAGMENTATION, chunk_size + 1)));
     if (!ret->_whole_data){
         my_free(cnx, ret);
         return NULL;
@@ -312,7 +312,7 @@ static __attribute__((always_inline)) int maybe_notify_recovered_packets_to_ever
             source_symbol_id_t first_id = get_pkt_metadata(cnx, current_packet, FEC_PKT_METADATA_FIRST_SOURCE_SYMBOL_ID);
             uint64_t n_source_symbols = get_pkt_metadata(cnx, current_packet, FEC_PKT_METADATA_NUMBER_OF_SOURCE_SYMBOLS);
             uint64_t send_time = get_pkt(current_packet, AK_PKT_SEND_TIME);
-            fec_packet_symbols_have_been_received(cnx, current_pn64, slot, first_id, n_source_symbols, true, false, send_time);
+            fec_packet_symbols_have_been_received(cnx, current_pn64, slot, first_id, n_source_symbols, true, false, send_time, current_time);
             helper_dequeue_retransmit_packet(cnx, current_packet, 1);
             if (current_time >= retrans_cc_notification_timer && !packet_is_pure_ack) {    // do as in core: if is pure_ack or recently notified, do not notify cc
                 set_pkt_ctx(pkt_ctx, AK_PKTCTX_LATEST_RETRANSMIT_CC_NOTIFICATION_TIME, current_time);
@@ -335,7 +335,7 @@ static __attribute__((always_inline)) int maybe_notify_recovered_packets_to_ever
             // announce the reception of the source symbols
             bool present = dequeue_lost_packet(cnx, &state->lost_packets, pn64, &slot, &first_id, &n_source_symbols, &send_time);
             if (present) {
-                fec_packet_symbols_have_been_received(cnx, pn64, slot, first_id, n_source_symbols, true, false, send_time);
+                fec_packet_symbols_have_been_received(cnx, pn64, slot, first_id, n_source_symbols, true, false, send_time, current_time);
             } else {
                 // this is not normal
                 PROTOOP_PRINTF(cnx, "ERROR: THE FRECOVERED PACKET %lx (%lu) IS NEITHER IN THE RETRANSMIT QUEUE, NEITHER IN THE LOST PACKETS\n", pn64, pn64);

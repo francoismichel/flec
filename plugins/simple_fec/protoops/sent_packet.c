@@ -6,8 +6,9 @@
 
 protoop_arg_t sent_packet(picoquic_cnx_t *cnx) {
     bool fec_protected = (bool) get_cnx(cnx, AK_CNX_INPUT, 1);
-    bool contains_repair_frame = (bool) get_cnx(cnx, AK_CNX_INPUT, 2);
-    bool is_fb_fec = (bool) get_cnx(cnx, AK_CNX_INPUT, 3);
+    // input[2] = current_time
+    bool contains_repair_frame = (bool) get_cnx(cnx, AK_CNX_INPUT, 3);
+    bool is_fb_fec = (bool) get_cnx(cnx, AK_CNX_INPUT, 4);
     plugin_state_t *state = get_plugin_state(cnx);
     if (!state)
         return -1;

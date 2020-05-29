@@ -28,7 +28,6 @@ typedef enum picoquic_stream_flags {
  */
 protoop_arg_t cancel_expired_unreliable_messages(picoquic_cnx_t *cnx)
 {
-    uint64_t current_time = picoquic_current_time();
 
     plugin_state_t *state = get_plugin_state(cnx);
     if (!state)
@@ -41,6 +40,7 @@ protoop_arg_t cancel_expired_unreliable_messages(picoquic_cnx_t *cnx)
     if (rbt_is_empty(cnx, framework->unreliable_messages_from_deadlines))
         return 0;
 
+    uint64_t current_time = picoquic_current_time();
     while(rbt_min(cnx, framework->unreliable_messages_from_deadlines, &min_key, &min_val) && min_key < current_time) {   // while the tree is not empty and there are expired messages
         unreliable_message_metadata_t *md = (unreliable_message_metadata_t *) min_val;
         // TODO: remove the repetitive call to find_stream, it is awful in terms of performance

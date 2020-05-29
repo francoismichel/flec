@@ -721,7 +721,7 @@ static __attribute__((always_inline)) void cancelled_packet(picoquic_cnx_t *cnx,
     }
 }
 
-static __attribute__((always_inline)) void sent_packet(picoquic_cnx_t *cnx, picoquic_path_t *path, window_redundancy_controller_t c, causal_packet_type_t type, uint64_t slot, window_packet_metadata_t md, fec_window_t *current_window) {
+static __attribute__((always_inline)) void sent_packet(picoquic_cnx_t *cnx, uint64_t current_time, picoquic_path_t *path, window_redundancy_controller_t c, causal_packet_type_t type, uint64_t slot, window_packet_metadata_t md, fec_window_t *current_window) {
     causal_redundancy_controller_t *controller = (causal_redundancy_controller_t *) c;
     add_elem_to_history(controller->slots_history, slot, md);
     controller->last_sent_slot = slot;
@@ -741,16 +741,15 @@ static __attribute__((always_inline)) void sent_packet(picoquic_cnx_t *cnx, pico
         controller->cached_ad++;
         if (window_intersects(&window, current_window)) {
             add_elem_to_buffer(cnx, controller->ad_slots, slot);
-            PROTOOP_PRINTF(cnx, "AD %lu TO AD\n", slot);
+            PROTOOP_PRINTF(cnx, "ADD %lu TO AD\n", slot);
         }
     }
 
-    uint64_t now = picoquic_current_time();
-    if (now - controller->last_bandwidth_check_timestamp_microsec > get_path(path, AK_PATH_SMOOTHED_RTT, 0)) {
-        controller->last_bytes_sent_sampling_period_microsec = now - controller->last_bandwidth_check_timestamp_microsec;
+    if (current_time - controller->last_bandwidth_check_timestamp_microsec > get_path(path, AK_PATH_SMOOTHED_RTT, 0)) {
+        controller->last_bytes_sent_sampling_period_microsec = current_time - controller->last_bandwidth_check_timestamp_microsec;
         controller->last_bytes_sent_sample = controller->n_bytes_sent_since_last_bandwidth_check;
         controller->n_bytes_sent_since_last_bandwidth_check = 0;
-        controller->last_bandwidth_check_timestamp_microsec = now;
+        controller->last_bandwidth_check_timestamp_microsec = current_time;
     }
 
     controller->n_bytes_sent_since_last_bandwidth_check += n_bytes_sent;
@@ -774,7 +773,7 @@ static __attribute__((always_inline)) void sent_packet(picoquic_cnx_t *cnx, pico
 #define SECOND_IN_MICROSEC 1000000
 
 // either acked or recovered
-static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, picoquic_path_t *path, causal_redundancy_controller_t *controller, available_slot_reason_t feedback, fec_window_t *current_window) {
+static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, picoquic_path_t *path, uint64_t current_time, causal_redundancy_controller_t *controller, available_slot_reason_t feedback, fec_window_t *current_window) {
 
     plugin_state_t *state = get_plugin_state(cnx);
     if (!state) {
@@ -806,8 +805,6 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, picoqui
             controller->n_fec_in_flight++;
             controller->ad++;
         } else {
-
-            uint64_t current_time = picoquic_current_time();
 
             switch (controller->last_feedback) {
                 case available_slot_reason_none:

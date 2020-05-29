@@ -129,13 +129,14 @@ static __attribute__((always_inline)) int reserve_repair_frames(picoquic_cnx_t *
 }
 
 
-static __attribute__((always_inline)) int fec_what_to_send(picoquic_cnx_t *cnx, picoquic_path_t *path, available_slot_reason_t reason, what_to_send_t *wts, source_symbol_id_t *first_id_to_protect, uint16_t *n_symbols_to_protect) {
-    protoop_arg_t args[2];
+static __attribute__((always_inline)) int fec_what_to_send(picoquic_cnx_t *cnx, picoquic_path_t *path, uint64_t current_time, available_slot_reason_t reason, what_to_send_t *wts, source_symbol_id_t *first_id_to_protect, uint16_t *n_symbols_to_protect) {
+    protoop_arg_t args[3];
     args[0] = (protoop_arg_t) reason;
     args[1] = (protoop_arg_t) path;
+    args[2] = (protoop_arg_t) current_time;
     protoop_arg_t out[3];
 
-    int err = (what_to_send_t) run_noparam(cnx, FEC_PROTOOP_WHAT_TO_SEND, 2, args, out);
+    int err = (what_to_send_t) run_noparam(cnx, FEC_PROTOOP_WHAT_TO_SEND, 3, args, out);
     *wts = out[0];
     *first_id_to_protect = out[1];
     *n_symbols_to_protect = out[2];
@@ -153,18 +154,20 @@ static __attribute__((always_inline)) int fec_cancelled_packet(picoquic_cnx_t *c
 }
 
 
-static __attribute__((always_inline)) what_to_send_t fec_available_slot(picoquic_cnx_t *cnx, picoquic_path_t *path, available_slot_reason_t reason) {
-    protoop_arg_t args[2];
+static __attribute__((always_inline)) what_to_send_t fec_available_slot(picoquic_cnx_t *cnx, picoquic_path_t *path, available_slot_reason_t reason, uint64_t current_time) {
+    protoop_arg_t args[3];
     args[0] = (protoop_arg_t) path;
     args[1] = (protoop_arg_t) reason;
-    return (int) run_noparam(cnx, FEC_PROTOOP_AVAILABLE_SLOT, 2, args, NULL);
+    args[2] = (protoop_arg_t) current_time;
+    return (int) run_noparam(cnx, FEC_PROTOOP_AVAILABLE_SLOT, 3, args, NULL);
 }
 
 
-static __attribute__((always_inline)) what_to_send_t fec_check_for_available_slot(picoquic_cnx_t *cnx, available_slot_reason_t reason) {
-    protoop_arg_t args[1];
+static __attribute__((always_inline)) what_to_send_t fec_check_for_available_slot(picoquic_cnx_t *cnx, available_slot_reason_t reason, uint64_t current_time) {
+    protoop_arg_t args[2];
     args[0] = (protoop_arg_t) reason;
-    return (int) run_noparam(cnx, FEC_PROTOOP_CHECK_FOR_AVAILABLE_SLOT, 1, args, NULL);
+    args[1] = (protoop_arg_t) current_time;
+    return (int) run_noparam(cnx, FEC_PROTOOP_CHECK_FOR_AVAILABLE_SLOT, 2, args, NULL);
 }
 
 // not specific to FEC
@@ -197,6 +200,7 @@ static __attribute__((always_inline)) int packet_has_been_lost(picoquic_cnx_t *c
 
 
 static __attribute__((always_inline)) int fec_packet_has_been_lost(picoquic_cnx_t *cnx,
+                                                                              uint64_t current_time,
                                                                               uint64_t packet_number,
                                                                               uint64_t packet_slot,
                                                                               source_symbol_id_t id,
@@ -204,7 +208,7 @@ static __attribute__((always_inline)) int fec_packet_has_been_lost(picoquic_cnx_
                                                                               bool fec_protected,
                                                                               bool contains_repair_Frame,
                                                                               uint64_t send_time) {
-    protoop_arg_t args[7];
+    protoop_arg_t args[8];
     args[0] = (protoop_arg_t) packet_number;
     args[1] = (protoop_arg_t) packet_slot;
     args[2] = (protoop_arg_t) id;
@@ -212,7 +216,8 @@ static __attribute__((always_inline)) int fec_packet_has_been_lost(picoquic_cnx_
     args[4] = (protoop_arg_t) fec_protected;
     args[5] = (protoop_arg_t) contains_repair_Frame;
     args[6] = (protoop_arg_t) send_time;
-    return (int) run_noparam(cnx, FEC_PACKET_HAS_BEEN_LOST, 7, args, NULL);
+    args[7] = (protoop_arg_t) current_time;
+    return (int) run_noparam(cnx, FEC_PACKET_HAS_BEEN_LOST, 8, args, NULL);
 }
 
 // the symbols have been received, meaning that it has either been received or recovered
@@ -223,8 +228,9 @@ static __attribute__((always_inline)) what_to_send_t fec_packet_symbols_have_bee
                                                                                            uint16_t n_source_symbols_in_packet,
                                                                                            bool fec_protected,
                                                                                            bool contains_repair_Frame,
-                                                                                           uint64_t sent_time) {
-    protoop_arg_t args[7];
+                                                                                           uint64_t sent_time,
+                                                                                           uint64_t current_time) {
+    protoop_arg_t args[8];
     args[0] = (protoop_arg_t) packet_number;
     args[1] = (protoop_arg_t) packet_slot;
     args[2] = (protoop_arg_t) id;
@@ -232,18 +238,20 @@ static __attribute__((always_inline)) what_to_send_t fec_packet_symbols_have_bee
     args[4] = (protoop_arg_t) fec_protected;
     args[5] = (protoop_arg_t) contains_repair_Frame;
     args[6] = (protoop_arg_t) sent_time;
-    return (int) run_noparam(cnx, FEC_PACKET_HAVE_BEEN_RECEIVED, 7, args, NULL);
+    args[7] = (protoop_arg_t) current_time;
+    return (int) run_noparam(cnx, FEC_PACKET_HAVE_BEEN_RECEIVED, 8, args, NULL);
 }
 
-static __attribute__((always_inline)) what_to_send_t fec_sent_packet(picoquic_cnx_t *cnx, picoquic_path_t *path, picoquic_packet_t *packet,
+static __attribute__((always_inline)) what_to_send_t fec_sent_packet(picoquic_cnx_t *cnx, uint64_t current_time, picoquic_path_t *path, picoquic_packet_t *packet,
                                                                      bool fec_protected, bool contains_repair_frame, bool is_fb_fec) {
-    protoop_arg_t args[5];
+    protoop_arg_t args[6];
     args[0] = (protoop_arg_t) packet;
-    args[1] = (protoop_arg_t) fec_protected;
-    args[2] = (protoop_arg_t) contains_repair_frame;
-    args[3] = (protoop_arg_t) is_fb_fec;
-    args[4] = (protoop_arg_t) path;
-    return (int) run_noparam(cnx, FEC_SENT_PACKET, 5, args, NULL);
+    args[1] = (protoop_arg_t) current_time;
+    args[2] = (protoop_arg_t) fec_protected;
+    args[3] = (protoop_arg_t) contains_repair_frame;
+    args[4] = (protoop_arg_t) is_fb_fec;
+    args[5] = (protoop_arg_t) path;
+    return (int) run_noparam(cnx, FEC_SENT_PACKET, 6, args, NULL);
 }
 
 static __attribute__((always_inline)) what_to_send_t fec_after_incoming_packet(picoquic_cnx_t *cnx) {

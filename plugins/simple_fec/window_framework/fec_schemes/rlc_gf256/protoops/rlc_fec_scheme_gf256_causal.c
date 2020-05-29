@@ -376,8 +376,6 @@ protoop_arg_t fec_recover(picoquic_cnx_t *cnx)
     uint8_t **constant_terms = my_malloc(cnx, n_eq*sizeof(uint8_t *));
     bool *undetermined = my_malloc(cnx, n_missing_source_symbols*sizeof(bool));
 
-//    uint64_t now = picoquic_current_time();
-
     if (!coefs || !unknowns || !system_coefs || !undetermined) {
         PROTOOP_PRINTF(cnx, "NOT ENOUGH MEM\n");
         return PICOQUIC_ERROR_MEMORY;

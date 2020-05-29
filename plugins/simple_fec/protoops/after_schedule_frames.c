@@ -22,6 +22,7 @@
 protoop_arg_t schedule_frames_on_path(picoquic_cnx_t *cnx)
 {
     picoquic_packet_t *packet = (picoquic_packet_t *) get_cnx(cnx, AK_CNX_INPUT, 0);
+    uint64_t current_time = (uint64_t) get_cnx(cnx, AK_CNX_INPUT, 2);
     picoquic_packet_t *retransmit_p = (picoquic_packet_t *) get_cnx(cnx, AK_CNX_INPUT, 3);
     picoquic_path_t *path = (picoquic_path_t *) get_cnx(cnx, AK_CNX_OUTPUT, 0);
     uint32_t length = get_cnx(cnx, AK_CNX_OUTPUT, 1);
@@ -53,7 +54,7 @@ protoop_arg_t schedule_frames_on_path(picoquic_cnx_t *cnx)
             set_pkt_metadata(cnx, packet, FEC_PKT_METADATA_FLAGS, packet_flags);
             set_pkt_metadata(cnx, packet, FEC_PKT_METADATA_FIRST_SOURCE_SYMBOL_ID, id);
             set_pkt_metadata(cnx, packet, FEC_PKT_METADATA_NUMBER_OF_SOURCE_SYMBOLS, n_symbols);
-            fec_sent_packet(cnx, path, packet, true, false, false);
+            fec_sent_packet(cnx, current_time, path, packet, true, false, false);
         }
 
     } else if (state->has_written_repair_frame || state->has_written_fb_fec_repair_frame) {
@@ -70,7 +71,7 @@ protoop_arg_t schedule_frames_on_path(picoquic_cnx_t *cnx)
             set_pkt_metadata(cnx, packet, FEC_PKT_METADATA_FLAGS, packet_flags);
         }
         PROTOOP_PRINTF(cnx, "HAS WRITTEN REPAIR FRAME, CONTAINS REPAIR FRAME = %d, IS FB-FEC = %d\n", FEC_PKT_CONTAINS_REPAIR_FRAME(get_pkt_metadata(cnx, packet, FEC_PKT_METADATA_FLAGS)), FEC_PKT_IS_FB_FEC(get_pkt_metadata(cnx, packet, FEC_PKT_METADATA_FLAGS)));
-        fec_sent_packet(cnx, path, packet, false, true, state->has_written_fb_fec_repair_frame);
+        fec_sent_packet(cnx, current_time, path, packet, false, true, state->has_written_fb_fec_repair_frame);
     }
     if (state->has_written_recovered_frame) {
         packet_flags |= FEC_PKT_METADATA_FLAG_CONTAINS_RECOVERED_FRAME;

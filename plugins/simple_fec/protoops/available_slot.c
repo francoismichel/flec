@@ -22,6 +22,7 @@ static __attribute__((always_inline)) int reserve_fpi_frame(picoquic_cnx_t *cnx,
 protoop_arg_t available_slot(picoquic_cnx_t *cnx) {
     picoquic_path_t *path = (picoquic_path_t *) get_cnx(cnx, AK_CNX_INPUT, 0);
     available_slot_reason_t reason = (available_slot_reason_t) get_cnx(cnx, AK_CNX_INPUT, 1);
+    uint64_t current_time = (uint64_t) get_cnx(cnx, AK_CNX_INPUT, 2);
     plugin_state_t *state = get_plugin_state(cnx);
     if (!state)
         return PICOQUIC_ERROR_MEMORY;
@@ -30,7 +31,7 @@ protoop_arg_t available_slot(picoquic_cnx_t *cnx) {
     what_to_send_t wts = 0;
     source_symbol_id_t first_id = 0;
     uint16_t n_symbols_to_protect;
-    int err = fec_what_to_send(cnx, path, reason, &wts, &first_id, &n_symbols_to_protect);
+    int err = fec_what_to_send(cnx, path, current_time, reason, &wts, &first_id, &n_symbols_to_protect);
     if (err) {
         PROTOOP_PRINTF(cnx, "WHAT TO SEND ERROR: %d\n", err);
         return err;

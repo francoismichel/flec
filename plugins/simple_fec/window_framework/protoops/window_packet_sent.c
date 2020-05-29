@@ -9,9 +9,10 @@ protoop_arg_t window_packet_sent(picoquic_cnx_t *cnx) {
     if (!state)
         return PICOQUIC_ERROR_MEMORY;
     picoquic_packet_t *packet = (picoquic_packet_t *) get_cnx(cnx, AK_CNX_INPUT, 0);
-    bool fec_protected = (bool) get_cnx(cnx, AK_CNX_INPUT, 1);
-    bool contains_repair_frame = (bool) get_cnx(cnx, AK_CNX_INPUT, 2);
-    bool is_fb_fec = (bool) get_cnx(cnx, AK_CNX_INPUT, 3);
+    uint64_t current_time = (uint64_t) get_cnx(cnx, AK_CNX_INPUT, 1);
+    bool fec_protected = (bool) get_cnx(cnx, AK_CNX_INPUT, 2);
+    bool contains_repair_frame = (bool) get_cnx(cnx, AK_CNX_INPUT, 3);
+    bool is_fb_fec = (bool) get_cnx(cnx, AK_CNX_INPUT, 4);
     if (fec_protected) {
         window_fec_framework_t *wff = (window_fec_framework_t *) state->framework_sender;
         window_source_symbol_id_t first_id = get_pkt_metadata(cnx, packet, FEC_PKT_METADATA_FIRST_SOURCE_SYMBOL_ID);

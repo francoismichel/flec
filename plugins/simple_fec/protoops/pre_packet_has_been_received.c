@@ -14,6 +14,7 @@ protoop_arg_t pre_packet_has_been_received(picoquic_cnx_t *cnx) {
     uint64_t received_packet_number = get_cnx(cnx, AK_CNX_INPUT, 0);
 //    uint64_t slot = get_cnx(cnx, AK_CNX_INPUT, 1);
     bool fec_protected = get_cnx(cnx, AK_CNX_INPUT, 4);
+    uint64_t current_time = (uint64_t) get_cnx(cnx, AK_CNX_INPUT, 7);
     if (fec_protected) {
         if (DEBUG_EVENT) {
             uint64_t send_time = get_cnx(cnx, AK_CNX_INPUT, 6);
@@ -23,7 +24,7 @@ protoop_arg_t pre_packet_has_been_received(picoquic_cnx_t *cnx) {
         }
     }
     int err = 0;
-    if ((err = fec_check_for_available_slot(cnx, available_slot_reason_ack)) != 0)
+    if ((err = fec_check_for_available_slot(cnx, available_slot_reason_ack, current_time)) != 0)
         return err;
     return err;
 }
