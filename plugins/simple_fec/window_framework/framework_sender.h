@@ -126,6 +126,7 @@ typedef struct window_control {
 typedef struct {
     fec_scheme_t fec_scheme;
     window_slot_t fec_window[MAX_SENDING_WINDOW_SIZE];
+    source_symbol_t *symbols_buffer[MAX_SENDING_WINDOW_SIZE];
     queue_item repair_symbols_queue[MAX_QUEUED_REPAIR_SYMBOLS];
     window_redundancy_controller_t controller;
     window_source_symbol_id_t max_id;
@@ -160,7 +161,8 @@ typedef struct {
 } unreliable_message_metadata_t;
 
 static __attribute__((always_inline)) bool can_send_new_source_symbol(picoquic_cnx_t *cnx, window_fec_framework_t *wff) {
-    return wff->max_id < wff->window_control.largest_authorized_id_by_peer;
+    PROTOOP_PRINTF(cnx, "MAX ID = %u, LARGEST AUTHORIZED = %u\n", wff->max_id, wff->window_control.largest_authorized_id_by_peer);
+    return (wff->max_id == WINDOW_INITIAL_SYMBOL_ID - 1 && wff->window_control.largest_authorized_id_by_peer >= WINDOW_INITIAL_SYMBOL_ID) || wff->max_id < wff->window_control.largest_authorized_id_by_peer;
 }
 
 
@@ -610,7 +612,7 @@ static __attribute__((always_inline)) int generate_and_queue_repair_symbols(pico
     // build the block to generate the symbols
 
 
-    source_symbol_t **symbols = my_malloc(cnx, wff->window_length*sizeof(source_symbol_t *));
+    source_symbol_t **symbols = wff->symbols_buffer;
     if (!symbols)
         return PICOQUIC_ERROR_MEMORY;
     my_memset(symbols, 0, wff->window_length*sizeof(source_symbol_t *));
@@ -653,10 +655,10 @@ static __attribute__((always_inline)) int generate_and_queue_repair_symbols(pico
     if (n_symbols > 0) {
         repair_symbol_t **repair_symbols = my_malloc(cnx, n_symbols*sizeof(repair_symbol_t *));
         if (!repair_symbols) {
-            my_free(cnx, symbols);
+//            my_free(cnx, symbols);
             return PICOQUIC_ERROR_MEMORY;
         }
-        my_memset(repair_symbols, 0, n_symbols*sizeof(repair_symbol_t *));
+        my_memset(repair_symbols, 0, n_symbols_to_generate*sizeof(repair_symbol_t *));
         args[0] = (protoop_arg_t) wff->fec_scheme;
         args[1] = (protoop_arg_t) symbols;
         args[2] = (protoop_arg_t) n_symbols;
@@ -682,7 +684,6 @@ static __attribute__((always_inline)) int generate_and_queue_repair_symbols(pico
     } else {
         PROTOOP_PRINTF(cnx, "NO SYMBOL TO PROTECT\n");
     }
-    my_free(cnx, symbols);
 
     return ret;
 }
