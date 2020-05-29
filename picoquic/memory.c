@@ -143,6 +143,19 @@ void my_free_block(protoop_plugin_t *p, void *ptr) {
 	mp->num_free_blocks++;
 }
 
+void *my_calloc(picoquic_cnx_t *cnx, size_t nmemb, size_t size) {
+    void *ret = my_malloc(cnx, nmemb*size);
+    if (ret != NULL) {
+        my_memset(ret, 0, nmemb*size);
+    }
+    return ret;
+}
+void *my_calloc_dbg(picoquic_cnx_t *cnx, size_t nmemb, size_t size, char *file, int line) {
+    void *p = my_calloc(cnx, nmemb, size);
+    printf("MY CALLOC %s:%d = %p (%ld bytes)\n", file, line, p, nmemb*size);
+    return p;
+}
+
 void my_free_dbg(picoquic_cnx_t *cnx, void *ptr, char *file, int line) {
     printf("MY FREE %s:%d = %p\n", file, line, ptr);
     my_free(cnx, ptr);
@@ -206,18 +219,32 @@ int destroy_block_memory_management(protoop_plugin_t *p)
 }
 
 
+#define ALIGNMENT 32
+static __attribute__((always_inline)) size_t align(size_t val) {
+    return ( ( val - 1 ) | ( ((ALIGNMENT<<1) - 1 ) )) + 1;
+}
+
 
 void *malloc_dynamic(protoop_plugin_t *p, unsigned int size) {
+    size = align(size);
+    void *current_end = ((plugin_dynamic_memory_pool_t *) p->memory_manager.ctx)->memory_current_end;
     void *ptr = michelfralloc((plugin_dynamic_memory_pool_t *) p->memory_manager.ctx, size);
+    void *final_end = ((plugin_dynamic_memory_pool_t *) p->memory_manager.ctx)->memory_current_end;
     return ptr;
 }
 
 
 void free_dynamic(protoop_plugin_t *p, void *ptr) {
-    return michelfree((plugin_dynamic_memory_pool_t *) p->memory_manager.ctx, ptr);
+    void *current_end = ((plugin_dynamic_memory_pool_t *) p->memory_manager.ctx)->memory_current_end;
+    michelfree((plugin_dynamic_memory_pool_t *) p->memory_manager.ctx, ptr);
+
+    void *final_end = ((plugin_dynamic_memory_pool_t *) p->memory_manager.ctx)->memory_current_end;
+
 }
 
 void *realloc_dynamic(protoop_plugin_t *p, void *ptr, unsigned int size) {
+    size = align(size);
+
     return michelfrealloc((plugin_dynamic_memory_pool_t *) p->memory_manager.ctx, ptr, size);
 }
 
