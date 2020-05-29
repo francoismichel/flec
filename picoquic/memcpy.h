@@ -62,6 +62,7 @@ void *my_memcpy(void *dest, const void *src, size_t count);
 void *my_memcpy_dbg(void *dest, const void *src, size_t count, char *file, int line);
 void *my_memset(void *dest, int c, size_t count);
 void *my_memset_dbg(void *dest, int c, size_t count, char *file, int line);
+void *my_memmove(void *dest, const void *src, size_t count);
 
 #ifdef __cplusplus
 }
