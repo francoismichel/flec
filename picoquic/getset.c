@@ -442,7 +442,7 @@ void set_cnx(picoquic_cnx_t *cnx, access_key_t ak, uint16_t param, protoop_arg_t
         printf("ERROR: trying to modify handshake_done_sent...\n");
         break;
     case AK_CNX_HANDSHAKE_DONE_ACKED:
-        printf("ERROR: trying to modify handshake_done_acked...\n");
+        cnx->handshake_done_acked = val;
     break;
     case AK_CNX_PLUGIN_REQUESTED:
         cnx->plugin_requested = (uint8_t) val;
@@ -545,7 +545,7 @@ protoop_arg_t get_path(picoquic_path_t *path, access_key_t ak, uint16_t param)
     case AK_PATH_PACING_PACKET_TIME_NANOSEC:
         return path->pacing_packet_time_nanosec;
     case AK_PATH_PACING_PACKET_TIME_MICROSEC:
-        return path->pacing_packet_time_nanosec;
+        return path->pacing_packet_time_microsec;
     case AK_PATH_LOCAL_CID:
         return (protoop_arg_t) &path->local_cnxid;
     case AK_PATH_REMOTE_CID:
@@ -684,6 +684,12 @@ void set_path(picoquic_path_t *path, access_key_t ak, uint16_t param, protoop_ar
         break;
     case AK_PATH_NB_PKT_SENT:
         path->nb_pkt_sent = val;
+        break;
+    case AK_PATH_DELIVERED:
+        path->delivered = val;
+        break;
+    case AK_PATH_DELIVERED_PRIOR:
+        path->delivered = val;
         break;
     case AK_PATH_DELIVERED_LIMITED_INDEX:
         path->delivered_limited_index = val;
