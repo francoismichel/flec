@@ -136,8 +136,6 @@ void set_pkt_metadata(picoquic_cnx_t *cnx, picoquic_packet_t *pkt, int idx, prot
 static __attribute__((always_inline)) protoop_arg_t get_pkt_metadata(picoquic_cnx_t *cnx, picoquic_packet_t *pkt, int idx) {
     uint64_t out;
     int err = get_pkt_n_metadata(cnx, pkt, &idx, 1, &out);
-    if (err)
-        printf("ERROR: %s returned a non-zero error code\n", __func__);
     return out;
 }
 
