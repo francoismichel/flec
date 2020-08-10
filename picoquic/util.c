@@ -290,8 +290,26 @@ int picoquic_compare_addr(struct sockaddr * expected, struct sockaddr * actual)
             }
         }
     }
-
+    printf("expected family = %u, actual family = %u\n", expected->sa_family, actual->sa_family);
     return ret;
+}
+
+bool picoquic_is_v4_mapped_to_v6_address(struct sockaddr_in6 *addr, struct sockaddr_in *addr4) {
+    int in4_size = 4;
+    uint8_t addr_bytes[16];
+    memcpy(addr_bytes, addr->sin6_addr.s6_addr, sizeof(addr_bytes));
+    for (int i = 0 ; i < 12 ; i++) {
+        if ((i < 10 && addr_bytes[i] != 0) || (i >= 10 && addr_bytes[i] != 0xFF)) {
+            // not an encapsulated IPv4
+            printf("not encapsulated; i = %d, val = %d\n", i, addr_bytes[i]);
+            return false;
+        }
+    }
+    // this is an encapsulated IPv4
+    memcpy(&addr4->sin_addr.s_addr, &addr_bytes[12], in4_size);
+    addr4->sin_port = addr->sin6_port;
+    addr4->sin_family = AF_INET;
+    return true;
 }
 
 int picoquic_split_stream_frame(uint8_t *bytes, size_t bytes_max, uint8_t *buf1, size_t *buf1_max, uint8_t *buf2, size_t *buf2_max) {

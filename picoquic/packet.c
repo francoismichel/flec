@@ -1169,11 +1169,22 @@ protoop_arg_t incoming_encrypted(picoquic_cnx_t *cnx)
             }
         }
         else {
+            if (addr_from->sa_family != path_x->peer_addr.ss_family) {
+                struct sockaddr_in converted_addr;
+                if ((addr_from->sa_family == AF_INET6 && picoquic_is_v4_mapped_to_v6_address((struct sockaddr_in6 *) addr_from, &converted_addr)
+                        && picoquic_compare_addr((struct sockaddr *) &path_x->peer_addr, (struct sockaddr *) &converted_addr) == 0) // addr_from may be v4-mapped-to-v6 (more likely than the opposite)
+                 || (path_x->peer_addr.ss_family == AF_INET6 && picoquic_is_v4_mapped_to_v6_address((struct sockaddr_in6 *) &path_x->peer_addr, &converted_addr)
+                           && picoquic_compare_addr((struct sockaddr *) addr_from, (struct sockaddr *) &converted_addr) == 0)) {  // peer_addr may be v4-mapped-to-v6 (less likely than the opposite)
+                    // there is a v4-to-v6 mapping, but those are the same address, let's update the address to the one newly received
+                    path_x->peer_addr_len = (addr_from->sa_family == AF_INET) ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
+                    memcpy(&path_x->peer_addr, addr_from, path_x->peer_addr_len);
+                }
+            }
             /* Compare the packet address to the current path value */
             if (picoquic_compare_addr((struct sockaddr *)&path_x->peer_addr,
                 (struct sockaddr *)addr_from) != 0 &&
                 (((addr_from->sa_family != AF_INET) || ((struct sockaddr_in *) addr_from)->sin_addr.s_addr != 0))) /* This line is a pure hotfix for UDP src address being 0.0.0.0 */
-            { // TODO: Handle equivalent IPv4 encoded in IPv6
+            {
                 uint8_t buffer[16];
                 size_t challenge_length;
                 /* Address origin different than expected. Update */
