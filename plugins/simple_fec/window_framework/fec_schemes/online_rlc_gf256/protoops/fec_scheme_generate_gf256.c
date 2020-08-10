@@ -3,7 +3,6 @@
 #include <zlib.h>
 #include "../gf256/swif_symbol.h"
 #include "../../prng/tinymt32.c"
-#include "fec_scheme_gf256.h"
 #include "../../../types.h"
 #include "../headers/online_gf256_fec_scheme.h"
 
