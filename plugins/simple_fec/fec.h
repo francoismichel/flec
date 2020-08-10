@@ -48,6 +48,8 @@ typedef struct {
 
     uint16_t symbol_size;
 
+    protoop_id_t pid_received_packet;
+
     uint64_t temp_buffer[20];   // to store temp variables that cannot be stored on the stack due to the ridiculous stack size
 } plugin_state_t;
 
@@ -288,6 +290,9 @@ static __attribute__((always_inline)) source_symbol_t **packet_payload_to_source
 static __attribute__((always_inline)) int maybe_notify_recovered_packets_to_everybody(picoquic_cnx_t *cnx,
                                                                                        recovered_packets_buffer_t *b,
                                                                                        uint64_t current_time) {
+    plugin_state_t *state = get_plugin_state(cnx);
+    if (!state)
+        return PICOQUIC_ERROR_MEMORY;
     // TODO: handle multipath
     picoquic_path_t *path = (picoquic_path_t *) get_cnx(cnx, AK_CNX_PATH, 0);
     picoquic_packet_context_t *pkt_ctx = (picoquic_packet_context_t *) get_path(path, AK_PATH_PKT_CTX, picoquic_packet_context_application);
@@ -312,7 +317,7 @@ static __attribute__((always_inline)) int maybe_notify_recovered_packets_to_ever
             source_symbol_id_t first_id = get_pkt_metadata(cnx, current_packet, FEC_PKT_METADATA_FIRST_SOURCE_SYMBOL_ID);
             uint64_t n_source_symbols = get_pkt_metadata(cnx, current_packet, FEC_PKT_METADATA_NUMBER_OF_SOURCE_SYMBOLS);
             uint64_t send_time = get_pkt(current_packet, AK_PKT_SEND_TIME);
-            fec_packet_symbols_have_been_received(cnx, current_pn64, slot, first_id, n_source_symbols, true, false, send_time, current_time);
+            fec_packet_symbols_have_been_received(cnx, current_pn64, slot, first_id, n_source_symbols, true, false, send_time, current_time, &state->pid_received_packet);
             helper_dequeue_retransmit_packet(cnx, current_packet, 1);
             if (current_time >= retrans_cc_notification_timer && !packet_is_pure_ack) {    // do as in core: if is pure_ack or recently notified, do not notify cc
                 set_pkt_ctx(pkt_ctx, AK_PKTCTX_LATEST_RETRANSMIT_CC_NOTIFICATION_TIME, current_time);
@@ -324,9 +329,6 @@ static __attribute__((always_inline)) int maybe_notify_recovered_packets_to_ever
         } else if (current_pn64 > peek_first_recovered_packet_in_buffer(b)) {
             // the packet to remove is already gone from the retransmit queue
             uint64_t pn64 = dequeue_recovered_packet_from_buffer(b);
-            plugin_state_t *state = get_plugin_state(cnx);
-            if (!state)
-                return PICOQUIC_ERROR_MEMORY;
             uint64_t slot;
             source_symbol_id_t first_id;
             uint16_t n_source_symbols;
@@ -335,7 +337,7 @@ static __attribute__((always_inline)) int maybe_notify_recovered_packets_to_ever
             // announce the reception of the source symbols
             bool present = dequeue_lost_packet(cnx, &state->lost_packets, pn64, &slot, &first_id, &n_source_symbols, &send_time);
             if (present) {
-                fec_packet_symbols_have_been_received(cnx, pn64, slot, first_id, n_source_symbols, true, false, send_time, current_time);
+                fec_packet_symbols_have_been_received(cnx, pn64, slot, first_id, n_source_symbols, true, false, send_time, current_time, &state->pid_received_packet);
             } else {
                 // this is not normal
                 PROTOOP_PRINTF(cnx, "ERROR: THE FRECOVERED PACKET %lx (%lu) IS NEITHER IN THE RETRANSMIT QUEUE, NEITHER IN THE LOST PACKETS\n", pn64, pn64);

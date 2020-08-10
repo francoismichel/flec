@@ -229,7 +229,7 @@ static __attribute__((always_inline)) what_to_send_t fec_packet_symbols_have_bee
                                                                                            bool fec_protected,
                                                                                            bool contains_repair_Frame,
                                                                                            uint64_t sent_time,
-                                                                                           uint64_t current_time) {
+                                                                                           uint64_t current_time, protoop_id_t *pid) {
     protoop_arg_t args[8];
     args[0] = (protoop_arg_t) packet_number;
     args[1] = (protoop_arg_t) packet_slot;
@@ -239,7 +239,7 @@ static __attribute__((always_inline)) what_to_send_t fec_packet_symbols_have_bee
     args[5] = (protoop_arg_t) contains_repair_Frame;
     args[6] = (protoop_arg_t) sent_time;
     args[7] = (protoop_arg_t) current_time;
-    return (int) run_noparam(cnx, FEC_PACKET_HAVE_BEEN_RECEIVED, 8, args, NULL);
+    return (int) run_noparam_with_pid(cnx, FEC_PACKET_HAVE_BEEN_RECEIVED, 8, args, NULL, pid);
 }
 
 static __attribute__((always_inline)) what_to_send_t fec_sent_packet(picoquic_cnx_t *cnx, uint64_t current_time, picoquic_path_t *path, picoquic_packet_t *packet,
