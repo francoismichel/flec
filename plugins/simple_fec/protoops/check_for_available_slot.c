@@ -17,7 +17,7 @@ protoop_arg_t check_for_available_slot(picoquic_cnx_t *cnx) {
     // we ensure not having too much available slots by taking the already reserved frames as taking a slot of MTU bytes
     protoop_arg_t slot_available = reason == available_slot_reason_nack || get_path(path, AK_PATH_CWIN, 0) > get_path(path, AK_PATH_BYTES_IN_TRANSIT, 0) + state->n_reserved_id_or_repair_frames*get_path(path, AK_PATH_SEND_MTU, 0);
     PROTOOP_PRINTF(cnx, "SLOT AVAILABLE = %d, n_reserved = %lu (%u >? %u)\n", slot_available, state->n_reserved_id_or_repair_frames, get_path(path, AK_PATH_CWIN, 0), get_path(path, AK_PATH_BYTES_IN_TRANSIT, 0) + state->n_reserved_id_or_repair_frames*PICOQUIC_MAX_PACKET_SIZE);
-    if (slot_available) {
+    if (slot_available && state->n_reserved_id_or_repair_frames == 0) {
         // there is a slot available
         // we have the guarantee that if we reserve a frame (sufficiently small), it will be put in the packet if we
         // are not rate-limited
