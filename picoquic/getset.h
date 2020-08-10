@@ -149,6 +149,18 @@ void set_pkt_metadata(picoquic_cnx_t *cnx, picoquic_packet_t *pkt, int idx, prot
 
 
 /**
+ * Sets the plugin-specific metadata of this packet at index `idx` to `val`
+ * @param cnx The connection pointer
+ * @param pkt The packet pointer
+ * @param idxs The array containing the indexes of the plugin-specific metadata
+ * @param val The values of the metadata to set, it will be set in the following way
+ * @param n_idx The values of the metadata to set, it will be set in the following way
+ * for each i < n_idxs: metadata[idxs[i]] = vals[i]
+ */
+void set_pkt_n_metadata(picoquic_cnx_t *cnx, picoquic_packet_t *pkt, int *idxs, protoop_arg_t *vals, int n_idxs);
+
+
+/**
  * Gets and returns the value of the plugin-specific metadata of this packet at index `idx`
  * If the metadata have never been set before, zero is returned
  * @param cnx The connection pointer
@@ -157,6 +169,18 @@ void set_pkt_metadata(picoquic_cnx_t *cnx, picoquic_packet_t *pkt, int idx, prot
  *
  */
 protoop_arg_t get_pkt_metadata(picoquic_cnx_t *cnx, picoquic_packet_t *pkt, int idx);
+
+
+/**
+ * Gets and returns the values of the n_idx plugin-specific metadata of this packet whose indexes are stored in `idxs`
+ * If the metadata have never been set before, zero is returned
+ * @param cnx The connection pointer
+ * @param pkt The packet pointer
+ * @param idxs The array containing the indexes of the plugin-specific metadata to get
+ * @param n_idx The number of indexes stored in idxs
+ *
+ */
+int get_pkt_n_metadata(picoquic_cnx_t *cnx, picoquic_packet_t *pkt, int *idxs, int n_idx, protoop_arg_t *outs);
 
 /**
  * Get a specific field belonging to the sack item \p sack_item

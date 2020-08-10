@@ -1322,6 +1322,37 @@ int set_plugin_metadata(protoop_plugin_t *plugin, plugin_struct_metadata_t **met
     return 0;
 }
 
+
+
+int set_plugin_n_metadata(protoop_plugin_t *plugin, plugin_struct_metadata_t **metadata, const int *idxs, const uint64_t *vals, int n_idx) {
+    if (!plugin) {
+        printf("ERROR: set_plugin_metadata called with an undefined plugin\n");
+        return -1;
+    }
+    if (plugin->hash == 0) {
+        plugin->hash = hash_value_str(plugin->name);
+    }
+    plugin_struct_metadata_t *md = NULL;
+    HASH_FIND_PLUGIN(*metadata, &(plugin->hash), md);
+    if (md == NULL) {
+        md = (plugin_struct_metadata_t *) calloc(1, sizeof(plugin_struct_metadata_t));
+        if (!md) {
+            printf("ERROR: out of memory !\n");
+            return -1;
+        }
+        md->plugin_hash = plugin->hash;
+        HASH_ADD_PLUGIN(*metadata, plugin_hash, md);
+    }
+    for (int i = 0 ; i < n_idx ; i++) {
+        if (idxs[i] >= STRUCT_METADATA_MAX) {
+            printf("ERROR: set_plugin_metadata called with an index out of bound\n");
+            return -1;
+        }
+        md->metadata[idxs[i]] = vals[i];
+    }
+    return 0;
+}
+
 // gets the metadata attached to a plugin
 // (creates the metadata structure if it is not already there)
 int get_plugin_metadata(protoop_plugin_t *plugin, plugin_struct_metadata_t **metadata, int idx, uint64_t *out) {
@@ -1350,6 +1381,40 @@ int get_plugin_metadata(protoop_plugin_t *plugin, plugin_struct_metadata_t **met
         HASH_ADD_PLUGIN((*metadata), plugin_hash, md);
     }
     *out = md->metadata[idx];
+    return 0;
+}
+
+// gets the n metadata attached to a plugin
+// (creates the metadata structure if it is not already there)
+// TOOD: fix possible buffer overflow when a malicious plugin provides a too big n_idx
+int get_plugin_n_metadata(protoop_plugin_t *plugin, plugin_struct_metadata_t **metadata, const int *idxs, uint64_t *out, int n_idx) {
+    if (!plugin) {
+        printf("ERROR: set_plugin_metadata called with an undefined plugin\n");
+        return -1;
+    }
+    if (plugin->hash == 0) {
+        plugin->hash = hash_value_str(plugin->name);
+    }
+    plugin_struct_metadata_t *md = NULL;
+    // try to find the metadata
+    HASH_FIND_PLUGIN(*metadata, &(plugin->hash), md);
+    if (md == NULL) {
+        // the metadata were not already allocated, so create it
+        md = (plugin_struct_metadata_t *) calloc(1, sizeof(plugin_struct_metadata_t));
+        if (!md) {
+            printf("ERROR: out of memory !\n");
+            return -1;
+        }
+        md->plugin_hash = plugin->hash;
+        HASH_ADD_PLUGIN((*metadata), plugin_hash, md);
+    }
+    for (int i = 0 ; i < n_idx ; i++) {
+        if (idxs[i] >= STRUCT_METADATA_MAX) {
+            printf("ERROR: set_plugin_metadata called with an index out of bound\n");
+            return -1;
+        }
+        out[i] = md->metadata[idxs[i]];
+    }
     return 0;
 }
 
