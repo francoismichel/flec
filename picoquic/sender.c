@@ -1001,7 +1001,7 @@ protoop_arg_t finalize_and_protect_packet(picoquic_cnx_t *cnx)
         if (length > 0) {
             packet->checksum_overhead = checksum_overhead;
             picoquic_header_prepared(cnx, &ph, path_x, packet, length);
-            picoquic_queue_for_retransmit(cnx, path_x, packet, length, current_time);
+            picoquic_queue_for_retransmit(cnx, path_x, packet, length, picoquic_get_quic_time(cnx->quic));
         } else {
             send_length = 0;
         }
@@ -3458,6 +3458,10 @@ protoop_arg_t prepare_packet_ready(picoquic_cnx_t *cnx)
       && path_x->cwin > path_x->bytes_in_transit && send_length > 0) {
         picoquic_reinsert_by_wake_time(cnx->quic, cnx, current_time);
     } else {
+        // here, we call set_next_wake_time with current_time and not get_quic_time() because the
+        // pacing bucket will be updated at the beginning of set_next_wqke_time.
+        // If we give a more recent value than current time, this will
+        // imply that the pacing bucket will never be 0 in set_next_wake time and packets will never be paced
         picoquic_cnx_set_next_wake_time(cnx, current_time, length);
     }
 
