@@ -506,6 +506,7 @@ typedef struct plugin_stat {
     param_id_t param;
     uint64_t count;
     uint64_t total_execution_time;
+    uint64_t max_execution_time;
 } plugin_stat_t;
 #define PICOQUIC_STREAM_ID_TYPE_MASK 3
 #define PICOQUIC_STREAM_ID_CLIENT_INITIATED 0

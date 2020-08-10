@@ -290,7 +290,7 @@ static void write_stats(picoquic_cnx_t *cnx, char *filename) {
             snprintf(buf, size-1, "%s: %" PRIu64 " calls", str, stats[i].count);
             strncpy(str, buf, size-1);
             double average_execution_time = stats[i].count ? (((double) stats[i].total_execution_time)/((double) stats[i].count)) : 0;
-            snprintf(buf, size-1, "%s, (avg=%fms, tot=%fms)", str, average_execution_time/1000, ((double) stats[i].total_execution_time)/1000);
+            snprintf(buf, size-1, "%s, (avg=%fms, max=%fms, tot=%fms)", str, average_execution_time/1000, ((double) stats[i].max_execution_time)/1000, ((double) stats[i].total_execution_time)/1000);
             strncpy(str, buf, size-1);
             fprintf(out, "%s\n", str);
         }

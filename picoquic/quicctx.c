@@ -193,6 +193,7 @@ int picoquic_get_plugin_stats(picoquic_cnx_t *cnx, plugin_stat_t **statsptr, int
                     stats[current_position].param = current_popst->param;
                     stats[current_position].count = current_popst->replace->count;
                     stats[current_position].total_execution_time = current_popst->replace->total_execution_time;
+                    stats[current_position].max_execution_time = current_popst->replace->max_execution_time;
                     current_position++;
                 }
 
@@ -213,6 +214,7 @@ int picoquic_get_plugin_stats(picoquic_cnx_t *cnx, plugin_stat_t **statsptr, int
                         stats[current_position].param = current_popst->param;
                         stats[current_position].count = cur->observer->count;
                         stats[current_position].total_execution_time = cur->observer->total_execution_time;
+                        stats[current_position].max_execution_time = cur->observer->max_execution_time;
                         cur = cur->next;
                         current_position++;
                     }
@@ -234,6 +236,7 @@ int picoquic_get_plugin_stats(picoquic_cnx_t *cnx, plugin_stat_t **statsptr, int
                         stats[current_position].param = current_popst->param;
                         stats[current_position].count = cur->observer->count;
                         stats[current_position].total_execution_time = cur->observer->total_execution_time;
+                        stats[current_position].max_execution_time = cur->observer->max_execution_time;
                         cur = cur->next;
                         current_position++;
                     }
@@ -255,6 +258,7 @@ int picoquic_get_plugin_stats(picoquic_cnx_t *cnx, plugin_stat_t **statsptr, int
                 stats[current_position].is_param = false;
                 stats[current_position].count = current_popst->replace->count;
                 stats[current_position].total_execution_time = current_popst->replace->total_execution_time;
+                stats[current_position].max_execution_time = current_popst->replace->max_execution_time;
                 current_position++;
             }
 
@@ -274,6 +278,7 @@ int picoquic_get_plugin_stats(picoquic_cnx_t *cnx, plugin_stat_t **statsptr, int
                     stats[current_position].is_param = false;
                     stats[current_position].count = cur->observer->count;
                     stats[current_position].total_execution_time = cur->observer->total_execution_time;
+                    stats[current_position].max_execution_time = cur->observer->max_execution_time;
                     cur = cur->next;
                     current_position++;
                 }
@@ -294,6 +299,7 @@ int picoquic_get_plugin_stats(picoquic_cnx_t *cnx, plugin_stat_t **statsptr, int
                     stats[current_position].is_param = false;
                     stats[current_position].count = cur->observer->count;
                     stats[current_position].total_execution_time = cur->observer->total_execution_time;
+                    stats[current_position].max_execution_time = cur->observer->max_execution_time;
                     cur = cur->next;
                     current_position++;
                 }

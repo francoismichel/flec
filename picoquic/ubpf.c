@@ -329,7 +329,9 @@ uint64_t exec_loaded_code(pluglet_t *pluglet, void *arg, void *mem, size_t mem_l
 #else
     uint64_t before = picoquic_current_time();
     uint64_t err = _exec_loaded_code(pluglet, arg, mem, mem_len, error_msg, JIT);
-    pluglet->total_execution_time += picoquic_current_time() - before;
+    uint64_t time = picoquic_current_time() - before;
+    pluglet->total_execution_time += time;
+    pluglet->max_execution_time = MAX(pluglet->max_execution_time, time);
     return err;
 #endif
 }
