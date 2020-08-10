@@ -170,6 +170,16 @@ extern protoop_id_t PROTOOP_NOPARAM_SCHEDULER_WRITE_NEW_FRAMES;
  */
 #define PROTOOPID_NOPARAM_PROCESS_ACK_RANGE "process_ack_range"
 extern protoop_id_t PROTOOP_NOPARAM_PROCESS_ACK_RANGE;
+
+/**
+ * Called whenever a packet is declared "acknowledged"
+ * \param[in] packet \b the acknowledged packet
+ * \return \b int 0 if eveything is ok
+ */
+#define PROTOOPID_NOPARAM_PACKET_ACKNOWLEDGED "packet_acknowledged"
+extern protoop_id_t PROTOOP_NOPARAM_PACKET_ACKNOWLEDGED;
+
+
 /**
  * Check if packet that were retransmitted (in the retransmitted queue) were spurious, and release them if needed.
  * \param[in] start_of_range \b uint64_t The lowest packet number included in the range

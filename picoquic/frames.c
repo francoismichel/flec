@@ -2244,6 +2244,12 @@ void picoquic_process_possible_ack_of_ack_frame(picoquic_cnx_t* cnx, picoquic_pa
         p);
 }
 
+int picoquic_packet_acknowledged(picoquic_cnx_t* cnx, picoquic_packet_t *packet, uint64_t current_time)
+{
+    int ret = (int) protoop_prepare_and_run_noparam(cnx, &PROTOOP_NOPARAM_PACKET_ACKNOWLEDGED, NULL, packet, current_time);
+    return ret;
+}
+
 /**
  * See PROTOOP_NOPARAM_PROCESS_ACK_RANGE
  */
@@ -2295,7 +2301,10 @@ protoop_arg_t process_ack_range(picoquic_cnx_t *cnx)
                         picoquic_implicit_handshake_ack(cnx, path, picoquic_packet_context_handshake, current_time);
                     }
                 }
-
+                ret = picoquic_packet_acknowledged(cnx, p, current_time);
+                if (ret != 0) {
+                    break;
+                }
                 picoquic_dequeue_retransmit_packet(cnx, p, 1);
                 p = next;
             }
@@ -4371,6 +4380,7 @@ void frames_register_noparam_protoops(picoquic_cnx_t *cnx)
     register_noparam_protoop(cnx, &PROTOOP_NOPARAM_CHECK_SPURIOUS_RETRANSMISSION, &check_spurious_retransmission);
     register_noparam_protoop(cnx, &PROTOOP_NOPARAM_PROCESS_POSSIBLE_ACK_OF_ACK_FRAME, &process_possible_ack_of_ack_frame);
     register_noparam_protoop(cnx, &PROTOOP_NOPARAM_PROCESS_ACK_OF_STREAM_FRAME, &process_ack_of_stream_frame);
+    register_noparam_protoop(cnx, &PROTOOP_NOPARAM_PACKET_ACKNOWLEDGED, &protoop_noop);
     register_noparam_protoop(cnx, &PROTOOP_NOPARAM_PROCESS_ACK_OF_ACK_RANGE, &process_ack_of_ack_range);
 
     /* Preparing */
