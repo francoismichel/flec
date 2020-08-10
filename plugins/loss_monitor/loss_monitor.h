@@ -4,10 +4,21 @@
 
 #define PATH_METADATA_LOSS_MONITOR_IDX 1
 
-#include "red_black_tree.h"
+#include <red_black_tree.h>
+#include "../helpers.h"
 
 // a packet monitor has no path notion: it has to be attached to a path
 // it only considers the 1-RTT packet number space
+
+typedef struct {
+    rbt_node_t *node;
+    bool right;
+} rbt_node_path_t;
+
+typedef struct {
+    rbt_node_path_t nodes[RBT_MAX_DEPTH];
+    int current_size;
+} rbt_array_stack_t;
 
 typedef enum {
     loss_monitor_packet_event_acknowledged,
@@ -28,6 +39,7 @@ typedef struct {
 } loss_monitor_estimations_t;
 
 typedef struct {
+    bool has_done_estimations;
     rbt_array_stack_t recursion_helper_stack;
     red_black_tree_t packet_events;
     uint64_t event_lifetime_microsec;
@@ -39,7 +51,35 @@ typedef struct {
 #define DEFAULT_ESTIMATION_GRANULARITY 1000000
 #define DEFAULT_ESTIMATION_INTERVAL_MICROSEC 200000
 #define DEFAULT_EVENT_LIFETIME_MICROSEC 10000000
-#define MAX_STORED_EVENTS 500
+#define MAX_STORED_EVENTS 100000
+
+
+
+static __attribute__((always_inline)) int rbt_stack_init(rbt_array_stack_t *stack) {
+    my_memset(stack, 0, sizeof(rbt_array_stack_t));
+    return 0;
+}
+
+static __attribute__((always_inline)) int rbt_stack_size(rbt_array_stack_t *stack) {
+    return stack->current_size;
+}
+
+static __attribute__((always_inline)) void rbt_stack_reset(rbt_array_stack_t *stack) {
+    stack->current_size = 0;
+}
+
+static __attribute__((always_inline)) int rbt_stack_push(rbt_array_stack_t *stack, rbt_node_t *node, bool right) {
+    if (!node || stack->current_size == RBT_MAX_DEPTH)
+        return -1;
+    stack->nodes[stack->current_size++] = (rbt_node_path_t) { .node = node, .right = right };
+    return 0;
+}
+
+static __attribute__((always_inline)) rbt_node_path_t rbt_stack_pop(rbt_array_stack_t *stack) {
+    if (stack->current_size == 0)
+        return (rbt_node_path_t) { .node = NULL };
+    return stack->nodes[--stack->current_size];
+}
 
 
 static __attribute__((always_inline)) int _push_left_branch_in_stack(rbt_array_stack_t *stack, rbt_node_t *node) {
@@ -55,7 +95,7 @@ static __attribute__((always_inline)) int loss_monitor_init(picoquic_cnx_t *cnx,
                                                             uint64_t estimations_update_interval_microsec, uint64_t event_lifetime_microsec) {
     my_memset(monitor, 0, sizeof(loss_monitor_t));
     rbt_stack_init(&monitor->recursion_helper_stack);
-    rbt_init(&monitor->packet_events);
+    rbt_init(cnx, &monitor->packet_events);
     monitor->last_estimation_update_timestamp = current_time;
     monitor->estimations_update_interval = estimations_update_interval_microsec;
     monitor->event_lifetime_microsec = event_lifetime_microsec;
@@ -67,15 +107,13 @@ static __attribute__((always_inline)) int loss_monitor_init(picoquic_cnx_t *cnx,
 }
 
 static __attribute__((always_inline)) int remove_expired_events(picoquic_cnx_t *cnx, loss_monitor_t *monitor, uint64_t current_time) {
-    if (rbt_is_empty(&monitor->packet_events)) {
+    if (rbt_is_empty(cnx, &monitor->packet_events)) {
         // nothing to do
         return 0;
     }
-    _push_left_branch_in_stack(&monitor->recursion_helper_stack, monitor->packet_events.root);
-    // first find min
 
-    while(!rbt_is_empty(&monitor->packet_events) && (current_time - ((packet_event_t *) rbt_min_val(&monitor->packet_events))->send_time) >= monitor->event_lifetime_microsec) {
-        packet_event_t *event = (packet_event_t *) rbt_min_val(&monitor->packet_events);
+    while(!rbt_is_empty(cnx, &monitor->packet_events) && (current_time - ((packet_event_t *) rbt_min_val(cnx, &monitor->packet_events))->send_time) >= monitor->event_lifetime_microsec) {
+        packet_event_t *event = (packet_event_t *) rbt_min_val(cnx, &monitor->packet_events);
         my_free(cnx, event);
         rbt_delete_min(cnx, &monitor->packet_events);
     }
@@ -95,7 +133,7 @@ static __attribute__((always_inline)) int update_estimations(picoquic_cnx_t *cnx
 
     int current_state = GOOD_STATE;
 
-    if (!rbt_is_empty(&monitor->packet_events)) {
+    if (!rbt_is_empty(cnx, &monitor->packet_events)) {
         PROTOOP_PRINTF(cnx, "TREE NOT EMPTY\n");
         rbt_array_stack_t *stack = &monitor->recursion_helper_stack;
         rbt_stack_reset(stack);
@@ -108,6 +146,7 @@ static __attribute__((always_inline)) int update_estimations(picoquic_cnx_t *cnx
         while(rbt_stack_size(stack) != 0) {
              current_node = rbt_stack_pop(stack).node;
              current_event = (packet_event_t *) current_node->val;
+             PROTOOP_PRINTF(cnx, "EVENT PN = %lx: %d\n", current_event->packet_number, current_event->event_type);
              if (current_event->event_type == loss_monitor_packet_event_acknowledged) {
                  new_state = GOOD_STATE;
                  n_acks++;
@@ -144,6 +183,7 @@ static __attribute__((always_inline)) int update_estimations(picoquic_cnx_t *cnx
 
     monitor->last_estimation_update_timestamp = current_time;
 
+    monitor->has_done_estimations = true;
     return 0;
 }
 
@@ -161,8 +201,8 @@ static __attribute__((always_inline)) int handle_packet_event(picoquic_cnx_t *cn
     event->event_type = event_type;
 
     // ensure the max size is respected
-    if (rbt_size(&monitor->packet_events) == MAX_STORED_EVENTS) {
-        packet_event_t *event = (packet_event_t *) rbt_min_val(&monitor->packet_events);
+    if (rbt_size(cnx, &monitor->packet_events) == MAX_STORED_EVENTS) {
+        packet_event_t *event = (packet_event_t *) rbt_min_val(cnx, &monitor->packet_events);
         my_free(cnx, event);
         rbt_delete_min(cnx, &monitor->packet_events);
     }
