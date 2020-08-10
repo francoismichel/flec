@@ -34,6 +34,7 @@
 
 #include <dirent.h>
 #include <stdio.h>
+#include <time.h>
 #endif
 
 
@@ -1649,6 +1650,7 @@ int picoquic_handle_plugin_negotiation(picoquic_cnx_t* cnx)
  */
 uint64_t picoquic_current_time()
 {
+#define USE_CLOCK_GETTIME true
     uint64_t now;
 #ifdef _WINDOWS
     FILETIME ft;
@@ -1675,9 +1677,16 @@ uint64_t picoquic_current_time()
     */
     now -= 11644473600000000ULL;
 #else
+#if USE_CLOCK_GETTIME == true
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    now = (ts.tv_sec*1000000ull) + (ts.tv_nsec/1000ull);
+
+#else
     struct timeval tv;
     (void)gettimeofday(&tv, NULL);
     now = (tv.tv_sec * 1000000ull) + tv.tv_usec;
+#endif
 #endif
     return now;
 }
