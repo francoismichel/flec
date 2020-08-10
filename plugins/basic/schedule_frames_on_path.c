@@ -75,7 +75,6 @@ protoop_arg_t schedule_frames_on_path(picoquic_cnx_t *cnx)
         uint64_t cwin = get_path(path_x, AK_PATH_CWIN, 0);
         uint64_t bytes_in_transit = get_path(path_x, AK_PATH_BYTES_IN_TRANSIT, 0);
         picoquic_packet_context_t *pkt_ctx = (picoquic_packet_context_t *) get_path(path_x, AK_PATH_PKT_CTX, pc);
-        void *first_misc_frame = (void *) get_cnx(cnx, AK_CNX_FIRST_MISC_FRAME, 0);
         int challenge_response_to_send = (int) get_path(path_x, AK_PATH_CHALLENGE_RESPONSE_TO_SEND, 0);
         int challenge_verified = (int) get_path(path_x, AK_PATH_CHALLENGE_VERIFIED, 0);
         uint64_t challenge_time = (uint64_t) get_path(path_x, AK_PATH_CHALLENGE_TIME, 0);
@@ -92,19 +91,14 @@ protoop_arg_t schedule_frames_on_path(picoquic_cnx_t *cnx)
         set_pkt(packet, AK_PKT_SEND_TIME, current_time);
         set_pkt(packet, AK_PKT_SEND_PATH, (protoop_arg_t) path_x);
 
-        if (((stream == NULL && tls_ready == 0 && first_misc_frame == NULL) ||
-                cwin <= bytes_in_transit)
-            && helper_is_ack_needed(cnx, current_time, pc, path_x) == 0
+        if (helper_is_ack_needed(cnx, current_time, pc, path_x) == 0
             && challenge_response_to_send == 0
-            && (challenge_verified == 1 || current_time < challenge_time + retransmit_timer)
-            && queue_peek(reserved_frames) == NULL
-            && queue_peek(retry_frames) == NULL) {
-            if (ret == 0 && send_buffer_max > path_send_mtu
-                && cwin > bytes_in_transit && helper_is_mtu_probe_needed(cnx, path_x)) {
+            && (challenge_verified == 1 || current_time < challenge_time + retransmit_timer)) {
+            if (ret == 0 && send_buffer_max > path_send_mtu && helper_is_mtu_probe_needed(cnx, path_x)) {
                 length = helper_prepare_mtu_probe(cnx, path_x, header_length, checksum_overhead, bytes);
                 set_pkt(packet, AK_PKT_IS_MTU_PROBE, 1);
                 set_pkt(packet, AK_PKT_LENGTH, length);
-                set_pkt(packet, AK_PKT_IS_CONGESTION_CONTROLLED, 1);
+                set_pkt(packet, AK_PKT_IS_CONGESTION_CONTROLLED, 0);
                 set_path(path_x, AK_PATH_MTU_PROBE_SENT, 0, 1);
                 set_pkt(packet, AK_PKT_IS_PURE_ACK, 0);
             } else {
@@ -139,7 +133,8 @@ protoop_arg_t schedule_frames_on_path(picoquic_cnx_t *cnx)
                 size_t consumed = 0;
                 unsigned int is_pure_ack = (unsigned int) get_pkt(packet, AK_PKT_IS_PURE_ACK);
                 ret = helper_scheduler_write_new_frames(cnx, &bytes[length],
-                                                        send_buffer_min_max - checksum_overhead - length, packet,
+                                                        send_buffer_min_max - checksum_overhead - length,
+                                                        length - get_pkt(packet, AK_PKT_OFFSET), packet,
                                                         &consumed, &is_pure_ack);
                 set_pkt(packet, AK_PKT_IS_PURE_ACK, is_pure_ack);
                 if (!ret && consumed > send_buffer_min_max - checksum_overhead - length) {
@@ -181,22 +176,6 @@ protoop_arg_t schedule_frames_on_path(picoquic_cnx_t *cnx)
                             set_path(path_x, AK_PATH_CHALLENGE_RESPONSE_TO_SEND, 0, 0);
                             length += PICOQUIC_CHALLENGE_LENGTH + 1;
                             set_pkt(packet, AK_PKT_IS_CONGESTION_CONTROLLED, 1);
-                        }
-                        /* If present, send misc frame */
-                        while (first_misc_frame != NULL) {
-                            ret = helper_prepare_first_misc_frame(cnx, &bytes[length],
-                                                                    send_buffer_min_max - checksum_overhead - length, &data_bytes);
-                            if (ret == 0) {
-                                length += (uint32_t)data_bytes;
-                                set_pkt(packet, AK_PKT_IS_CONGESTION_CONTROLLED, 1);
-                            }
-                            else {
-                                if (ret == PICOQUIC_ERROR_FRAME_BUFFER_TOO_SMALL) {
-                                    ret = 0;
-                                }
-                                break;
-                            }
-                            first_misc_frame = (void *) get_cnx(cnx, AK_CNX_FIRST_MISC_FRAME, 0);
                         }
                         /* If necessary, encode the max data frame */
                         uint64_t data_received = get_cnx(cnx, AK_CNX_DATA_RECEIVED, 0);

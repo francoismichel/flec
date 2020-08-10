@@ -426,8 +426,6 @@ void set_preq(plugin_req_pid_t *preq, access_key_t ak, protoop_arg_t val);
 #define AK_CNX_RESERVED_FRAMES 0x35
 /** The retry frames queue */
 #define AK_CNX_RETRY_FRAMES 0x36
-/** The first misc frame to be sent */
-#define AK_CNX_FIRST_MISC_FRAME 0x37
 /** The first stream in the queue */
 #define AK_CNX_FIRST_STREAM 0x38
 /** Are plugins requested? */
@@ -444,8 +442,12 @@ void set_preq(plugin_req_pid_t *preq, access_key_t ak, protoop_arg_t val);
 #define AK_CNX_HANDSHAKE_DONE_SENT 0x3E
 /** Whether a HANDSHAKE_DONE frame was acked */
 #define AK_CNX_HANDSHAKE_DONE_ACKED 0x3F
+/** Whether the cnx has notified that it is ready to send data */
+#define AK_CNX_READY_NOTIFIED 0x40
+/**/
+#define AK_CNX_QUIC_MTU_MAX 0x41
 /** Max receive window size for each stream, as uint64_t */
-#define AK_CNX_MAX_STREAM_RECEIVE_WINDOW_SIZE 0x40
+#define AK_CNX_MAX_STREAM_RECEIVE_WINDOW_SIZE 0x42
 
 /**
  * @}
@@ -532,6 +534,7 @@ void set_preq(plugin_req_pid_t *preq, access_key_t ak, protoop_arg_t val);
 #define AK_PATH_PACING_PACKET_TIME_MICROSEC 0x25
 #define AK_PATH_RTT_SAMPLE 0x26
 #define AK_PATH_DELIVERED_PRIOR 0x27
+#define AK_PATH_BANDWIDTH_ESTIMATE 0x28
 /**
  * @}
  * 
@@ -677,8 +680,6 @@ void set_preq(plugin_req_pid_t *preq, access_key_t ak, protoop_arg_t val);
 #define AK_STREAMHEAD_MAX_DATA_REMOTE 0x04
 /** The maximum offset sent on the stream */
 #define AK_STREAMHEAD_SENT_OFFSET 0x05
-/** The stream flags */
-#define AK_STREAMHEAD_STREAM_FLAGS 0x06
 /** The offset at which new app data will be queued for sending */
 #define AK_STREAMHEAD_SENDING_OFFSET 0x07
 /** The maximum offset allowed by us */

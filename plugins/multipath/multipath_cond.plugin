@@ -1,3 +1,6 @@
+write_transport_parameter param 0x40 replace write_max_sending_uniflow_id.o
+process_transport_parameter param 0x40 replace process_max_sending_uniflow_id.o
+-
 parse_frame param 0x40 replace parse_mp_new_connection_id_frame.o
 process_frame param 0x40 replace process_mp_new_connection_id_frame.o
 write_frame param 0x40 replace write_mp_new_connection_id_frame.o

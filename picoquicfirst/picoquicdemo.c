@@ -131,7 +131,7 @@ void print_address(struct sockaddr* address, char* label, picoquic_connection_id
         (address->sa_family == AF_INET) ? (void*)&(((struct sockaddr_in*)address)->sin_addr) : (void*)&(((struct sockaddr_in6*)address)->sin6_addr),
         hostname, sizeof(hostname));
 
-    printf("%" PRIx64 ": ", picoquic_val64_connection_id(cnx_id));
+    printf("%016llx : ", (unsigned long long)picoquic_val64_connection_id(cnx_id));
 
     if (x != NULL) {
         printf("%s %s, port %d\n", label, x,
@@ -323,7 +323,7 @@ static int get_request_length(char *command, size_t command_length)
     return ret;
 }
 
-static void first_server_callback(picoquic_cnx_t* cnx,
+static int first_server_callback(picoquic_cnx_t* cnx,
     uint64_t stream_id, uint8_t* bytes, size_t length,
     picoquic_call_back_event_t fin_or_event, void* callback_ctx)
 {
@@ -335,6 +335,18 @@ static void first_server_callback(picoquic_cnx_t* cnx,
     printf("Server CB, Stream: %" PRIu64 ", %" PRIst " bytes, fin=%d (%s)\n",
         stream_id, length, fin_or_event, picoquic_log_fin_or_event_name(fin_or_event));
 
+    if (fin_or_event == picoquic_callback_prepare_to_send) {
+        /* Unexpected call. */
+        return -1;
+    }
+
+    if (fin_or_event == picoquic_callback_almost_ready ||
+        fin_or_event == picoquic_callback_ready ||
+        fin_or_event == picoquic_callback_challenge_response) {
+        /* Nothing to do */
+        return 0;
+    }
+
     if (fin_or_event == picoquic_callback_close || 
         fin_or_event == picoquic_callback_application_close ||
         fin_or_event == picoquic_callback_stateless_reset) {
@@ -343,12 +355,7 @@ static void first_server_callback(picoquic_cnx_t* cnx,
             picoquic_set_callback(cnx, first_server_callback, NULL);
         }
         fflush(stdout);
-        return;
-    }
-
-    if (fin_or_event == picoquic_callback_challenge_response) {
-        fflush(stdout);
-        return;
+        return 0;
     }
 
     if (ctx == NULL) {
@@ -359,7 +366,7 @@ static void first_server_callback(picoquic_cnx_t* cnx,
             printf("Memory error, cannot allocate application context\n");
 
             picoquic_close(cnx, PICOQUIC_ERROR_MEMORY);
-            return;
+            return 0;
         } else {
             picoquic_set_callback(cnx, first_server_callback, new_ctx);
             ctx = new_ctx;
@@ -379,7 +386,7 @@ static void first_server_callback(picoquic_cnx_t* cnx,
         if (stream_ctx == NULL) {
             /* Could not handle this stream */
             picoquic_reset_stream(cnx, stream_id, 500);
-            return;
+            return 0;
         } else {
             memset(stream_ctx, 0, sizeof(picoquic_first_server_stream_ctx_t));
             stream_ctx->next_stream = ctx->first_stream;
@@ -395,14 +402,14 @@ static void first_server_callback(picoquic_cnx_t* cnx,
         printf("%" PRIx64 ": ", picoquic_val64_connection_id(picoquic_get_logging_cnxid(cnx)));
         printf("Server CB, Stop Sending Stream: %" PRIu64 ", resetting the local stream.\n",
             stream_id);
-        return;
+        return 0;
     } else if (fin_or_event == picoquic_callback_stream_reset) {
         stream_ctx->status = picoquic_first_server_stream_status_finished;
         picoquic_reset_stream(cnx, stream_id, 0);
         printf("%" PRIx64 ": ", picoquic_val64_connection_id(picoquic_get_logging_cnxid(cnx)));
         printf("Server CB, Reset Stream: %" PRIu64 ", resetting the local stream.\n",
             stream_id);
-        return;
+        return 0;
     } else if (stream_ctx->status == picoquic_first_server_stream_status_finished || stream_ctx->command_length + length > (PICOQUIC_FIRST_COMMAND_MAX - 1)) {
         if (fin_or_event == picoquic_callback_stream_fin && length == 0) {
             /* no problem, this is fine. */
@@ -413,14 +420,14 @@ static void first_server_callback(picoquic_cnx_t* cnx,
             printf("Server CB, Stream: %" PRIu64 ", RESET, too long or after FIN\n",
                 stream_id);
         }
-        return;
+        return 0;
     } else if (fin_or_event == picoquic_callback_stream_gap) {
         /* We do not support this, yet */
         stream_ctx->status = picoquic_first_server_stream_status_finished;
         picoquic_reset_stream(cnx, stream_id, PICOQUIC_TRANSPORT_PROTOCOL_VIOLATION);
         printf("%" PRIx64 ": ", picoquic_val64_connection_id(picoquic_get_logging_cnxid(cnx)));
         printf("Server CB, Stream: %" PRIu64 ", RESET, stream gaps not supported\n", stream_id);
-        return;
+        return 0;
     } else if (fin_or_event == picoquic_callback_no_event || fin_or_event == picoquic_callback_stream_fin) {
         int crlf_present = 0;
 
@@ -487,10 +494,11 @@ static void first_server_callback(picoquic_cnx_t* cnx,
         picoquic_reset_stream(cnx, stream_id, PICOQUIC_TRANSPORT_INTERNAL_ERROR);
         printf("%" PRIx64 ": ", picoquic_val64_connection_id(picoquic_get_logging_cnxid(cnx)));
         printf("Server CB, Stream: %" PRIu64 ", unexpected event\n", stream_id);
-        return;
+        return 0;
     }
 
     /* that's it */
+    return 0;
 }
 
 int quic_server(const char* server_name, int server_port,
@@ -633,7 +641,6 @@ int quic_server(const char* server_name, int server_port,
 
                 if (new_context_created) {
                     cnx_server = picoquic_get_first_cnx(qserver);
-                    picoquic_handle_plugin_negotiation(cnx_server);
 
                     if (qlog_filename) {
                         qlog_fd = open(qlog_filename, O_WRONLY | O_CREAT | O_TRUNC, 00755);
@@ -915,7 +922,7 @@ static void demo_client_start_new_streams(picoquic_cnx_t* cnx,
     }
 }
 
-static void first_client_callback(picoquic_cnx_t* cnx,
+static int first_client_callback(picoquic_cnx_t* cnx,
     uint64_t stream_id, uint8_t* bytes, size_t length,
     picoquic_call_back_event_t fin_or_event, void* callback_ctx)
 {
@@ -927,7 +934,14 @@ static void first_client_callback(picoquic_cnx_t* cnx,
     ctx->last_interaction_time = picoquic_current_time();
     ctx->progress_observed = 1;
 
-    if (fin_or_event == picoquic_callback_close ||
+    if (fin_or_event == picoquic_callback_almost_ready ||
+        fin_or_event == picoquic_callback_ready ||
+        fin_or_event == picoquic_callback_challenge_response) {
+        /* Nothing to do */
+        return 0;
+    }
+
+    if (fin_or_event == picoquic_callback_close || 
         fin_or_event == picoquic_callback_application_close ||
         fin_or_event == picoquic_callback_stateless_reset) {
         if (fin_or_event == picoquic_callback_application_close) {
@@ -950,7 +964,7 @@ static void first_client_callback(picoquic_cnx_t* cnx,
             stream_ctx = stream_ctx->next_stream;
         }
 
-        return;
+        return 0;
     }
     fprintf(stream_ctx->F ? stream_ctx->F : stdout, "EVENT::{\"time\": %ld, \"type\": \"stream_deliver\", \"range\": [%lu, %lu]}\n", picoquic_current_time(), stream_ctx->received_length, length);
 
@@ -962,7 +976,7 @@ static void first_client_callback(picoquic_cnx_t* cnx,
     if (stream_ctx == NULL || stream_ctx->F == NULL) {
         /* Unexpected stream. */
         picoquic_reset_stream(cnx, stream_id, 0);
-        return;
+        return 0;
     } else if (fin_or_event == picoquic_callback_stream_reset) {
         picoquic_reset_stream(cnx, stream_id, 0);
 
@@ -978,7 +992,7 @@ static void first_client_callback(picoquic_cnx_t* cnx,
                 strip_endofline(buf, sizeof(buf), (char*)&stream_ctx->command),
                 (int)stream_ctx->received_length);
         }
-        return;
+        return 0;
     } else if (fin_or_event == picoquic_callback_stop_sending) {
         char buf[256];
         picoquic_reset_stream(cnx, stream_id, 0);
@@ -986,11 +1000,11 @@ static void first_client_callback(picoquic_cnx_t* cnx,
         fprintf(stdout, "Stop sending received on stream %u, command: %s\n",
             stream_ctx->stream_id,
             strip_endofline(buf, sizeof(buf), (char*)&stream_ctx->command));
-        return;
+        return 0;
     } else if (fin_or_event == picoquic_callback_stream_gap) {
         /* We do not support this, yet */
         picoquic_reset_stream(cnx, stream_id, PICOQUIC_TRANSPORT_PROTOCOL_VIOLATION);
-        return;
+        return 0;
     } else if (fin_or_event == picoquic_callback_no_event || fin_or_event == picoquic_callback_stream_fin) {
         if (length > 0) {
             (void)fwrite(bytes, 1, length, stream_ctx->F);
@@ -1022,6 +1036,7 @@ static void first_client_callback(picoquic_cnx_t* cnx,
     }
 
     /* that's it */
+    return 0;
 }
 
 #define PICOQUIC_DEMO_CLIENT_MAX_RECEIVE_BATCH 4
@@ -1063,7 +1078,6 @@ int quic_client(const char* ip_address_text, int server_port, const char * sni,
     int zero_rtt_available = 0;
     int new_context_created = 0;
     char buf[25];
-    int waiting_transport_parameters = 1;
     int qlog_fd = -1;
     int current_requests = 0;
     uint64_t last_performed_request = 0;
@@ -1129,6 +1143,11 @@ int quic_client(const char* ip_address_text, int server_port, const char * sni,
             PICOQUIC_SET_LOG(qclient, F_log);
             PICOQUIC_SET_TLS_SECRETS_LOG(qclient, F_tls_secrets);
 
+            /* As we currently do not modify plugins to inject yet, we can store it in the quic structure */
+            if (ret == 0 && (ret = picoquic_set_local_plugins(qclient, local_plugin_fnames, local_plugins)) != 0) {
+                printf("Error when setting local plugins to inject\n");
+            }
+
             if (sni == NULL) {
                 /* Standard verifier would crash */
                 fprintf(stdout, "No server name specified, certificate will not be verified.\n");
@@ -1160,6 +1179,7 @@ int quic_client(const char* ip_address_text, int server_port, const char * sni,
         tp.initial_max_stream_data_bidi_local = MIN(tp.initial_max_stream_data_bidi_local, max_stream_receive_window_size);
         tp.initial_max_stream_data_bidi_remote = MIN(tp.initial_max_stream_data_bidi_remote, max_stream_receive_window_size);
         tp.initial_max_stream_data_uni = MIN(tp.initial_max_stream_data_uni, max_stream_receive_window_size);
+        qclient->default_tp = &tp;
         /* Create a client connection */
         cnx_client = picoquic_create_cnx_with_transport_parameters(qclient, picoquic_null_connection_id, picoquic_null_connection_id,
             (struct sockaddr*)&server_address, current_time,
@@ -1306,13 +1326,12 @@ int quic_client(const char* ip_address_text, int server_port, const char * sni,
                             fprintf(F_log, "The session was properly resumed!\n");
                         }
                     }
+
+                    if (cnx_client->zero_rtt_data_accepted) {
+                        fprintf(stdout, "Zero RTT data is accepted!\n");
+                    }
                     fprintf(stdout, "Almost ready!\n\n");
                     notified_ready = 1;
-                }
-
-                if (waiting_transport_parameters && cnx_client->remote_parameters_received) {
-                    picoquic_handle_plugin_negotiation(cnx_client);
-                    waiting_transport_parameters = 0;
                 }
 
                 if (ret != 0) {

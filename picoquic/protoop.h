@@ -96,6 +96,28 @@ extern protoop_id_t PROTOOP_PARAM_WRITE_FRAME;
 #define PROTOOPID_PARAM_NOTIFY_FRAME "notify_frame"
 extern protoop_id_t PROTOOP_PARAM_NOTIFY_FRAME;
 
+/**
+ * Write a non-standard transport parameter.
+ *
+ * \param[in] bytes \b uint8_t* Pointer to the start of the buffer to write the value (and only the value)
+ * \param[in] max_length \b size_t The maximum length that can be written
+ *
+ * \return consumed \b int The number of bytes written in \p bytes
+ */
+#define PROTOOPID_PARAM_WRITE_TRANSPORT_PARAMETER "write_transport_parameter"
+extern protoop_id_t PROTOOP_PARAM_WRITE_TRANSPORT_PARAMETER;
+
+/**
+ * Process a non-standard transport parameter and indicates if a plugin should be injected or not.
+ *
+ * \param[in] bytes \b uint8_t* A pointer to the value of the received extension
+ * \param[in] length \b size_t The length of the value of the received extension
+ *
+ * \return inject_plugin \b int If non zero, indicates that the plugin having injected this protoop should be fully injected
+ */
+#define PROTOOPID_PARAM_PROCESS_TRANSPORT_PARAMETER "process_transport_parameter"
+extern protoop_id_t PROTOOP_PARAM_PROCESS_TRANSPORT_PARAMETER;
+
 /* @} */
 
 /**
@@ -148,6 +170,7 @@ extern protoop_id_t PROTOOP_NOPARAM_SCHEDULE_FRAMES_ON_PATH;
  * Write frames that were previously scheduled in the packet
  * \param[in] bytes \b uint8_t* The array of bytes forming the packet content
  * \param[in] max_bytes \b size_t The maximum amount of bytes that can be written on the packet
+ * \param[in] payload_offset \b size_t The current position in the payload were new frames can be written
  * \param[in] packet \b picoquic_packet_t* The packet to be sent
  * 
  * \return \b int 0 if everything is ok
@@ -375,7 +398,6 @@ extern protoop_id_t PROTOOP_NOPARAM_GET_DESTINATION_CONNECTION_ID;
 /**
  * Set the timer for the select, i.e., specify the next wake time of the implementation
  * \param[in] current_time \b uint64_t The current time
- * \param[in] last_pkt_length \b uint32_t Size of last packet sent
  */
 #define PROTOOPID_NOPARAM_SET_NEXT_WAKE_TIME "set_next_wake_time"
 extern protoop_id_t PROTOOP_NOPARAM_SET_NEXT_WAKE_TIME;
@@ -583,6 +605,7 @@ extern protoop_id_t PROTOOP_NOPARAM_PREPARE_MAX_DATA_FRAME;
 #define PROTOOPID_NOPARAM_PREPARE_REQUIRED_MAX_STREAM_DATA_FRAME "prepare_required_max_stream_data_frames"
 extern protoop_id_t PROTOOP_NOPARAM_PREPARE_REQUIRED_MAX_STREAM_DATA_FRAME;
 /**
+<<<<<<< HEAD
  * Tells whether a MAX_STREAM_DATA is needed for the specified stream..
  * \param[in] stream \b picoquic_stream_head* Pointer to the stream for which we want the information
  *
@@ -613,6 +636,8 @@ extern protoop_id_t PROTOOP_NOPARAM_PREPARE_FIRST_MISC_FRAME;
 #define PROTOOPID_NOPARAM_PREPARE_MISC_FRAME "prepare_misc_frame"
 extern protoop_id_t PROTOOP_NOPARAM_PREPARE_MISC_FRAME;
 /**
+=======
+>>>>>>> 2bd9737291f61f5f5286de6e758613f49237a0c6
  * Prepare a path challenge frame.
  * \param[in] bytes \b uint8_t* Pointer to the buffer to write the frame 
  * \param[in] bytes_max \b size_t Max size that can be written

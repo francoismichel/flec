@@ -247,6 +247,13 @@ namespace UnitTest1
             Assert::AreEqual(ret, 0);
         }
 
+        TEST_METHOD(stream_id_to_rank)
+        {
+            int ret = stream_id_to_rank_test();
+
+            Assert::AreEqual(ret, 0);
+        }
+
 		TEST_METHOD(test_transport_param)
 		{
 			int ret = transport_param_test();
@@ -369,13 +376,6 @@ namespace UnitTest1
         TEST_METHOD(test_multiple_versions)
         {
             int ret = tls_api_multiple_versions_test();
-
-            Assert::AreEqual(ret, 0);
-        }
-
-        TEST_METHOD(test_ping_pong)
-        {
-            int ret = ping_pong_test();
 
             Assert::AreEqual(ret, 0);
         }
@@ -570,13 +570,6 @@ namespace UnitTest1
             Assert::AreEqual(ret, 0);
         }
 
-        TEST_METHOD(test_client_error)
-        {
-            int ret = client_error_test();
-
-            Assert::AreEqual(ret, 0);
-        }
-
         TEST_METHOD(test_packet_enc_dec)
         {
             int ret = packet_enc_dec_test();
@@ -612,6 +605,41 @@ namespace UnitTest1
             Assert::AreEqual(ret, 0);
         }
 
+        TEST_METHOD(key_rotation_stress)
+        {
+            int ret = key_rotation_stress_test();
+
+            Assert::AreEqual(ret, 0);
+        }
+
+        TEST_METHOD(false_migration)
+        {
+            int ret = false_migration_test();
+
+            Assert::AreEqual(ret, 0);
+        }
+        
+        TEST_METHOD(nat_handshake)
+        {
+            int ret = nat_handshake_test();
+
+            Assert::AreEqual(ret, 0);
+        }
+
+        TEST_METHOD(short_initial_cid)
+        {
+            int ret = short_initial_cid_test();
+
+            Assert::AreEqual(ret, 0);
+        }
+
+        TEST_METHOD(stream_id_max)
+        {
+            int ret = stream_id_max_test();
+
+            Assert::AreEqual(ret, 0);
+        }
+        
         TEST_METHOD(stress)
         {
             int ret = stress_test();

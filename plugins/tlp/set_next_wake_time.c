@@ -84,18 +84,18 @@ static void cnx_set_next_wake_time_init(picoquic_cnx_t* cnx, uint64_t current_ti
                 uint64_t cwin_x = (uint64_t) get_path(path_x, AK_PATH_CWIN, 0);
                 uint64_t bytes_in_transit_x = (uint64_t) get_path(path_x, AK_PATH_BYTES_IN_TRANSIT, 0);
                 int challenge_verified_x = (int) get_path(path_x, AK_PATH_CHALLENGE_VERIFIED, 0);
-                if (cwin_x > bytes_in_transit_x && challenge_verified_x == 1) {
+                if (challenge_verified_x == 1) {
                     if (helper_should_send_max_data(cnx) ||
                         helper_is_tls_stream_ready(cnx) ||
-                        (crypto_context_1_aead_encrypt != NULL &&
-                        ((stream = helper_find_ready_stream(cnx)) != NULL || run_noparam(cnx, PROTOOPID_NOPARAM_HAS_CONGESTION_CONTROLLED_PLUGIN_FRAMEMS_TO_SEND, 0, NULL, NULL)))) {
-                        uint64_t next_pacing_time_x = (uint64_t) get_path(path_x, AK_PATH_NEXT_PACING_TIME, 0);
-                        uint64_t pacing_margin_micros_x = (uint64_t) get_path(path_x, AK_PATH_PACING_MARGIN_MICROS, 0);
-                        if (next_pacing_time_x < current_time + pacing_margin_micros_x) {
-                            blocked = 0;
-                        }
-                        else {
-                            pacing = 1;
+                        (crypto_context_1_aead_encrypt != NULL && (stream = helper_find_ready_stream(cnx)) != NULL)) {
+                        if (cwin_x > bytes_in_transit_x) {
+                            if (picoquic_is_sending_authorized_by_pacing(path_x, current_time, &next_time)) {
+                                blocked = 0;
+                            } else {
+                                pacing = 1;
+                            }
+                        } else if ((void *) get_cnx(cnx, AK_CNX_CONGESTION_CONTROL_ALGORITHM, 0) != NULL) {
+                            helper_congestion_algorithm_notify(cnx, path_x, picoquic_congestion_notification_cwin_blocked, 0, 0, 0, current_time);
                         }
                     }
                 }
@@ -164,7 +164,9 @@ static void cnx_set_next_wake_time_init(picoquic_cnx_t* cnx, uint64_t current_ti
     for (int i = 0; i < nb_paths; i++) {
         path_x = (picoquic_path_t *) get_cnx(cnx, AK_CNX_PATH, i);
         int challenge_verified_x = (int) get_path(path_x, AK_PATH_CHALLENGE_VERIFIED, 0);
-        if (blocked != 0 && challenge_verified_x == 0) {
+        int challenge_repeat_count_x = (int) get_path(path_x, AK_PATH_CHALLENGE_REPEAT_COUNT, 0);
+        /* Consider path challenges */
+        if (blocked != 0 && challenge_verified_x == 0 && challenge_repeat_count_x < PICOQUIC_CHALLENGE_REPEAT_MAX) {
             uint64_t challenge_time_x = (uint64_t) get_path(path_x, AK_PATH_CHALLENGE_TIME, 0);
             uint64_t retransmit_timer_x = (uint64_t) get_path(path_x, AK_PATH_RETRANSMIT_TIMER, 0);
             uint64_t next_challenge_time = challenge_time_x + retransmit_timer_x;
@@ -215,7 +217,7 @@ protoop_arg_t set_next_wake_time(picoquic_cnx_t *cnx)
         picoquic_path_t * path_x = (picoquic_path_t *) get_cnx(cnx, AK_CNX_PATH, i);
         uint64_t cwin_x = (uint64_t) get_path(path_x, AK_PATH_CWIN, 0);
         uint64_t bytes_in_transit_x = (uint64_t) get_path(path_x, AK_PATH_BYTES_IN_TRANSIT, 0);
-        if (cwin_x > bytes_in_transit_x && helper_is_mtu_probe_needed(cnx, path_x)) {
+        if (helper_is_mtu_probe_needed(cnx, path_x)) {
             blocked = 0;
         }
         if (cwin_x > bytes_in_transit_x && picoquic_has_booked_plugin_frames(cnx)) {
@@ -243,18 +245,19 @@ protoop_arg_t set_next_wake_time(picoquic_cnx_t *cnx)
             if (blocked != 0) {
                 uint64_t cwin_x = (uint64_t) get_path(path_x, AK_PATH_CWIN, 0);
                 uint64_t bytes_in_transit_x = (uint64_t) get_path(path_x, AK_PATH_BYTES_IN_TRANSIT, 0);
-                if (cwin_x > bytes_in_transit_x) {
+                int challenge_verified_x = (int) get_path(path_x, AK_PATH_CHALLENGE_VERIFIED, 0);
+                if (challenge_verified_x == 1) {
                     if (helper_should_send_max_data(cnx) ||
                         helper_is_tls_stream_ready(cnx) ||
-                        ((cnx_state == picoquic_state_client_ready || cnx_state == picoquic_state_server_ready) &&
-                        (stream = helper_find_ready_stream(cnx)) != NULL)) {
-                        uint64_t next_pacing_time_x = (uint64_t) get_path(path_x, AK_PATH_NEXT_PACING_TIME, 0);
-                        uint64_t pacing_margin_micros_x = (uint64_t) get_path(path_x, AK_PATH_PACING_MARGIN_MICROS, 0);
-                        if (next_pacing_time_x < current_time + pacing_margin_micros_x) {
-                            blocked = 0;
-                        }
-                        else {
-                            pacing = 1;
+                        (stream = helper_find_ready_stream(cnx)) != NULL) {
+                        if (cwin_x > bytes_in_transit_x) {
+                            if (picoquic_is_sending_authorized_by_pacing(path_x, current_time, &next_time)) {
+                                blocked = 0;
+                            } else {
+                                pacing = 1;
+                            }
+                        } else if ((void *) get_cnx(cnx, AK_CNX_CONGESTION_CONTROL_ALGORITHM, 0) != NULL) {
+                            helper_congestion_algorithm_notify(cnx, path_x, picoquic_congestion_notification_cwin_blocked, 0, 0, 0, current_time);
                         }
                     }
                 }
@@ -344,16 +347,16 @@ protoop_arg_t set_next_wake_time(picoquic_cnx_t *cnx)
 
         for (int i = 0; i < nb_paths; i++) {
             path_x = (picoquic_path_t *) get_cnx(cnx, AK_CNX_PATH, i);
-            int challenge_verified_x = (int) get_path(path_x, AK_PATH_CHALLENGE_VERIFIED, 0);
+            int challenge_repeat_count_x = (int) get_path(path_x, AK_PATH_CHALLENGE_REPEAT_COUNT, 0);
             /* Consider path challenges */
-            if (challenge_verified_x == 0) {
+            if (challenge_verified_x == 0 && challenge_repeat_count_x < AK_PATH_CHALLENGE_REPEAT_COUNT) {
                 uint64_t challenge_time_x = (uint64_t) get_path(path_x, AK_PATH_CHALLENGE_TIME, 0);
                 uint64_t retransmit_timer_x = (uint64_t) get_path(path_x, AK_PATH_RETRANSMIT_TIMER, 0);
                 uint64_t next_challenge_time = challenge_time_x + retransmit_timer_x;
-                if (current_time < next_challenge_time) {
-                    if (next_time > next_challenge_time) {
-                        next_time = next_challenge_time;
-                    }
+                if (next_challenge_time <= current_time) {
+                    next_time = current_time;
+                } else if (next_challenge_time < next_time) {
+                    next_time = next_challenge_time;
                 }
             }
 

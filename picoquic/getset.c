@@ -168,8 +168,6 @@ protoop_arg_t get_cnx(picoquic_cnx_t *cnx, access_key_t ak, uint16_t param)
         return cnx->protoop_output;
     case AK_CNX_RESERVED_FRAMES:
         return (protoop_arg_t) cnx->reserved_frames;
-    case AK_CNX_FIRST_MISC_FRAME:
-        return (protoop_arg_t) cnx->first_misc_frame;
     case AK_CNX_RETRY_FRAMES:
         return (protoop_arg_t) cnx->retry_frames;
     case AK_CNX_RTX_FRAMES:
@@ -196,6 +194,8 @@ protoop_arg_t get_cnx(picoquic_cnx_t *cnx, access_key_t ak, uint16_t param)
             return 0;
         }
         return (protoop_arg_t) &cnx->pids_to_request.elems[param];
+    case AK_CNX_QUIC_MTU_MAX:
+        return cnx->quic->mtu_max;
     default:
         printf("ERROR: unknown cnx access key %u\n", ak);
         return 0;
@@ -429,9 +429,6 @@ void set_cnx(picoquic_cnx_t *cnx, access_key_t ak, uint16_t param, protoop_arg_t
     case AK_CNX_RETRY_FRAMES:
         printf("ERROR: trying to modify retry frames...\n");
         break;
-    case AK_CNX_FIRST_MISC_FRAME:
-        printf("ERROR: trying to modify first misc frame...\n");
-        break;
     case AK_CNX_RTX_FRAMES:
         printf("ERROR: trying to modify rtx frames...\n");
         break;
@@ -568,6 +565,8 @@ protoop_arg_t get_path(picoquic_path_t *path, access_key_t ak, uint16_t param)
         return path->delivered_limited_index;
     case AK_PATH_RTT_SAMPLE:
         return path->rtt_sample;
+    case AK_PATH_BANDWIDTH_ESTIMATE:
+        return path->bandwidth_estimate;
     default:
         printf("ERROR: unknown path access key %u\n", ak);
         return 0;
@@ -795,6 +794,7 @@ void set_pkt_ctx(picoquic_packet_context_t *pkt_ctx, access_key_t ak, protoop_ar
         break;
     case AK_PKTCTX_LATEST_RETRANSMIT_TIME:
         pkt_ctx->latest_retransmit_time = val;
+        break;
     case AK_PKTCTX_LATEST_RETRANSMIT_CC_NOTIFICATION_TIME:
         pkt_ctx->latest_retransmit_cc_notification_time = val;
         break;
@@ -947,6 +947,7 @@ void set_pkt(picoquic_packet_t *pkt, access_key_t ak, protoop_arg_t val)
         break;
     case AK_PKT_HAS_HANDSHAKE_DONE:
         pkt->has_handshake_done = (unsigned int) val;
+        break;
     case AK_PKT_IS_CONGESTION_CONTROLLED:
         pkt->is_congestion_controlled = val;
         break;
@@ -1040,8 +1041,6 @@ protoop_arg_t get_stream_head(picoquic_stream_head *stream_head, access_key_t ak
         return stream_head->maxdata_local;
     case AK_STREAMHEAD_SENT_OFFSET:
         return stream_head->sent_offset;
-    case AK_STREAMHEAD_STREAM_FLAGS:
-        return stream_head->stream_flags;
     case AK_STREAMHEAD_SENDING_OFFSET:
         return stream_head->sending_offset;
     default:

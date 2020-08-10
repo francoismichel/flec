@@ -141,6 +141,24 @@ static test_api_stream_desc_t test_scenario_mtu_discovery[] = {
     { 2, 0, 100000, 0 }
 };
 
+static test_api_stream_desc_t test_scenario_sustained[] = {
+    { 4, 0, 257, 1000000 },
+    { 8, 4, 257, 1000000 },
+    { 12, 8, 257, 1000000 },
+    { 16, 12, 257, 1000000 }
+};
+
+static test_api_stream_desc_t test_scenario_many_streams[] = {
+    { 4, 0, 32, 1000 },
+    { 8, 0, 32, 1000 },
+    { 12, 0, 32, 1000 },
+    { 16, 0, 32, 1000 },
+    { 20, 0, 32, 1000 },
+    { 24, 0, 32, 1000 },
+    { 28, 0, 32, 1000 },
+    { 32, 0, 32, 1000 }
+};
+
 static int test_api_init_stream_buffers(size_t len, uint8_t** src_bytes, uint8_t** rcv_bytes)
 {
     int ret = 0;
@@ -282,7 +300,7 @@ static int test_api_queue_initial_queries(picoquic_test_tls_api_ctx_t* test_ctx,
     return ret;
 }
 
-static void test_api_callback(picoquic_cnx_t* cnx,
+static int test_api_callback(picoquic_cnx_t* cnx,
     uint64_t stream_id, uint8_t* bytes, size_t length,
     picoquic_call_back_event_t fin_or_event, void* callback_ctx)
 {
@@ -293,9 +311,11 @@ static void test_api_callback(picoquic_cnx_t* cnx,
     picoquic_call_back_event_t stream_finished = picoquic_callback_no_event;
 
     if (fin_or_event == picoquic_callback_close || 
-        fin_or_event == picoquic_callback_application_close) {
+        fin_or_event == picoquic_callback_application_close ||
+        fin_or_event == picoquic_callback_almost_ready ||
+        fin_or_event == picoquic_callback_ready)  {
         /* do nothing in our tests */
-        return;
+        return 0;
     }
 
     if (cb_ctx->client_mode) {
@@ -307,7 +327,7 @@ static void test_api_callback(picoquic_cnx_t* cnx,
     if (fin_or_event == picoquic_callback_stateless_reset) {
         /* take note to validate test */
         ctx->reset_received = 1;
-        return;
+        return 0;
     }
 
     if (bytes != NULL) {
@@ -416,6 +436,8 @@ static void test_api_callback(picoquic_cnx_t* cnx,
             cb_ctx->error_detected |= test_api_fail_cannot_send_query;
         }
     }
+
+    return 0;
 }
 
 static int test_api_init_send_recv_scenario(picoquic_test_tls_api_ctx_t* test_ctx,
@@ -1150,7 +1172,7 @@ int tls_api_wrong_alpn_test()
 int tls_api_one_scenario_test(test_api_stream_desc_t* scenario,
     size_t sizeof_scenario, uint64_t init_loss_mask, uint64_t max_data, uint64_t queue_delay_max,
     uint32_t proposed_version, uint64_t max_completion_microsec,
-    picoquic_tp_t * client_params)
+    picoquic_tp_t * client_params, picoquic_tp_t * server_params)
 {
     uint64_t simulated_time = 0;
     uint64_t loss_mask = 0;
@@ -1166,6 +1188,10 @@ int tls_api_one_scenario_test(test_api_stream_desc_t* scenario,
 
     if (ret == 0 && client_params != NULL) {
         picoquic_set_transport_parameters(test_ctx->cnx_client, client_params);
+    }
+
+    if (ret == 0 && server_params != NULL) {
+        ret = picoquic_set_default_tp(test_ctx->qserver, server_params);
     }
 
     if (ret == 0) {
@@ -1262,42 +1288,42 @@ int tls_api_one_scenario_test(test_api_stream_desc_t* scenario,
 
 int tls_api_oneway_stream_test()
 {
-    return tls_api_one_scenario_test(test_scenario_oneway, sizeof(test_scenario_oneway), 0, 0, 0, 0, 65100, NULL);
+    return tls_api_one_scenario_test(test_scenario_oneway, sizeof(test_scenario_oneway), 0, 0, 0, 0, 70000, NULL, NULL);
 }
 
 int tls_api_q_and_r_stream_test()
 {
-    return tls_api_one_scenario_test(test_scenario_q_and_r, sizeof(test_scenario_q_and_r), 0, 0, 0, 0, 75000, NULL);
+    return tls_api_one_scenario_test(test_scenario_q_and_r, sizeof(test_scenario_q_and_r), 0, 0, 0, 0, 75000, NULL, NULL);
 }
 
 int tls_api_q2_and_r2_stream_test()
 {
-    return tls_api_one_scenario_test(test_scenario_q2_and_r2, sizeof(test_scenario_q2_and_r2), 0, 0, 0, 0, 75100, NULL);
+    return tls_api_one_scenario_test(test_scenario_q2_and_r2, sizeof(test_scenario_q2_and_r2), 0, 0, 0, 0, 80000, NULL, NULL);
 }
 
 int tls_api_very_long_stream_test()
 {
-    return tls_api_one_scenario_test(test_scenario_very_long, sizeof(test_scenario_very_long), 0, 0, 0, 0, 1000000, NULL);
+    return tls_api_one_scenario_test(test_scenario_very_long, sizeof(test_scenario_very_long), 0, 0, 0, 0, 3510000, NULL, NULL);
 }
 
 int tls_api_very_long_max_test()
 {
-    return tls_api_one_scenario_test(test_scenario_very_long, sizeof(test_scenario_very_long), 0, 128000, 0, 0, 1000000, NULL);
+    return tls_api_one_scenario_test(test_scenario_very_long, sizeof(test_scenario_very_long), 0, 128000, 0, 0, 3510000, NULL, NULL);
 }
 
 int tls_api_very_long_with_err_test()
 {
-    return tls_api_one_scenario_test(test_scenario_very_long, sizeof(test_scenario_very_long), 0x30000, 128000, 0, 0, 3550000, NULL);
+    return tls_api_one_scenario_test(test_scenario_very_long, sizeof(test_scenario_very_long), 0x30000, 128000, 0, 0, 11000000, NULL, NULL);
 }
 
 int tls_api_very_long_congestion_test()
 {
-    return tls_api_one_scenario_test(test_scenario_very_long, sizeof(test_scenario_very_long), 0, 128000, 20000, 0, 1000000, NULL);
+    return tls_api_one_scenario_test(test_scenario_very_long, sizeof(test_scenario_very_long), 0, 128000, 20000, 0, 7000000, NULL, NULL);
 }
 
 int unidir_test()
 {
-    return tls_api_one_scenario_test(test_scenario_unidir, sizeof(test_scenario_unidir), 0, 128000, 10000, 0, 75000, NULL);
+    return tls_api_one_scenario_test(test_scenario_unidir, sizeof(test_scenario_unidir), 0, 128000, 10000, 0, 100000, NULL, NULL);
 }
 
 /*
@@ -1570,7 +1596,7 @@ int tls_api_multiple_versions_test()
 
     for (size_t i = 1; ret == 0 && i < picoquic_nb_supported_versions; i++) {
         ret = tls_api_one_scenario_test(test_scenario_q_and_r, sizeof(test_scenario_q_and_r), 0, 0, 0,
-            picoquic_supported_versions[i].version, 0, NULL);
+            picoquic_supported_versions[i].version, 0, NULL, NULL);
     }
 
     return ret;
@@ -1656,117 +1682,6 @@ int keep_alive_test()
 
     if (ret == 0) {
         ret = keep_alive_test_impl(0);
-    }
-
-    return ret;
-}
-
-/*
- * Ping pong test.
- */
-
-typedef struct st_ping_pong_test_callback_ctx_t {
-    picoquic_stream_data_cb_fn master_fn;
-    void* master_ctx;
-    int pong_received;
-    int error_received;
-    size_t ping_length;
-    uint8_t ping_frame[256];
-} ping_pong_test_callback_ctx_t;
-
-static void ping_pong_callback(picoquic_cnx_t* cnx,
-    uint64_t stream_id, uint8_t* bytes, size_t length,
-    picoquic_call_back_event_t fin_or_event, void* callback_ctx)
-{
-    ping_pong_test_callback_ctx_t* ping_pong_ctx = (ping_pong_test_callback_ctx_t*)callback_ctx;
-    if (stream_id == 0 && fin_or_event == picoquic_callback_challenge_response) {
-        /* This is a special frame call back. */
-        if (length == ping_pong_ctx->ping_length && bytes[0] == picoquic_frame_type_path_response && memcmp(bytes + 1, &ping_pong_ctx->ping_frame[1], length - 1) == 0) {
-            ping_pong_ctx->pong_received++;
-        } else {
-            ping_pong_ctx->error_received++;
-        }
-    } else if (ping_pong_ctx->master_fn != NULL) {
-        ping_pong_ctx->master_fn(cnx, stream_id, bytes, length, fin_or_event, ping_pong_ctx->master_ctx);
-    }
-}
-
-int ping_pong_test()
-{
-    ping_pong_test_callback_ctx_t ping_pong_ctx;
-    uint64_t simulated_time = 0;
-    uint64_t loss_mask = 0;
-    picoquic_test_tls_api_ctx_t* test_ctx = NULL;
-    int ret = tls_api_init_ctx(&test_ctx, 0, PICOQUIC_TEST_SNI, PICOQUIC_TEST_ALPN, &simulated_time, NULL, 0, 0, 0);
-    int was_active = 0;
-
-    /*
-     * Before initializing the context, set up a filter to intercept the call backs.
-     */
-    if (ret == 0) {
-        memset(&ping_pong_ctx, 0, sizeof(ping_pong_test_callback_ctx_t));
-        ping_pong_ctx.master_ctx = test_ctx->cnx_client->callback_ctx;
-        ping_pong_ctx.master_fn = test_ctx->cnx_client->callback_fn;
-        test_ctx->cnx_client->callback_ctx = &ping_pong_ctx;
-        test_ctx->cnx_client->callback_fn = ping_pong_callback;
-    }
-
-    /*
-     * setup the connections.
-     */
-
-    if (ret == 0) {
-        ret = tls_api_connection_loop(test_ctx, &loss_mask, 0, &simulated_time);
-    }
-
-    /*
-     * Format and queue the ping frame
-     * TODO: change these names to path challenge
-     */
-    if (ret == 0) {
-        ping_pong_ctx.ping_length = 9;
-        ping_pong_ctx.ping_frame[0] = picoquic_frame_type_path_challenge;
-        for (uint8_t i = 1; i < 9; i++) {
-            ping_pong_ctx.ping_frame[i] = 'a' + i - 2;
-        }
-
-        ret = picoquic_queue_misc_frame(test_ctx->cnx_client, ping_pong_ctx.ping_frame, ping_pong_ctx.ping_length);
-    }
-
-    /* Perform a couple rounds of sending data */
-    for (int i = 0; ret == 0 && i < 32 && test_ctx->cnx_client->cnx_state != picoquic_state_disconnected; i++) {
-        was_active = 0;
-
-        ret = tls_api_one_sim_round(test_ctx, &simulated_time, &was_active);
-
-        if (ret != 0) {
-            printf("Oh fuch\n");
-        }
-
-        if (ping_pong_ctx.pong_received != 0 && picoquic_is_cnx_backlog_empty(test_ctx->cnx_client) && picoquic_is_cnx_backlog_empty(test_ctx->cnx_server)) {
-            break;
-        }
-    }
-
-    /* Check that there was exactly one matching pong received */
-    if (ret == 0 && (ping_pong_ctx.error_received != 0 || ping_pong_ctx.pong_received != 1)) {
-        ret = -1;
-    }
-
-    /* Close the connection */
-    if (ret == 0) {
-        ret = tls_api_attempt_to_close(test_ctx, &simulated_time);
-    }
-
-    /* Verify that no error was received during closing */
-    if (ret == 0 && (ping_pong_ctx.error_received != 0 || ping_pong_ctx.pong_received != 1)) {
-        ret = -1;
-    }
-
-    /* Clean up */
-    if (test_ctx != NULL) {
-        tls_api_delete_ctx(test_ctx);
-        test_ctx = NULL;
     }
 
     return ret;
@@ -2898,7 +2813,7 @@ int tls_different_params_test()
 
     test_parameters.initial_max_streams_bidi = 0;
 
-    return tls_api_one_scenario_test(test_scenario_very_long, sizeof(test_scenario_very_long), 0, 0, 0, 0, 3510000, &test_parameters);
+    return tls_api_one_scenario_test(test_scenario_very_long, sizeof(test_scenario_very_long), 0, 0, 0, 0, 3510000, &test_parameters, NULL);
 }
 
 int set_certificate_and_key_test()
@@ -3360,103 +3275,6 @@ int spin_bit_test()
     return ret;
 }
 
-
-/*
-* Closing on error test. We voluntarily inject an erroneous
-* frame on the client connection. The expected result is that
-* the server connection gets closed, but the server remains
-* responsive.
-*/
-
-int client_error_test()
-{
-    uint64_t simulated_time = 0;
-    uint64_t next_time = 0;
-    uint64_t loss_mask = 0;
-    picoquic_test_tls_api_ctx_t* test_ctx = NULL;
-    int ret = tls_api_init_ctx(&test_ctx, PICOQUIC_INTERNAL_TEST_VERSION_1,
-        PICOQUIC_TEST_SNI, PICOQUIC_TEST_ALPN, &simulated_time, NULL, 0, 0, 0);
-
-    if (ret == 0) {
-        ret = tls_api_connection_loop(test_ctx, &loss_mask, 0, &simulated_time);
-    }
-
-    /* Prepare to send data */
-    if (ret == 0) {
-        ret = test_api_init_send_recv_scenario(test_ctx, test_scenario_q_and_r, sizeof(test_scenario_q_and_r));
-    }
-
-    /* Perform a data sending loop */
-    if (ret == 0) {
-        ret = tls_api_data_sending_loop(test_ctx, &loss_mask, &simulated_time, 0);
-    }
-
-    /* Inject an erroneous frame */
-    if (ret == 0) {
-        /* Queue a data frame on stream 4, which was already closed */
-        uint8_t stream_error_frame[] = { 0x17, 0x04, 0x41, 0x01, 0x08, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07 };
-        picoquic_queue_misc_frame(test_ctx->cnx_client, stream_error_frame, sizeof(stream_error_frame));
-    }
-
-    /* Add a time loop of 3 seconds to give some time for the error to be repeated */
-    next_time = simulated_time + 3000000;
-    loss_mask = 0;
-    while (ret == 0 && simulated_time < next_time
-        && (test_ctx->cnx_client->cnx_state < picoquic_state_disconnected ||
-            test_ctx->cnx_server->cnx_state < picoquic_state_disconnected)) {
-        int was_active = 0;
-
-        ret = tls_api_one_sim_round(test_ctx, &simulated_time, &was_active);
-    }
-
-    if (test_ctx->cnx_server->cnx_state != picoquic_state_disconnected) {
-        ret = -1;
-    }
-
-    /* Delete the client connection from the client context,
-     * without sending notification to the server */
-
-    while (test_ctx->qclient->cnx_list != NULL) {
-        picoquic_delete_cnx(test_ctx->qclient->cnx_list);
-    }
-
-    /* Erase the server connection reference */
-    test_ctx->cnx_server = NULL;
-
-    /* Create a new connection in the client context */
-
-    test_ctx->cnx_client = picoquic_create_cnx(test_ctx->qclient,
-        picoquic_null_connection_id, picoquic_null_connection_id,
-        (struct sockaddr*)&test_ctx->server_addr, simulated_time, 0, PICOQUIC_TEST_SNI, PICOQUIC_TEST_ALPN, 1);
-
-    if (test_ctx->cnx_client == NULL) {
-        ret = -1;
-    }
-    else if (ret == 0) {
-        ret = picoquic_start_client_cnx(test_ctx->cnx_client);
-    }
-
-    /* Now, restart a connection in the same context */
-    if (ret == 0) {
-        ret = tls_api_connection_loop(test_ctx, &loss_mask, 0, &simulated_time);
-    }
-
-    if (ret == 0){
-        ret = wait_application_pn_enc_ready(test_ctx, &simulated_time);
-    }
-
-    if (ret == 0) {
-        ret = tls_api_attempt_to_close(test_ctx, &simulated_time);
-    }
-
-    if (test_ctx != NULL) {
-        tls_api_delete_ctx(test_ctx);
-        test_ctx = NULL;
-    }
-
-    return ret;
-}
-
 int cubic_test()
 {
     uint64_t simulated_time = 0;
@@ -3474,7 +3292,7 @@ int cubic_test()
 
         // picoquic_set_cc_log(test_ctx->qserver, ".");
 
-        ret = tls_api_one_scenario_test(test_scenario_very_long, sizeof(test_scenario_very_long), 0, 128000, 20000, 0, 1000000, NULL);
+        ret = tls_api_one_scenario_test(test_scenario_very_long, sizeof(test_scenario_very_long), 0, 128000, 20000, 0, 1000000, NULL, NULL);
         /* ret = tls_api_one_scenario_body(test_ctx, &simulated_time,
             test_scenario_unidir, sizeof(test_scenario_unidir), 0, 0, 0, 20000, 3600000); */
     }

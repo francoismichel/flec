@@ -69,7 +69,6 @@ protoop_arg_t schedule_frames(picoquic_cnx_t *cnx) {
         uint64_t cwin = get_path(sending_path, AK_PATH_CWIN, 0);
         uint64_t bytes_in_transit = get_path(sending_path, AK_PATH_BYTES_IN_TRANSIT, 0);
         picoquic_packet_context_t *pkt_ctx = (picoquic_packet_context_t *) get_path(sending_path, AK_PATH_PKT_CTX, pc);
-        void *first_misc_frame = (void *) get_cnx(cnx, AK_CNX_FIRST_MISC_FRAME, 0);
         int challenge_verified = (int) get_path(sending_path, AK_PATH_CHALLENGE_VERIFIED, 0);
         uint64_t challenge_time = (uint64_t) get_path(sending_path, AK_PATH_CHALLENGE_TIME, 0);
         uint64_t retransmit_timer = (uint64_t) get_path(sending_path, AK_PATH_RETRANSMIT_TIMER, 0);
@@ -91,38 +90,31 @@ protoop_arg_t schedule_frames(picoquic_cnx_t *cnx) {
         bpf_data *bpfd = get_bpf_data(cnx);
 
         /* We first need to check if there is ANY receive path that requires acknowledgement, and also no path response to send */
-        int any_receive_require_ack = 0;
-        int receive_require_ack[MAX_PATHS];
+        int any_receiving_require_ack = 0;
+        int receiving_require_ack[MAX_RECEIVING_UNIFLOWS];
         int any_path_challenge_response_to_send = 0;
-        int path_challenge_response_to_send[MAX_PATHS];
-        for (int i = 0; i < bpfd->nb_receive_proposed; i++) {
-            picoquic_path_t *receive_path = bpfd->receive_paths[i]->path;
-            if (receive_path != NULL) {
-                receive_require_ack[i] = helper_is_ack_needed(cnx, current_time, pc, receive_path);
+        int path_challenge_response_to_send[MAX_RECEIVING_UNIFLOWS];
+        for (int i = 0; i < bpfd->nb_receiving_proposed; i++) {
+            picoquic_path_t *receiving_path = bpfd->receiving_uniflows[i]->path;
+            if (receiving_path != NULL) {
+                receiving_require_ack[i] = helper_is_ack_needed(cnx, current_time, pc, receiving_path);
                 /* Handle here the reception of the ping */
-                receive_require_ack[i] |= get_path(receive_path, AK_PATH_PING_RECEIVED, 0);
-                any_receive_require_ack |= receive_require_ack[i];
-                path_challenge_response_to_send[i] = get_path(receive_path, AK_PATH_CHALLENGE_RESPONSE_TO_SEND, 0);
+                receiving_require_ack[i] |= get_path(receiving_path, AK_PATH_PING_RECEIVED, 0);
+                any_receiving_require_ack |= receiving_require_ack[i];
+                path_challenge_response_to_send[i] = get_path(receiving_path, AK_PATH_CHALLENGE_RESPONSE_TO_SEND, 0);
                 any_path_challenge_response_to_send |= path_challenge_response_to_send[i];
             }
         }
 
-        if (((stream == NULL && tls_ready == 0 && first_misc_frame == NULL) ||
-             cwin <= bytes_in_transit)
-            && any_receive_require_ack == 0
+        if (any_receiving_require_ack == 0
             && any_path_challenge_response_to_send == 0
             && (challenge_verified == 1 || current_time < challenge_time + retransmit_timer)
-            && !handshake_done_to_send
-            && mtu_needed
-            && queue_peek(retry_frames) == NULL
-            && queue_peek(rtx_frames) == NULL) {
-            if (ret == 0 && send_buffer_max > sending_path_mtu
-                && cwin > bytes_in_transit && mtu_needed) {
-                PROTOOP_PRINTF(cnx, "Preparing MTU probe on sending path %p\n", (protoop_arg_t) sending_path);
+            && mtu_needed) {
+            if (ret == 0 && send_buffer_max > sending_path_mtu) {
                 length = helper_prepare_mtu_probe(cnx, sending_path, header_length, checksum_overhead, bytes);
                 set_pkt(packet, AK_PKT_IS_MTU_PROBE, 1);
                 set_pkt(packet, AK_PKT_LENGTH, length);
-                set_pkt(packet, AK_PKT_IS_CONGESTION_CONTROLLED, 1);
+                set_pkt(packet, AK_PKT_IS_CONGESTION_CONTROLLED, 0);  // See DPLPMTUD draft
                 set_path(sending_path, AK_PATH_MTU_PROBE_SENT, 0, 1);
                 set_pkt(packet, AK_PKT_IS_PURE_ACK, 0);
             } else {
@@ -130,6 +122,7 @@ protoop_arg_t schedule_frames(picoquic_cnx_t *cnx) {
                 length = header_length;
             }
         }
+
         /* If we are blocked by something, let's send control frames */
         if (length == header_length) {
             if (challenge_verified == 0 &&
@@ -144,7 +137,7 @@ protoop_arg_t schedule_frames(picoquic_cnx_t *cnx) {
                     set_path(sending_path, AK_PATH_CHALLENGE_REPEAT_COUNT, 0, challenge_repeat_count);
                     set_pkt(packet, AK_PKT_IS_CONGESTION_CONTROLLED, 1);
                     PROTOOP_PRINTF(cnx, "Sending path %p CWIN %" PRIu64 " BIF %" PRIu64 "\n", (protoop_arg_t) sending_path, cwin, bytes_in_transit);
-                    if (challenge_repeat_count > MAX_PATHS * PICOQUIC_CHALLENGE_REPEAT_MAX) {
+                    if (challenge_repeat_count > MAX_RECEIVING_UNIFLOWS * PICOQUIC_CHALLENGE_REPEAT_MAX) {
                         PROTOOP_PRINTF(cnx, "%s\n", (protoop_arg_t) "Too many challenge retransmits, disconnect");
                         picoquic_set_cnx_state(cnx, picoquic_state_disconnected);
                         helper_callback_function(cnx, 0, NULL, 0, picoquic_callback_close);
@@ -168,18 +161,16 @@ protoop_arg_t schedule_frames(picoquic_cnx_t *cnx) {
                 }
 
                 /* FIXME I know Multipath somewhat bypass the reservation rules, but it is required here and easier like this... */
-                if (any_receive_require_ack) {
-                    for (int i = 0; i < bpfd->nb_receive_proposed; i++) {
-                        path_data_t *pdtmp = bpfd->receive_paths[i];
-                        if (pdtmp->state == path_active || pdtmp->state == path_unusable) {
-                            picoquic_packet_context_t *pc = (picoquic_packet_context_t *) get_path(pdtmp->path, AK_PATH_PKT_CTX, picoquic_packet_context_application);
-                            picoquic_sack_item_t* first_sack = (picoquic_sack_item_t *) get_pkt_ctx(pc, AK_PKTCTX_FIRST_SACK_ITEM);
-                            uint64_t first_sack_start_range = (uint64_t) get_sack_item(first_sack, AK_SACKITEM_START_RANGE);
-                            if (first_sack_start_range != (uint64_t)((int64_t)-1)) {  // Don't reserve for path without activity
-                                reserve_mp_ack_frame(cnx, pdtmp->path, picoquic_packet_context_application);
-                                /* Consider here that the ping have been processed */
-                                set_path(pdtmp->path, AK_PATH_PING_RECEIVED, 0, 0);
-                            }
+                if (any_receiving_require_ack) {
+                    for (int i = 0; i < bpfd->nb_receiving_proposed; i++) {
+                        uniflow_data_t *udtmp = bpfd->receiving_uniflows[i];
+                        picoquic_packet_context_t *pc = (picoquic_packet_context_t *) get_path(udtmp->path, AK_PATH_PKT_CTX, picoquic_packet_context_application);
+                        picoquic_sack_item_t* first_sack = (picoquic_sack_item_t *) get_pkt_ctx(pc, AK_PKTCTX_FIRST_SACK_ITEM);
+                        uint64_t first_sack_start_range = (uint64_t) get_sack_item(first_sack, AK_SACKITEM_START_RANGE);
+                        if (first_sack_start_range != (uint64_t)((int64_t)-1)) {  // Don't reserve for receiving uniflow without activity
+                            reserve_mp_ack_frame(cnx, udtmp->path, picoquic_packet_context_application);
+                            /* Consider here that the ping have been processed */
+                            set_path(udtmp->path, AK_PATH_PING_RECEIVED, 0, 0);
                         }
                     }
                 }
@@ -194,7 +185,8 @@ protoop_arg_t schedule_frames(picoquic_cnx_t *cnx) {
                 size_t consumed = 0;
                 unsigned int is_pure_ack = (unsigned int) get_pkt(packet, AK_PKT_IS_PURE_ACK);
                 ret = helper_scheduler_write_new_frames(cnx, &bytes[length],
-                                                        send_buffer_min_max - checksum_overhead - length, packet,
+                                                        send_buffer_min_max - checksum_overhead - length,
+                                                        length - get_pkt(packet, AK_PKT_OFFSET), packet,
                                                         &consumed, &is_pure_ack);
                 set_pkt(packet, AK_PKT_IS_PURE_ACK, is_pure_ack);
                 if (!ret && consumed > send_buffer_min_max - checksum_overhead - length) {
@@ -212,14 +204,14 @@ protoop_arg_t schedule_frames(picoquic_cnx_t *cnx) {
                     /* if present, send path response. This ensures we send it on the right path */
                     if (any_path_challenge_response_to_send) {
 #define PICOQUIC_CHALLENGE_LENGTH 8
-                        for (int i = 0; i < bpfd->nb_receive_proposed; i++) {
+                        for (int i = 0; i < bpfd->nb_receiving_proposed; i++) {
                             if (path_challenge_response_to_send[i] && send_buffer_min_max - checksum_overhead - length >= PICOQUIC_CHALLENGE_LENGTH + 1) {
-                                picoquic_path_t *receive_path = bpfd->receive_paths[i]->path;
+                                picoquic_path_t *receiving_path = bpfd->receiving_uniflows[i]->path;
                                 /* This is not really clean, but it will work */
                                 my_memset(&bytes[length], picoquic_frame_type_path_response, 1);
-                                uint8_t *challenge_response = (uint8_t *) get_path(receive_path, AK_PATH_CHALLENGE_RESPONSE, 0);
+                                uint8_t *challenge_response = (uint8_t *) get_path(receiving_path, AK_PATH_CHALLENGE_RESPONSE, 0);
                                 my_memcpy(&bytes[length+1], challenge_response, PICOQUIC_CHALLENGE_LENGTH);
-                                set_path(receive_path, AK_PATH_CHALLENGE_RESPONSE_TO_SEND, 0, 0);
+                                set_path(receiving_path, AK_PATH_CHALLENGE_RESPONSE_TO_SEND, 0, 0);
                                 length += PICOQUIC_CHALLENGE_LENGTH + 1;
                                 set_pkt(packet, AK_PKT_IS_CONGESTION_CONTROLLED, 1);
                             }
@@ -252,22 +244,6 @@ protoop_arg_t schedule_frames(picoquic_cnx_t *cnx) {
                             }
                         }
 
-                        /* If present, send misc frame */
-                        while (first_misc_frame != NULL) {
-                            ret = helper_prepare_first_misc_frame(cnx, &bytes[length],
-                                                                  send_buffer_min_max - checksum_overhead - length, &data_bytes);
-                            if (ret == 0) {
-                                length += (uint32_t)data_bytes;
-                                set_pkt(packet, AK_PKT_IS_CONGESTION_CONTROLLED, 1);
-                            }
-                            else {
-                                if (ret == PICOQUIC_ERROR_FRAME_BUFFER_TOO_SMALL) {
-                                    ret = 0;
-                                }
-                                break;
-                            }
-                            first_misc_frame = (void *) get_cnx(cnx, AK_CNX_FIRST_MISC_FRAME, 0);
-                        }
                         /* If necessary, encode the max data frame */
                         uint64_t data_received = get_cnx(cnx, AK_CNX_DATA_RECEIVED, 0);
                         uint64_t maxdata_local = get_cnx(cnx, AK_CNX_MAXDATA_LOCAL, 0);

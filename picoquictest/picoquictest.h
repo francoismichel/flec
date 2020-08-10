@@ -109,7 +109,6 @@ int bad_client_certificate_test();
 int nat_rebinding_test();
 int nat_rebinding_loss_test();
 int spin_bit_test();
-int client_error_test();
 int packet_enc_dec_test();
 int cleartext_pn_vector_test();
 int zero_rtt_spurious_test();
@@ -125,6 +124,27 @@ int cubic_test();
 int datagram_test();
 int microbench_plugin_run_test();
 int split_stream_frame_test();
+int cnxid_stash_test();
+int new_cnxid_test();
+int transmit_cnxid_test();
+int probe_api_test();
+int migration_test();
+int migration_test_long(); 
+int migration_test_loss();
+int cnxid_renewal_test();
+int retire_cnxid_test();
+int server_busy_test();
+int initial_close_test();
+int fuzz_initial_test();
+int new_rotated_key_test();
+int key_rotation_test();
+int false_migration_test();
+int nat_handshake_test();
+int key_rotation_vector_test();
+int key_rotation_stress_test();
+int short_initial_cid_test();
+int stream_id_max_test();
+int stream_id_to_rank_test();
 
 #ifdef __cplusplus
 }

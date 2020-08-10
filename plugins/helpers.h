@@ -321,6 +321,34 @@ static int helper_should_send_max_data(picoquic_cnx_t* cnx)
     return ret;
 }
 
+static __attribute__((always_inline)) int helper_mtu_probe_length(picoquic_cnx_t* cnx, picoquic_path_t * path_x) {
+    size_t probe_length;
+    size_t path_mtu_max_tried = get_path(path_x, AK_PATH_SEND_MTU_MAX_TRIED, 0);
+    size_t path_mtu = get_path(path_x, AK_PATH_SEND_MTU, 0);
+    if (path_mtu_max_tried == 0) {
+        size_t max_packet_size = get_cnx(cnx, AK_CNX_REMOTE_PARAMETER, TRANSPORT_PARAMETER_MAX_PACKET_SIZE);
+        size_t quic_mtu_max = get_cnx(cnx, AK_CNX_QUIC_MTU_MAX, 0);
+        if (max_packet_size > 0) {
+            probe_length = max_packet_size;
+            if (quic_mtu_max > 0 && (int)probe_length > quic_mtu_max) {
+                probe_length = quic_mtu_max;
+            } else if (probe_length > PICOQUIC_MAX_PACKET_SIZE) {
+                probe_length = PICOQUIC_MAX_PACKET_SIZE;
+            }
+            if (probe_length < path_mtu) {
+                probe_length = path_mtu;
+            }
+        } else if (quic_mtu_max > 0) {
+            probe_length = quic_mtu_max;
+        } else {
+            probe_length = PICOQUIC_PRACTICAL_MAX_MTU;
+        }
+    } else {
+        probe_length = (path_mtu + path_mtu_max_tried) / 2;
+    }
+    return probe_length;
+}
+
 /* Decide whether to send an MTU probe */
 static __attribute__((always_inline)) int helper_is_mtu_probe_needed(picoquic_cnx_t* cnx, picoquic_path_t * path_x)
 {
@@ -330,22 +358,23 @@ static __attribute__((always_inline)) int helper_is_mtu_probe_needed(picoquic_cn
     unsigned int mtu_probe_sent = (unsigned int) get_path(path_x, AK_PATH_MTU_PROBE_SENT, 0);
     uint32_t send_mtu_max_tried = (uint32_t) get_path(path_x, AK_PATH_SEND_MTU_MAX_TRIED, 0);
     uint32_t send_mtu = (uint32_t) get_path(path_x, AK_PATH_SEND_MTU, 0);
-    if ((cnx_state == picoquic_state_client_ready || cnx_state == picoquic_state_server_ready) && mtu_probe_sent == 0 && (send_mtu_max_tried == 0 || (send_mtu + 10) < send_mtu_max_tried)) {
+    if ((cnx_state == picoquic_state_client_ready || cnx_state == picoquic_state_server_ready) && mtu_probe_sent == 0 && (send_mtu_max_tried == 0 || (send_mtu + 10) < send_mtu_max_tried) && helper_mtu_probe_length(cnx, path_x) > send_mtu) {
         ret = 1;
     }
 
     return ret;
 }
 
-static int helper_scheduler_write_new_frames(picoquic_cnx_t *cnx, uint8_t *bytes, size_t max_bytes, picoquic_packet_t* packet,
+static int helper_scheduler_write_new_frames(picoquic_cnx_t *cnx, uint8_t *bytes, size_t max_bytes, size_t payload_offset, picoquic_packet_t* packet,
                                              size_t *consumed, unsigned int *is_pure_ack)
 {
     protoop_arg_t outs[2];
-    protoop_arg_t args[3];
+    protoop_arg_t args[4];
     args[0] = (protoop_arg_t) bytes;
     args[1] = (protoop_arg_t) max_bytes;
-    args[2] = (protoop_arg_t) packet;
-    int ret = run_noparam(cnx, PROTOOPID_NOPARAM_SCHEDULER_WRITE_NEW_FRAMES, 3, args, outs);
+    args[2] = (protoop_arg_t) payload_offset;
+    args[3] = (protoop_arg_t) packet;
+    int ret = run_noparam(cnx, PROTOOPID_NOPARAM_SCHEDULER_WRITE_NEW_FRAMES, 4, args, outs);
     *consumed = (size_t) outs[0];
     *is_pure_ack &= (unsigned int) outs[1];
     return ret;
@@ -492,19 +521,6 @@ static int helper_prepare_handshake_done_frame(picoquic_cnx_t* cnx, uint8_t* byt
     return ret;
 }
 
-static int helper_prepare_first_misc_frame(picoquic_cnx_t* cnx, uint8_t* bytes,
-                                      size_t bytes_max, size_t* consumed)
-{
-    protoop_arg_t outs[1];
-    protoop_arg_t args[3];
-    args[0] = (protoop_arg_t) bytes;
-    args[1] = (protoop_arg_t) bytes_max;
-    args[2] = (protoop_arg_t) *consumed;
-    int ret = (int) run_noparam(cnx, PROTOOPID_NOPARAM_PREPARE_FIRST_MISC_FRAME, 3, args, outs);
-    *consumed = (size_t) outs[0];
-    return ret;
-}
-
 static int helper_prepare_max_data_frame(picoquic_cnx_t* cnx, uint64_t maxdata_increase,
     uint8_t* bytes, size_t bytes_max, size_t* consumed)
 {
@@ -618,12 +634,11 @@ static void helper_finalize_and_protect_packet(picoquic_cnx_t *cnx, picoquic_pac
 }
 
 /* TODO: tie with per path scheduling */
-static void helper_cnx_set_next_wake_time(picoquic_cnx_t* cnx, uint64_t current_time, uint32_t last_pkt_length)
+static void helper_cnx_set_next_wake_time(picoquic_cnx_t* cnx, uint64_t current_time)
 {
-    protoop_arg_t args[2];
+    protoop_arg_t args[1];
     args[0] = (protoop_arg_t) current_time;
-    args[1] = (protoop_arg_t) last_pkt_length;
-    run_noparam(cnx, PROTOOPID_NOPARAM_SET_NEXT_WAKE_TIME, 2, args, NULL);
+    run_noparam(cnx, PROTOOPID_NOPARAM_SET_NEXT_WAKE_TIME, 1, args, NULL);
 }
 
 static picoquic_packet_context_enum helper_context_from_epoch(int epoch)
@@ -679,8 +694,7 @@ static uint8_t *helper_parse_frame(picoquic_cnx_t *cnx, uint64_t frame_type, uin
 }
 
 static int helper_parse_ack_header(uint8_t const* bytes, size_t bytes_max,
-    uint64_t* num_block, uint64_t* nb_ecnx3,
-    uint64_t* largest, uint64_t* ack_delay, size_t* consumed,
+    uint64_t* num_block, uint64_t* largest, uint64_t* ack_delay, size_t* consumed,
     uint8_t ack_delay_exponent)
 {
     int ret = 0;
@@ -698,19 +712,6 @@ static int helper_parse_ack_header(uint8_t const* bytes, size_t bytes_max,
         l_delay = picoquic_varint_decode(bytes + byte_index, bytes_max - byte_index, ack_delay);
         *ack_delay <<= ack_delay_exponent;
         byte_index += l_delay;
-    }
-
-    if (nb_ecnx3 != NULL) {
-        for (int ecnx = 0; ecnx < 3; ecnx++) {
-            size_t l_ecnx = picoquic_varint_decode(bytes + byte_index, bytes_max - byte_index, &nb_ecnx3[ecnx]);
-
-            if (l_ecnx == 0) {
-                byte_index = bytes_max;
-            }
-            else {
-                byte_index += l_ecnx;
-            }
-        }
     }
 
     if (bytes_max > byte_index) {
