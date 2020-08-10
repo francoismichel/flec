@@ -2,6 +2,7 @@
 #include <getset.h>
 #include "../../../helpers.h"
 #include "compressed_repair_frame.h"
+#include "../../window_framework/framework_sender.h"
 
 
 protoop_arg_t write_frame(picoquic_cnx_t *cnx) {
@@ -13,6 +14,13 @@ protoop_arg_t write_frame(picoquic_cnx_t *cnx) {
     uint8_t* bytes = (uint8_t *) get_cnx(cnx, AK_CNX_INPUT, 0);
     const uint8_t* bytes_max = (const uint8_t *) get_cnx(cnx, AK_CNX_INPUT, 1);
     window_repair_frame_t *rf = (window_repair_frame_t *) get_cnx(cnx, AK_CNX_INPUT, 2);
+
+    window_fec_framework_t *wff = (window_fec_framework_t *) state->framework_sender;
+    if (is_fec_window_empty(wff)) {
+        set_cnx(cnx, AK_CNX_OUTPUT, 0, (protoop_arg_t) 0);
+        set_cnx(cnx, AK_CNX_OUTPUT, 1, (protoop_arg_t) false);
+        return 0;
+    }
 
     my_memset(bytes, FRAME_REPAIR, 1);
     bytes++;
