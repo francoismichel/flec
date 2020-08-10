@@ -157,6 +157,7 @@ typedef struct st_picoquic_bbr_state_t {
     uint64_t send_quantum;
     picoquic_min_max_rtt_t rtt_filter;
     uint64_t target_cwnd;
+    uint64_t last_sequence_blocked;
     double pacing_gain;
     double cwnd_gain;
     double pacing_rate;
@@ -234,6 +235,10 @@ static void picoquic_bbr_init(picoquic_cnx_t *cnx, picoquic_path_t* path_x)
         memset(bbr_state, 0, sizeof(picoquic_bbr_state_t));
         path_x->cwin = PICOQUIC_CWIN_INITIAL;
         bbr_state->rt_prop = UINT64_MAX;
+        uint64_t current_time = picoquic_current_time();
+        bbr_state->rt_prop_stamp = current_time;
+        bbr_state->cycle_stamp = current_time;
+
         BBREnterStartup(bbr_state);
         BBRSetSendQuantum(bbr_state, path_x);
         BBRUpdateTargetCwnd(bbr_state);
@@ -660,9 +665,7 @@ static void picoquic_bbr_notify(
     picoquic_bbr_state_t* bbr_state = (picoquic_bbr_state_t*)path_x->congestion_alg_state;
 
     if (bbr_state != NULL) {
-        if (bbr_state->state == picoquic_bbr_alg_probe_bw) {
-            printf("BBR BW probing\n");
-        }
+
         switch (notification) {
             case picoquic_congestion_notification_acknowledgement:
                 /* sum the amount of data acked per packet */
@@ -693,8 +696,9 @@ static void picoquic_bbr_notify(
                         bbr_state->rt_prop = rtt_measurement;
                         bbr_state->rt_prop_stamp = current_time;
                     }
-
-                    picoquic_hystart_increase(path_x, &bbr_state->rtt_filter, bbr_state->bytes_delivered);
+                    if (picoquic_cc_was_cwin_blocked(path_x, bbr_state->last_sequence_blocked)) {
+                        picoquic_hystart_increase(path_x, &bbr_state->rtt_filter, bbr_state->bytes_delivered);
+                    }
                     bbr_state->bytes_delivered = 0;
 
                     picoquic_update_pacing_data(path_x);
@@ -714,7 +718,7 @@ static void picoquic_bbr_notify(
                 }
                 break;
             case picoquic_congestion_notification_cwin_blocked:
-                break;
+                bbr_state->last_sequence_blocked = picoquic_cc_get_sequence_number(path_x);
             default:
                 /* ignore */
                 break;
