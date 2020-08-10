@@ -116,7 +116,7 @@ done:
 void *
 my_memmove(void *s1, const void *s2, size_t n)
 {
-	return memcpy(s1, s2, n);
+	return my_memcpy(s1, s2, n);
 }
 
 void
