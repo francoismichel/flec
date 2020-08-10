@@ -2,9 +2,12 @@ schedule_frames_on_path pre protoops/before_schedule_frames.o
 schedule_frames_on_path post protoops/after_schedule_frames.o
 fec_check_for_available_slot replace protoops/check_for_available_slot.o
 fec_available_slot replace protoops/available_slot.o
+packet_acknowledged pre protoops/packet_acknowledged.o
+
 retransmit_needed replace protoops/disable_retransmissions.o
 prepare_packet_ready pre protoops/maybe_notify_recovered_packets_to_everybody.o
-process_ack_range replace protoops/process_ack_range.o
+process_ack_range pre protoops/pre_process_ack_range.o
+
 fec_has_protected_data_to_send replace protoops/has_protected_data_to_send.o
 
 skip_frame pre protoops/pre_skip_frame.o
