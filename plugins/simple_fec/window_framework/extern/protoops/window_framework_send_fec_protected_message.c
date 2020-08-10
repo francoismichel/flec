@@ -31,7 +31,8 @@ protoop_arg_t window_framework_send_fec_protected_message(picoquic_cnx_t *cnx)
     int64_t current_offset = get_stream_head(stream, AK_STREAMHEAD_SENDING_OFFSET);
     int ret = picoquic_add_to_stream(cnx, stream_id, data, length, set_fin);
     if (ret == 0) {
-        protected_stream_chunks_queue_add(cnx, &framework->stream_chunks_queue, stream_id, current_offset, length, message_deadline_timestamp_microsec);
+        deadline_protected_stream_chunks_queue_add(cnx, &framework->stream_chunks_queue, stream_id, current_offset,
+                                                   length, message_deadline_timestamp_microsec);
     }
     return 0;
 }

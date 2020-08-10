@@ -45,10 +45,10 @@ typedef struct {
     protected_stream_chunk_t *head;
     protected_stream_chunk_t *tail;
     int size;   // we us an explicit size to ease the verification process
-} protected_stream_chunks_queue_t;
+} deadline_protected_stream_chunks_queue_t;
 
-static __attribute__((always_inline)) int protected_stream_chunks_queue_add(picoquic_cnx_t *cnx, protected_stream_chunks_queue_t *queue,
-        int64_t stream_id, int64_t offset, int64_t length, symbol_deadline_t deadline_timestamp) {
+static __attribute__((always_inline)) int deadline_protected_stream_chunks_queue_add(picoquic_cnx_t *cnx, deadline_protected_stream_chunks_queue_t *queue,
+                                                                                     int64_t stream_id, int64_t offset, int64_t length, symbol_deadline_t deadline_timestamp) {
     protected_stream_chunk_t *new_chunk = my_malloc(cnx, sizeof(protected_stream_chunk_t));
     if (!new_chunk) {
         PROTOOP_PRINTF(cnx, "protected_stream_chunks_queue_add: out of memory\n");
@@ -72,8 +72,8 @@ static __attribute__((always_inline)) int protected_stream_chunks_queue_add(pico
     return 0;
 }
 
-static __attribute__((always_inline)) int protected_stream_chunks_queue_remove(picoquic_cnx_t *cnx, protected_stream_chunks_queue_t *queue,
-        int64_t stream_id, int64_t offset, int64_t length) {
+static __attribute__((always_inline)) int deadline_protected_stream_chunks_queue_remove(picoquic_cnx_t *cnx, deadline_protected_stream_chunks_queue_t *queue,
+                                                                                        int64_t stream_id, int64_t offset, int64_t length) {
     protected_stream_chunk_t *previous = NULL;
     protected_stream_chunk_t *current = queue->head;
     for (int i = 0 ; i < queue->size ; i++) {
@@ -96,8 +96,8 @@ remove:
     return 0;
 }
 
-static __attribute__((always_inline)) symbol_deadline_t protected_stream_chunks_get_deadline_for_chunk(picoquic_cnx_t *cnx, protected_stream_chunks_queue_t *queue,
-        int64_t stream_id, int64_t offset, int64_t length) {
+static __attribute__((always_inline)) symbol_deadline_t deadline_protected_stream_chunks_get_deadline_for_chunk(picoquic_cnx_t *cnx, deadline_protected_stream_chunks_queue_t *queue,
+                                                                                                                int64_t stream_id, int64_t offset, int64_t length) {
     symbol_deadline_t min_deadline = UNDEFINED_SYMBOL_DEADLINE;
 
     protected_stream_chunk_t *current = queue->head;
@@ -150,7 +150,7 @@ typedef struct {
     red_black_tree_t *symbols_from_deadlines;
     red_black_tree_t *deadlines_from_symbols;
     red_black_tree_t *unreliable_messages_from_deadlines;
-    protected_stream_chunks_queue_t stream_chunks_queue;    // useful when sending stream chunks as a deadline-limited message
+    deadline_protected_stream_chunks_queue_t stream_chunks_queue;    // useful when sending stream chunks as a deadline-limited message
     uint8_t packet_sized_buffer[PICOQUIC_MAX_PACKET_SIZE];
 
 } window_fec_framework_t;

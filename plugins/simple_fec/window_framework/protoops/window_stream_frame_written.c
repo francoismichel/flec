@@ -17,15 +17,24 @@
  */
 protoop_arg_t prepare_stream_frame(picoquic_cnx_t *cnx)
 {
-    int ret = get_cnx(cnx, AK_CNX_RETURN_VALUE, 0);
-    if (ret != 0) {
-        return ret;
-    }
     plugin_state_t *state = get_plugin_state(cnx);
     if (!state) {
         PROTOOP_PRINTF(cnx, "out of memory\n");
         return PICOQUIC_ERROR_MEMORY;
     }
+
+    window_fec_framework_t *framework = (window_fec_framework_t *) state->framework_sender;
+
+
+    if (framework->stream_chunks_queue.size == 0) {
+        return 0;
+    }
+
+    int ret = get_cnx(cnx, AK_CNX_RETURN_VALUE, 0);
+    if (ret != 0) {
+        return ret;
+    }
+
     uint8_t *out_buffer = (uint8_t *) get_cnx(cnx, AK_CNX_INPUT, 1);
     size_t bytes_max = get_cnx(cnx, AK_CNX_INPUT, 2);
     size_t stream_frame_size = get_cnx(cnx, AK_CNX_OUTPUT, 0);
@@ -55,11 +64,13 @@ protoop_arg_t prepare_stream_frame(picoquic_cnx_t *cnx)
 
     helper_parse_stream_header(out_buffer, bytes_max, return_values);
 
-    window_fec_framework_t *framework = (window_fec_framework_t *) state->framework_sender;
-
     // XXX this must be reset by the window framework after being used !
     // FIXME: ugly and specific to streams, while we would like to protect any kind of frame
-    framework->min_deadline_in_current_packet = protected_stream_chunks_get_deadline_for_chunk(cnx, &framework->stream_chunks_queue, stream_id, offset, data_length);
+    framework->min_deadline_in_current_packet = deadline_protected_stream_chunks_get_deadline_for_chunk(cnx,
+                                                                                                        &framework->stream_chunks_queue,
+                                                                                                        stream_id,
+                                                                                                        offset,
+                                                                                                        data_length);
     PROTOOP_PRINTF(cnx, "DEADLINE FOR CHUNK %lu = %lu\n", offset, framework->min_deadline_in_current_packet);
 
     return 0;

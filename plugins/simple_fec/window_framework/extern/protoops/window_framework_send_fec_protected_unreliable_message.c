@@ -36,7 +36,8 @@ protoop_arg_t fec_unreliable_message(picoquic_cnx_t *cnx)
             return PICOQUIC_ERROR_MEMORY;
         }
         rbt_put(cnx, framework->unreliable_messages_from_deadlines, message_deadline_timestamp_microsec, md);
-        protected_stream_chunks_queue_add(cnx, &framework->stream_chunks_queue, stream_id, current_offset, length, message_deadline_timestamp_microsec);
+        deadline_protected_stream_chunks_queue_add(cnx, &framework->stream_chunks_queue, stream_id, current_offset,
+                                                   length, message_deadline_timestamp_microsec);
     }
     return 0;
 }
