@@ -14,19 +14,23 @@ extern "C" {
 #include "gf256.h"
 
 #define SYMBOL_FAST_MODE true
-#define SYMBOL_USE_ALT_LIBRARY true
 
 
 bool initialized = false;
+#if SYMBOL_USE_ALT_LIBRARY == true
 struct moepgf gflib;
+#endif
 
 void picoquic_gf256_init() {
+
+#if SYMBOL_USE_ALT_LIBRARY == true
     if (!initialized) {
         moepgf_init(&gflib, MOEPGF256,
 //                MOEPGF_ALGORITHM_BEST);
                     MOEPGF_ALGORITHM_BEST);
         initialized = true;
     }
+#endif
 }
 
 
@@ -57,17 +61,16 @@ void picoquic_gf256_symbol_add_scaled
         (void *symbol1, uint8_t coef, void *symbol2, uint32_t symbol_size, uint8_t **mul)
 {
 
-    if (SYMBOL_USE_ALT_LIBRARY) {
+#if SYMBOL_USE_ALT_LIBRARY == true
         gflib.maddrc(symbol1, symbol2, coef, symbol_size);
 //        galois_w08_region_multiply((char *) symbol2, coef, symbol_size, symbol1, 1);
-    } else {
+#else
         uint8_t *data1 = (uint8_t *) symbol1;
         uint8_t *data2 = (uint8_t *) symbol2;
         for (uint32_t i=0; i<symbol_size; i++) {
             data1[i] ^= gf256_mul(coef, data2[i], mul);
         }
-
-    }
+#endif
 }
 
 void symbol_add_slow(void *symbol1, void *symbol2, uint32_t symbol_size) {
@@ -95,18 +98,18 @@ void symbol_add_fast(void *symbol1, void *symbol2, uint32_t symbol_size) {
 void picoquic_gf256_symbol_add
         (void *symbol1, void *symbol2, uint32_t symbol_size) {
 
-    if (SYMBOL_USE_ALT_LIBRARY) {
+#if SYMBOL_USE_ALT_LIBRARY == true
         gflib.maddrc(symbol1, symbol2, 1, symbol_size);
 
 //        galois_w08_region_multiply((char *) symbol2, coef, symbol_size, symbol1, 1);
-    } else {
+#else
 
         if (SYMBOL_FAST_MODE) {
             symbol_add_fast(symbol1, symbol2, symbol_size);
         } else {
             symbol_add_slow(symbol1, symbol2, symbol_size);
         }
-    }
+#endif
 }
 
 bool picoquic_gf256_symbol_is_zero(void *symbol, uint32_t symbol_size) {
@@ -126,26 +129,23 @@ bool picoquic_gf256_symbol_is_zero(void *symbol, uint32_t symbol_size) {
 void _symbol_mul
         (uint8_t *symbol1, uint8_t coef, uint32_t symbol_size, uint8_t **mul)
 {
-//    if (SYMBOL_FAST_MODE) {
-//        uint64_t *symbol64 = (uint64_t *) symbol1;
-//        for (int i = 0 ; i < symbol_size/sizeof(uint64_t) ; i++) {
-//            symbol64[i] =
-//        }
-//    }
-    if (SYMBOL_USE_ALT_LIBRARY) {
+
+#if SYMBOL_USE_ALT_LIBRARY == true
         gflib.mulrc(symbol1, coef, symbol_size);
 
 //        galois_w08_region_multiply((char *) symbol2, coef, symbol_size, symbol1, 1);
-    } else {
+#else
 
         for (uint32_t i=0; i<symbol_size; i++) {
             symbol1[i] = gf256_mul(coef, symbol1[i], mul);
         }
-    }
+#endif
 }
 
 
 
+
+#if SYMBOL_USE_ALT_LIBRARY == true
 void _symbol_mul_alt
         (uint8_t *symbol1, uint8_t coef, uint32_t symbol_size, uint8_t **mul)
 {
@@ -153,16 +153,18 @@ void _symbol_mul_alt
 
     gflib.mulrc(symbol1, coef, symbol_size);
 }
+#endif
 
 
 void picoquic_gf256_symbol_mul
         (uint8_t *symbol1, uint8_t coef, uint32_t symbol_size, uint8_t **mul)
 {
-    if (SYMBOL_USE_ALT_LIBRARY) {
+
+#if SYMBOL_USE_ALT_LIBRARY == true
         _symbol_mul_alt(symbol1, coef, symbol_size, mul);
-    } else {
+#else
         _symbol_mul(symbol1, coef, symbol_size, mul);
-    }
+#endif
 }
 #ifdef __cplusplus
 }
