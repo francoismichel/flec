@@ -819,15 +819,6 @@ void set_pkt_ctx(picoquic_packet_context_t *pkt_ctx, access_key_t ak, protoop_ar
     }
 }
 
-void set_pkt_metadata(picoquic_cnx_t *cnx, picoquic_packet_t *pkt, int idx, protoop_arg_t val) {
-    if (!cnx->current_plugin) {
-        printf("ERROR: %s called outside a plugin context\n", __func__);
-        return;
-    }
-    if (set_plugin_metadata(cnx->current_plugin, &pkt->metadata, idx, val))
-        printf("ERROR: %s returned a non-zero error code\n", __func__);
-}
-
 
 void set_pkt_n_metadata(picoquic_cnx_t *cnx, picoquic_packet_t *pkt, int *idxs, protoop_arg_t *vals, int n_idxs) {
     if (!cnx->current_plugin) {
@@ -836,19 +827,6 @@ void set_pkt_n_metadata(picoquic_cnx_t *cnx, picoquic_packet_t *pkt, int *idxs, 
     }
     if (set_plugin_n_metadata(cnx->current_plugin, &pkt->metadata, idxs, vals, n_idxs))
         printf("ERROR: %s returned a non-zero error code\n", __func__);
-}
-
-
-protoop_arg_t get_pkt_metadata(picoquic_cnx_t *cnx, picoquic_packet_t *pkt, int idx) {
-    if (!cnx->current_plugin) {
-        printf("ERROR: %s called outside a plugin context\n", __func__);
-        return -1;
-    }
-    uint64_t out;
-    int err = get_plugin_metadata(cnx->current_plugin, &pkt->metadata, idx, &out);
-    if (err)
-        printf("ERROR: %s returned a non-zero error code\n", __func__);
-    return out;
 }
 
 int get_pkt_n_metadata(picoquic_cnx_t *cnx, picoquic_packet_t *pkt, int *idxs, int n_idx, protoop_arg_t *outs) {

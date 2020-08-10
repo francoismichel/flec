@@ -57,8 +57,8 @@ register_functions(struct ubpf_vm *vm) {
     ubpf_register(vm, current_idx++, "set_pkt_ctx", set_pkt_ctx);
     ubpf_register(vm, current_idx++, "get_pkt", get_pkt);
     ubpf_register(vm, current_idx++, "set_pkt", set_pkt);
-    ubpf_register(vm, current_idx++, "get_pkt_metadata", get_pkt_metadata);
-    ubpf_register(vm, current_idx++, "set_pkt_metadata", set_pkt_metadata);
+    ubpf_register(vm, current_idx++, "get_pkt_n_metadata", get_pkt_n_metadata);
+    ubpf_register(vm, current_idx++, "set_pkt_n_metadata", set_pkt_n_metadata);
     ubpf_register(vm, current_idx++, "get_sack_item", get_sack_item);
     ubpf_register(vm, current_idx++, "set_sack_item", set_sack_item);
     ubpf_register(vm, current_idx++, "get_cnxid", get_cnxid);

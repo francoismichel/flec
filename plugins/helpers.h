@@ -114,6 +114,33 @@ static inline protoop_arg_t run_param_with_pid(picoquic_cnx_t *cnx, char *pid_st
     return plugin_run_protoop(cnx, &pp, pid_str, pid);
 }
 
+/**
+ * Sets the plugin-specific metadata of this packet at index `idx` to `val`
+ * @param cnx The connection pointer
+ * @param pkt The packet pointer
+ * @param idx The index of the plugin-specific metadata
+ * @param val The value of the metadata to set
+ */
+void set_pkt_metadata(picoquic_cnx_t *cnx, picoquic_packet_t *pkt, int idx, protoop_arg_t val) {
+    set_pkt_n_metadata(cnx, pkt, &idx, &val, 1);
+}
+
+/**
+ * Gets and returns the value of the plugin-specific metadata of this packet at index `idx`
+ * If the metadata have never been set before, zero is returned
+ * @param cnx The connection pointer
+ * @param pkt The packet pointer
+ * @param idx The index of the plugin-specific metadata to get
+ *
+ */
+static __attribute__((always_inline)) protoop_arg_t get_pkt_metadata(picoquic_cnx_t *cnx, picoquic_packet_t *pkt, int idx) {
+    uint64_t out;
+    int err = get_pkt_n_metadata(cnx, pkt, &idx, 1, &out);
+    if (err)
+        printf("ERROR: %s returned a non-zero error code\n", __func__);
+    return out;
+}
+
 static inline protoop_arg_t run_param(picoquic_cnx_t *cnx, char *pid_str, param_id_t param, int inputc, protoop_arg_t *inputv, protoop_arg_t *outputv) {
     return run_param_with_pid(cnx, pid_str, param, inputc, inputv, outputv, NULL);
 }
