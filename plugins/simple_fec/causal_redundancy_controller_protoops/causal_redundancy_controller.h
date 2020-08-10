@@ -648,10 +648,10 @@ static __attribute__((always_inline)) causal_packet_type_t what_to_send(picoquic
     if (type == fb_fec_packet) {
             uint64_t lost_slot;
             bool dequeued;
+            window_packet_metadata_t md;
             while((dequeued = dequeue_elem_from_buffer_old(controller->lost_and_non_fec_retransmitted_slots, &lost_slot))) {
                 // pass, the slot is too old, this means that it has been recovered at some point
                 if (is_slot_in_history(controller->slots_history, lost_slot)) {
-                    window_packet_metadata_t md;
                     history_get_sent_slot_metadata(controller->slots_history, lost_slot, &md);
                     // in this redundancy controller, we assume that 1 packet == 1 source/repair symbol
                     if ((md.source_metadata.number_of_symbols > 0 &&
@@ -667,13 +667,6 @@ static __attribute__((always_inline)) causal_packet_type_t what_to_send(picoquic
 
             if (dequeued) {
                 PROTOOP_PRINTF(cnx, "GOT SLOT %lu AS LOST AND NON RETRANSMITTED\n", lost_slot);
-                window_packet_metadata_t md;
-                int err = history_get_sent_slot_metadata(controller->slots_history, lost_slot, &md);
-                if (err == -1) {
-                    // should never happen
-                    PROTOOP_PRINTF(cnx, "ERROR: ASKED TO RETRANSMIT A NON-SENT SLOT\n");
-                    return new_rlnc_packet;
-                }
                 // in this redundancy controller, we assume that 1 packet == 1 source/repair symbol
                 if (md.source_metadata.number_of_symbols > 0) {
                     // this slot transported a source symbol
@@ -780,7 +773,7 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, picoqui
         PROTOOP_PRINTF(cnx, "MEMORY ERROR\n");
         return;
     }
-    if (controller->window_first_id_during_last_run != current_window->start) {
+    if (controller->window_first_id_during_last_run != current_window->start && current_window-> start > 0) {
         prune_md_buffer(cnx, controller, controller->window_first_id_during_last_run, current_window->start - 1);
         prune_ad_buffer(cnx, controller, current_window);
     }
@@ -805,12 +798,12 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, picoqui
             controller->n_fec_in_flight++;
             controller->ad++;
         } else {
-
+            bool ew = EW(cnx, path, controller, GRANULARITY, current_window, current_time);
             switch (controller->last_feedback) {
                 case available_slot_reason_none:
 //                        if (false && EW(controller, current_window)) {
 //                        if (allowed_to_send_fec_given_deadlines && ((normal_causal && EW(controller, current_window)) || (!fec_has_protected_data_to_send(cnx) && bw_ratio_times_granularity > (GRANULARITY + GRANULARITY/10)))) {
-                    if (EW(cnx, path, controller, GRANULARITY, current_window, current_time)) {
+                    if (ew) {
                         for (i = 0; i < controller->m; i++) {
                             add_elem_to_buffer_old(controller->what_to_send, fec_packet);
                             controller->n_fec_in_flight++;
@@ -825,7 +818,7 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, picoqui
                     break;
                 case available_slot_reason_nack:
                     if (!below_threshold(cnx, path, controller, GRANULARITY, current_time)) {
-                        if (!EW(cnx, path, controller, GRANULARITY, current_window, current_time)) {
+                        if (!ew) {
                             // TODO: first check if new data are available to send ?
                             added_new_packet = true;
                             add_elem_to_buffer_old(controller->what_to_send, new_rlnc_packet);
@@ -842,10 +835,8 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, picoqui
                     }
                     break;
                 case available_slot_reason_ack:;
-                    uint64_t gemodel_r_times_granularity = 1*GRANULARITY;
-                    get_loss_parameters(cnx, path, current_time, GRANULARITY, NULL, NULL, &gemodel_r_times_granularity);
 
-                    if (EW(cnx, path, controller, GRANULARITY, current_window, current_time)) {
+                    if (ew) {
                         PROTOOP_PRINTF(cnx, "EW !\n");
                         for (i = 0; i < controller->m; i++) {
                             add_elem_to_buffer_old(controller->what_to_send, fec_packet);
@@ -859,7 +850,7 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, picoqui
                             add_elem_to_buffer_old(controller->what_to_send, fb_fec_packet);
                             controller->ad++;
                         } else {
-                            if (EW(cnx, path, controller, GRANULARITY, current_window, current_time)) {
+                            if (ew) {
                                 for (i = 0; i < controller->m; i++) {
                                     add_elem_to_buffer_old(controller->what_to_send, fec_packet);
                                     controller->n_fec_in_flight++;
@@ -883,7 +874,6 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, picoqui
         controller->flush_dof_mode = window_size(current_window) + to_add > MAX_SLOTS-1;//2*controller->k;
     } else {
         PROTOOP_PRINTF(cnx, "BUFFER NOT EMPTY\n");
-
     }
     controller->window_first_id_during_last_run = current_window->start;
 }
