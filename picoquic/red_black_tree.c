@@ -140,6 +140,8 @@ uint64_t rbt_get(picoquic_cnx_t *cnx, red_black_tree_t *tree, rbt_key key, rbt_v
  *     {@code false} otherwise
  */
 uint64_t rbt_contains(picoquic_cnx_t *cnx, red_black_tree_t *tree, rbt_key key) {
+    if (rbt_size(cnx, tree) == 0)
+        return false;
     return rbt_get(cnx, tree, key, NULL);
 }
 
