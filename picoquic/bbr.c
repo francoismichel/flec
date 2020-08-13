@@ -263,7 +263,10 @@ static void picoquic_bbr_delete(picoquic_cnx_t *cnx, picoquic_path_t* path_x)
 void BBRUpdateBtlBw(picoquic_bbr_state_t* bbr_state, picoquic_path_t* path_x)
 {
     uint64_t bandwidth_estimate = path_x->bandwidth_estimate;
-
+    if (bbr_state->last_sequence_blocked == 0 || !picoquic_cc_was_cwin_blocked(path_x, bbr_state->last_sequence_blocked)) {
+        // the estimation is not reliable because the CWIN was not probed entirely
+        return;
+    }
     if (path_x->delivered_last_packet >= bbr_state->next_round_delivered)
     {
         bbr_state->next_round_delivered = path_x->delivered;
