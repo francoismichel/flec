@@ -143,14 +143,14 @@ static inline protoop_arg_t run_param(picoquic_cnx_t *cnx, char *pid_str, param_
     return run_param_with_pid(cnx, pid_str, param, inputc, inputv, outputv, NULL);
 }
 
-static __attribute__((always_inline)) void helper_protoop_snprintf(picoquic_cnx_t *cnx, const char *buf, size_t buf_len, const char *fmt, const protoop_arg_t *fmt_args, size_t args_len) {
+static __attribute__((always_inline)) int helper_protoop_snprintf(picoquic_cnx_t *cnx, const char *buf, size_t buf_len, const char *fmt, const protoop_arg_t *fmt_args, size_t args_len) {
     protoop_arg_t args[5];
     args[0] = (protoop_arg_t) buf;
     args[1] = buf_len;
     args[2] = (protoop_arg_t) fmt;
     args[3] = (protoop_arg_t) fmt_args;
     args[4] = args_len;
-    run_noparam(cnx, PROTOOPID_NOPARAM_SNPRINTF, 5, args, NULL);
+    return run_noparam(cnx, PROTOOPID_NOPARAM_SNPRINTF, 5, args, NULL);
 }
 
 static uint32_t helper_get_checksum_length(picoquic_cnx_t* cnx, int is_cleartext_mode)
@@ -160,19 +160,19 @@ static uint32_t helper_get_checksum_length(picoquic_cnx_t* cnx, int is_cleartext
     return (uint32_t) run_noparam(cnx, PROTOOPID_NOPARAM_GET_CHECKSUM_LENGTH, 1, args, NULL);
 }
 
-static __attribute__((always_inline)) void helper_protoop_printf(picoquic_cnx_t *cnx, const char *fmt, protoop_arg_t *fmt_args, size_t args_len)
-{
-    protoop_arg_t args[3];
-    args[0] = (protoop_arg_t) fmt;
-    args[1] = (protoop_arg_t) fmt_args;
-    args[2] = (protoop_arg_t) args_len;
-    run_noparam(cnx, PROTOOPID_NOPARAM_PRINTF, 3, args, NULL);
-}
 
 static __attribute__((always_inline)) void helper_log_event(picoquic_cnx_t *cnx, char *args[4], protoop_arg_t *fmt_args, size_t args_len) {
-    char *data = my_malloc(cnx, 2000);
+    size_t buf_len = 2000;
+    char *data = my_malloc(cnx, buf_len);
     if (!data) return;
-    helper_protoop_snprintf(cnx, data, 2000, args[3], fmt_args, args_len);
+    int written = helper_protoop_snprintf(cnx, data, buf_len, args[3], fmt_args, args_len);
+    if (written >= buf_len) {   // the string was truncated
+        buf_len = written + 1;
+        my_free(cnx, data);
+        data = my_malloc(cnx, buf_len);
+        if (!data) return;
+        helper_protoop_snprintf(cnx, data, buf_len, args[3], fmt_args, args_len);
+    }
     protoop_arg_t pargs[5];
     pargs[0] = (protoop_arg_t) args[0];
     pargs[1] = (protoop_arg_t) args[1];
