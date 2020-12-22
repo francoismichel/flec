@@ -24,6 +24,17 @@
 #include "uthash.h"
 
 struct ubpf_vm;
+
+
+typedef union {
+    uint64_t (*ext_func_0arg)();
+    uint64_t (*ext_func_1arg)(uint64_t arg0);
+    uint64_t (*ext_func_2arg)(uint64_t arg0, uint64_t arg1);
+    uint64_t (*ext_func_3arg)(uint64_t arg0, uint64_t arg1, uint64_t arg2);
+    uint64_t (*ext_func_4arg)(uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3);
+    uint64_t (*ext_func_5arg)(uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t arg4);
+} ext_func_t;
+
 typedef uint64_t (*ubpf_jit_fn)(void *mem, size_t mem_len);
 
 /*
@@ -45,7 +56,7 @@ void ubpf_destroy(struct ubpf_vm *vm);
  *
  * Returns 0 on success, -1 on error.
  */
-int ubpf_register(struct ubpf_vm *vm, unsigned int idx, const char *name, void *fn);
+int ubpf_register(struct ubpf_vm *vm, unsigned int idx, const char *name,  ext_func_t fn);
 
 /*
  * Load code into a VM
