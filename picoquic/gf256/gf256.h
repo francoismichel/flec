@@ -17,6 +17,7 @@ extern "C" {
 #include <stddef.h>
 
 #define SYMBOL_FAST_MODE true
+#define SYMBOL_USE_ALT_LIBRARY true
 #ifndef SYMBOL_USE_ALT_LIBRARY
 #define SYMBOL_USE_ALT_LIBRARY false
 #endif

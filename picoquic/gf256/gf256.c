@@ -73,14 +73,14 @@ void picoquic_gf256_symbol_add_scaled
 #endif
 }
 
-void symbol_add_slow(void *symbol1, void *symbol2, uint32_t symbol_size) {
+void symbol_add_slow_safe(void *symbol1, void *symbol2, uint32_t symbol_size) {
     uint8_t *data1 = (uint8_t *) symbol1;
     uint8_t *data2 = (uint8_t *) symbol2;
     for (uint32_t i=0; i<symbol_size; i++) {
         data1[i] ^= data2[i];
     }
 }
-void symbol_add_fast(void *symbol1, void *symbol2, uint32_t symbol_size) {
+void symbol_add_fast_safe(void *symbol1, void *symbol2, uint32_t symbol_size) {
     uint8_t *data1 = (uint8_t *) symbol1;
     uint8_t *data2 = (uint8_t *) symbol2;
     uint64_t *data64_1 = (uint64_t *) symbol1;
@@ -95,19 +95,41 @@ void symbol_add_fast(void *symbol1, void *symbol2, uint32_t symbol_size) {
     }
 }
 
+#define ALIGNMENT 32
+static __attribute__((always_inline)) size_t align(size_t val) {
+    return (val + ALIGNMENT - 1) / ALIGNMENT * ALIGNMENT;
+}
+
+static __attribute__((always_inline)) size_t align_below(size_t val) {
+    size_t retval = align(val);
+    if (retval > 0 && retval != val) {
+        retval -= ALIGNMENT;
+    }
+    return retval;
+}
+
 void picoquic_gf256_symbol_add
         (void *symbol1, void *symbol2, uint32_t symbol_size) {
 
 #if SYMBOL_USE_ALT_LIBRARY == true
-        gflib.maddrc(symbol1, symbol2, 1, symbol_size);
+    size_t aligned_below_size = align_below(symbol_size);
+    if (aligned_below_size > 0) {
+//        symbol_add_slow_safe(symbol1, symbol2, aligned_below_size);
+        gflib.maddrc(symbol1, symbol2, 1, aligned_below_size);
+    }
+    size_t remaining = symbol_size - aligned_below_size;
+    if (remaining > 0) {
+//        symbol_add_slow_safe(&symbol1[aligned_below_size], &symbol2[aligned_below_size], remaining);
+        symbol_add_fast_safe(&symbol1[aligned_below_size], &symbol2[aligned_below_size], remaining);
+    }
 
 //        galois_w08_region_multiply((char *) symbol2, coef, symbol_size, symbol1, 1);
 #else
 
         if (SYMBOL_FAST_MODE) {
-            symbol_add_fast(symbol1, symbol2, symbol_size);
+            symbol_add_fast_safe(symbol1, symbol2, symbol_size);
         } else {
-            symbol_add_slow(symbol1, symbol2, symbol_size);
+            symbol_add_slow_safe(symbol1, symbol2, symbol_size);
         }
 #endif
 }
@@ -150,7 +172,6 @@ void _symbol_mul_alt
         (uint8_t *symbol1, uint8_t coef, uint32_t symbol_size, uint8_t **mul)
 {
 //    galois_w08_region_multiply((char *) symbol1, coef, symbol_size, NULL, 0);
-
     gflib.mulrc(symbol1, coef, symbol_size);
 }
 #endif
