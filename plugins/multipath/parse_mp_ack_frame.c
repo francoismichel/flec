@@ -57,7 +57,7 @@ protoop_arg_t parse_mp_ack_frame(picoquic_cnx_t* cnx)
         }
 
         /** \todo FIXME */
-        if (frame->ack.ack_block_count > 63) {
+        if (frame->ack.ack_block_count > MAX_ACK_BLOCKS) {
             helper_protoop_printf(cnx, "MP_ACK frame parsing error: does not support ack_blocks > 63 elements\n", NULL, 0);
             helper_connection_error(cnx, PICOQUIC_TRANSPORT_FRAME_FORMAT_ERROR,
                 MP_ACK_TYPE);

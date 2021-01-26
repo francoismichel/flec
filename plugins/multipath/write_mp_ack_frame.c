@@ -96,7 +96,7 @@ protoop_arg_t write_mp_ack_frame(picoquic_cnx_t *cnx)
             /* Set the lowest acknowledged */
             lowest_acknowledged = first_sack_start_range;
             /* Encode the ack blocks that fit in the allocated space */
-            while (num_block < 63 && next_sack != NULL) {
+            while (num_block < MAX_ACK_BLOCKS && next_sack != NULL) {
                 size_t l_gap = 0;
                 size_t l_range = 0;
                 uint64_t next_sack_end_range = (uint64_t) get_sack_item(next_sack, AK_SACKITEM_END_RANGE);
