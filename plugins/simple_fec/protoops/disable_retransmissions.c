@@ -250,6 +250,9 @@ protoop_arg_t retransmit_needed(picoquic_cnx_t *cnx)
                             }
 
                             if (current_time >= retrans_cc_notification_timer) {
+                                // need to account the fact that there is a retrans even if it is FEC, as it has an impact on the retransmission decision...
+                                nb_retransmit++;
+                                set_pkt_ctx(orig_pkt_ctx, AK_PKTCTX_NB_RETRANSMIT, nb_retransmit);
                                 set_pkt_ctx(orig_pkt_ctx, AK_PKTCTX_LATEST_RETRANSMIT_CC_NOTIFICATION_TIME, current_time);
                                 helper_congestion_algorithm_notify(cnx, old_path,
                                                                    (is_timer_based) ? picoquic_congestion_notification_timeout : picoquic_congestion_notification_repeat,
@@ -275,7 +278,7 @@ protoop_arg_t retransmit_needed(picoquic_cnx_t *cnx)
                         if (timer_based_retransmit != 0 && current_time >= retrans_timer) {
                             is_timer_based = true;
 //                            uint64_t nb_retransmit = (uint64_t) get_pkt_ctx(orig_pkt_ctx, AK_PKTCTX_NB_RETRANSMIT);
-                            if (nb_retransmit > 4) {
+                            if (nb_retransmit > 5) {
                                 /*
                                 * Max retransmission count was exceeded. Disconnect.
                                 */
