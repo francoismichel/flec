@@ -103,6 +103,10 @@ int picoquic_open_server_sockets(picoquic_server_sockets_t* sockets, int port)
             }
 #endif
             if (ret == 0) {
+                int n = 25 * 1024 * 1024;    // 25MB receive buffer by default
+                ret = setsockopt(sockets->s_socket[i], SOL_SOCKET, SO_RCVBUF, &n, sizeof(n));
+            }
+            if (ret == 0) {
                 ret = bind_to_port(sockets->s_socket[i], sock_af[i], port);
             }
         }
