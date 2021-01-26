@@ -12,7 +12,7 @@ protoop_arg_t stream_bytes_max(picoquic_cnx_t* cnx) {
     plugin_state_t *state = get_plugin_state(cnx);
     if (!state)
         return -1;
-    if (state->has_written_repair_frame || state->has_written_fb_fec_repair_frame)
+    if (state->has_written_repair_frame || state->has_written_fb_fec_repair_frame || state->retried_repair_for_ack)
         // avoid having a stream frame with a repair frame
         bytes_max = 0;
     else {
@@ -20,8 +20,8 @@ protoop_arg_t stream_bytes_max(picoquic_cnx_t* cnx) {
         // TODO: handle a multipath scenario
 //        size_t overhead = 1 + (1 + sizeof(uint64_t)) + sizeof(fec_frame_header_t);
 //        bytes_max = (bytes_max && bytes_max > overhead) ? bytes_max-overhead : bytes_max;
-        size_t overhead = 25;
-        uint64_t mtu = get_path((picoquic_path_t *) get_cnx(cnx, AK_CNX_PATH, 0), AK_PATH_SEND_MTU, 0) - 30; // max repair frame size
+        size_t overhead = 20;// max repair frame size
+        uint64_t mtu = get_path((picoquic_path_t *) get_cnx(cnx, AK_CNX_PATH, 0), AK_PATH_SEND_MTU, 0) - 30; // 30 for the header overhead
         uint64_t max_pkt_size = MIN(CHUNK_SIZE, mtu);   // 30 is an ok value for header + checksum overheads
         PROTOOP_PRINTF(cnx, "MTU = %lu\n", mtu);
         PROTOOP_PRINTF(cnx, "MAX PKT SIZE - OVERHEAD = %lu - %lu = %lu, BYTES MAX = %lu\n", max_pkt_size, overhead, max_pkt_size - overhead, bytes_max);
