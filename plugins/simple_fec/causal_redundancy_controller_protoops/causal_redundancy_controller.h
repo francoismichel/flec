@@ -66,6 +66,7 @@ typedef struct {
     buffer_rbt_t *fb_fec_slots;
     buffer_rbt_t *ad_slots;
     buffer_rbt_t *md_ids;
+    buffer_rbt_t *seen_ids;
     buffer_t *what_to_send;
     buffer_t *lost_and_non_fec_retransmitted_slots;
     slots_history_t *slots_history;
@@ -91,6 +92,7 @@ typedef struct {
     uint64_t cached_md;
 
     uint64_t last_sent_slot;
+    uint64_t last_sent_id_timestamp;
     protoop_arg_t causal_addons_states[10];
 
 } causal_redundancy_controller_t;
@@ -164,14 +166,30 @@ static __attribute__((always_inline)) bool buffer_next(picoquic_cnx_t *cnx, buff
     return ceiling_exists;
 }
 
+// returns true if it exists, false otherwise
+static __attribute__((always_inline)) bool first_md_id_covered_by(picoquic_cnx_t *cnx, causal_redundancy_controller_t *controller,
+                                                                  fec_window_t *window, window_source_symbol_id_t *id) {
+    rbt_key key = 0;
+    bool ceiling_exists = rbt_ceiling_key(cnx, &controller->md_ids->collection, window->start, &key);
+    *id = key;
+    return ceiling_exists && *id < window->end;
+}
+
+
+
 // returns the removed element
-static __attribute__((always_inline)) uint64_t add_elem_to_buffer(picoquic_cnx_t *cnx, buffer_rbt_t *buffer, buffer_elem_t slot) {
+static __attribute__((always_inline)) uint64_t add_elem_to_buffer_with_val(picoquic_cnx_t *cnx, buffer_rbt_t *buffer, buffer_elem_t slot, rbt_val val) {
     uint64_t ret = 0;
     if (rbt_size(cnx, &buffer->collection) == buffer->max_size) {
         rbt_delete_and_get_min(cnx, &buffer->collection, &ret, NULL);
     }
-    rbt_put(cnx, &buffer->collection, (rbt_key) slot, (rbt_val) slot);
+    rbt_put(cnx, &buffer->collection, (rbt_key) slot, val);
     return ret;
+}
+
+// returns the removed element
+static __attribute__((always_inline)) uint64_t add_elem_to_buffer(picoquic_cnx_t *cnx, buffer_rbt_t *buffer, buffer_elem_t slot) {
+    return add_elem_to_buffer_with_val(cnx, buffer, (rbt_key) slot, (rbt_val) slot);
 }
 
 
@@ -219,6 +237,10 @@ static __attribute__((always_inline)) bool is_elem_in_buffer_old(buffer_t *buffe
 
 static __attribute__((always_inline)) bool is_elem_in_buffer(picoquic_cnx_t *cnx, buffer_rbt_t *buffer, buffer_elem_t slot) {
     return rbt_contains(cnx, &buffer->collection, (rbt_key) slot);
+}
+
+static __attribute__((always_inline)) bool get_val_from_buffer(picoquic_cnx_t *cnx, buffer_rbt_t *buffer, buffer_elem_t slot, rbt_val *val) {
+    return (bool) rbt_get(cnx, &buffer->collection, (rbt_key) slot, val);
 }
 
 
@@ -389,7 +411,6 @@ static __attribute__((always_inline)) causal_redundancy_controller_t *create_cau
     }
     controller->ad_slots = create_buffer(cnx, MAX_SLOTS);
     if (!controller->ad_slots) {
-        PROTOOP_PRINTF(cnx, "FAILED HISTORY\n");
         destroy_buffer(cnx, controller->acked_slots);
         destroy_buffer(cnx, controller->nacked_slots);
         destroy_buffer(cnx, controller->received_symbols);
@@ -400,13 +421,24 @@ static __attribute__((always_inline)) causal_redundancy_controller_t *create_cau
     }
     controller->md_ids = create_buffer(cnx, MAX_SLOTS);
     if (!controller->md_ids) {
-        PROTOOP_PRINTF(cnx, "FAILED HISTORY\n");
         destroy_buffer(cnx, controller->acked_slots);
         destroy_buffer(cnx, controller->nacked_slots);
         destroy_buffer(cnx, controller->received_symbols);
         destroy_buffer(cnx, controller->fec_slots);
         destroy_buffer(cnx, controller->fb_fec_slots);
         destroy_buffer(cnx, controller->ad_slots);
+        my_free(cnx, controller);
+        return NULL;
+    }
+    controller->seen_ids = create_buffer(cnx, MAX_SLOTS);
+    if (!controller->seen_ids) {
+        destroy_buffer(cnx, controller->acked_slots);
+        destroy_buffer(cnx, controller->nacked_slots);
+        destroy_buffer(cnx, controller->received_symbols);
+        destroy_buffer(cnx, controller->fec_slots);
+        destroy_buffer(cnx, controller->fb_fec_slots);
+        destroy_buffer(cnx, controller->ad_slots);
+        destroy_buffer(cnx, controller->md_ids);
         my_free(cnx, controller);
         return NULL;
     }
@@ -419,6 +451,7 @@ static __attribute__((always_inline)) causal_redundancy_controller_t *create_cau
         destroy_buffer(cnx, controller->fb_fec_slots);
         destroy_buffer(cnx, controller->ad_slots);
         destroy_buffer(cnx, controller->md_ids);
+        destroy_buffer(cnx, controller->seen_ids);
         my_free(cnx, controller);
         return NULL;
     }
@@ -432,6 +465,7 @@ static __attribute__((always_inline)) causal_redundancy_controller_t *create_cau
         destroy_buffer(cnx, controller->fb_fec_slots);
         destroy_buffer(cnx, controller->ad_slots);
         destroy_buffer(cnx, controller->md_ids);
+        destroy_buffer(cnx, controller->seen_ids);
         destroy_buffer_old(cnx, controller->what_to_send);
         my_free(cnx, controller);
         return NULL;
@@ -446,6 +480,7 @@ static __attribute__((always_inline)) causal_redundancy_controller_t *create_cau
         destroy_buffer(cnx, controller->fb_fec_slots);
         destroy_buffer(cnx, controller->ad_slots);
         destroy_buffer(cnx, controller->md_ids);
+        destroy_buffer(cnx, controller->seen_ids);
         destroy_buffer_old(cnx, controller->what_to_send);
         destroy_buffer_old(cnx, controller->lost_and_non_fec_retransmitted_slots);
         my_free(cnx, controller);
@@ -552,6 +587,7 @@ static __attribute__((always_inline)) void prune_ad_buffer(picoquic_cnx_t *cnx, 
     while(buffer_next(cnx, controller->ad_slots, current_slot+1, &current_slot)) {
         get_window_sent_at_slot(cnx, controller, controller->slots_history, current_slot, &sent_window);
         if (!window_intersects(&sent_window, current_window)) {
+            PROTOOP_PRINTF(cnx, "REMOVE SLOT %lu FROM AD\n", current_slot);
             remove_elem_from_buffer(cnx, controller->ad_slots, current_slot);
         }
     }
@@ -645,7 +681,7 @@ static __attribute__((always_inline)) causal_packet_type_t what_to_send(picoquic
         return nothing;
     buffer_elem_t type;
     dequeue_elem_from_buffer_old(controller->what_to_send, &type);
-    if (type == fb_fec_packet) {
+    if (type == fb_fec_packet || (type == fec_packet && !is_buffer_empty_old(controller->lost_and_non_fec_retransmitted_slots))) {
             uint64_t lost_slot;
             bool dequeued;
             window_packet_metadata_t md;
@@ -668,6 +704,7 @@ static __attribute__((always_inline)) causal_packet_type_t what_to_send(picoquic
             if (dequeued) {
                 PROTOOP_PRINTF(cnx, "GOT SLOT %lu AS LOST AND NON RETRANSMITTED\n", lost_slot);
                 // in this redundancy controller, we assume that 1 packet == 1 source/repair symbol
+                type = fb_fec_packet;
                 if (md.source_metadata.number_of_symbols > 0) {
                     // this slot transported a source symbol
                     PROTOOP_PRINTF(cnx, "TRANSPORTED SOURCE SYMBOLS, FIRST ID = %u\n", md.source_metadata.first_symbol_id);
@@ -714,6 +751,8 @@ static __attribute__((always_inline)) void cancelled_packet(picoquic_cnx_t *cnx,
     }
 }
 
+// TODO: AD = number of RS received or in flight concerning the current window
+
 static __attribute__((always_inline)) void sent_packet(picoquic_cnx_t *cnx, uint64_t current_time, picoquic_path_t *path, window_redundancy_controller_t c, causal_packet_type_t type, uint64_t slot, window_packet_metadata_t md, fec_window_t *current_window) {
     causal_redundancy_controller_t *controller = (causal_redundancy_controller_t *) c;
     add_elem_to_history(controller->slots_history, slot, md);
@@ -727,6 +766,7 @@ static __attribute__((always_inline)) void sent_packet(picoquic_cnx_t *cnx, uint
         for (window_source_symbol_id_t id = window.start ; id < window.end ; id++) {
             rbt_put(cnx, &controller->source_symbols_to_slot, (rbt_key) id, (rbt_val) slot);
         }
+        controller->last_sent_id_timestamp = current_time;
     } else {
         window.start = md.repair_metadata.first_protected_source_symbol_id;
         window.end = window.start + md.repair_metadata.n_protected_source_symbols;
@@ -773,9 +813,13 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, picoqui
         PROTOOP_PRINTF(cnx, "MEMORY ERROR\n");
         return;
     }
+
+    // TODO: add seen packets concept and do MD = number of lost packets of the window - number of seen packets of the window
+
     if (controller->window_first_id_during_last_run != current_window->start && current_window-> start > 0) {
         prune_md_buffer(cnx, controller, controller->window_first_id_during_last_run, current_window->start - 1);
         prune_ad_buffer(cnx, controller, current_window);
+        PROTOOP_PRINTF(cnx, "PRUNE AD MD BECAUSE WINDOW HAS BEEN UPDATED\n");
     }
     // FIXME: wrap-around when the sampling period or bytes sent are too high
     controller->md = compute_md(cnx, controller, current_window);
@@ -880,10 +924,11 @@ static __attribute__((always_inline)) void run_algo(picoquic_cnx_t *cnx, picoqui
 
 static __attribute__((always_inline)) void slot_acked(picoquic_cnx_t *cnx, window_redundancy_controller_t c, fec_window_t *current_window, uint64_t slot) {
     causal_redundancy_controller_t *controller = (causal_redundancy_controller_t *) c;
+//    PROTOOP_PRINTF(cnx, "SLOT ACKED, MD BEFORE = %lu, MD FIRST = %lu\n", buffer_get_size(cnx, controller->md_ids), buffer_get_first(cnx, controller->md_ids));
     window_packet_metadata_t md;
+    bool was_nacked = is_elem_in_buffer(cnx, controller->nacked_slots, slot);
     int err = history_get_sent_slot_metadata(controller->slots_history, slot, &md);
-    if (!is_elem_in_buffer(cnx, controller->nacked_slots, slot)) {
-        // the packet was detect as lost but received in the end
+    if (!was_nacked) {
         controller->n_received_feedbacks++;
 
         if (err) {
@@ -898,18 +943,34 @@ static __attribute__((always_inline)) void slot_acked(picoquic_cnx_t *cnx, windo
         PROTOOP_PRINTF(cnx, "ACKED A SLOT PREVIOUSLY MARKED AS LOST\n");
     }
 
-    if (md.source_metadata.number_of_symbols > 0) {
+    if (was_nacked && md.source_metadata.number_of_symbols > 0) {
         window_source_symbol_id_t id = md.source_metadata.first_symbol_id;
-        if (is_md(cnx, controller, id)) {
-            controller->cached_md--;
-        }
+//        if (is_md(cnx, controller, id)) {
+//            controller->cached_md--;
+//        }
         remove_elem_from_buffer(cnx, controller->md_ids, id);
+        remove_elem_from_buffer(cnx, controller->seen_ids, id);
+//        PROTOOP_PRINTF(cnx, "REMOVE ID FROM MD, NEW MD = %lu\n", buffer_get_size(cnx, controller->md_ids));
     }
-    if (is_in_flight_and_fec(cnx, controller, slot)) {
+    if (md.repair_metadata.number_of_repair_symbols > 0 && is_in_flight_and_fec(cnx, controller, slot)) {
         controller->cached_ad--;
+        fec_window_t window;
+        window.start = md.repair_metadata.first_protected_source_symbol_id;
+        window.end = window.start + md.repair_metadata.n_protected_source_symbols;
+        window_source_symbol_id_t protected_id;
+        bool concerns_a_md = first_md_id_covered_by(cnx, controller, &window, &protected_id);
+        if (concerns_a_md) {
+            // now seen and not MD anymore
+            remove_elem_from_buffer(cnx, controller->md_ids, protected_id);
+            add_elem_to_buffer_with_val(cnx, controller->seen_ids, protected_id, window.val);
+//            PROTOOP_PRINTF(cnx, "ADD %u TO SEEN IDS, PROTECTED BY [%u, %u[\n", protected_id, window.start, window.end);
+        }
     }
-    // no need to check anything: if it was not ad, it won't be removed
-    remove_elem_from_buffer(cnx, controller->ad_slots, slot);
+    if (md.repair_metadata.number_of_repair_symbols > 0) {
+        // no need to check anything: if it was not ad, it won't be removed
+        remove_elem_from_buffer(cnx, controller->ad_slots, slot);
+    }
+//    PROTOOP_PRINTF(cnx, "REMOVE SLOT %lu FROM AD, NEW AD = %lu\n", slot, buffer_get_size(cnx, controller->ad_slots));
     controller->last_feedback = available_slot_reason_ack;
     add_elem_to_buffer(cnx, controller->acked_slots, slot);
 }
@@ -944,11 +1005,19 @@ static __attribute__((always_inline)) void slot_nacked(picoquic_cnx_t *cnx, wind
     if (is_ad(cnx, controller, current_window, slot)) {
         controller->cached_ad--;
     }
-    // no need to check anything: if it was not ad, it won't be removed
-    remove_elem_from_buffer(cnx, controller->ad_slots, slot);
+    if (md.repair_metadata.number_of_repair_symbols > 0) {
+        // no need to check anything: if it was not ad, it won't be removed
+        remove_elem_from_buffer(cnx, controller->ad_slots, slot);
+    }
     // remove all the acked slots in the window
     add_elem_to_buffer(cnx, controller->nacked_slots, slot);
     controller->last_feedback = available_slot_reason_nack;
 
 }
+
+static __attribute__((always_inline)) bool retransmission_needed(picoquic_cnx_t *cnx, window_redundancy_controller_t c) {
+    causal_redundancy_controller_t *controller = (causal_redundancy_controller_t *) c;
+    return !is_buffer_empty_old(controller->lost_and_non_fec_retransmitted_slots);
+}
+
 #endif
