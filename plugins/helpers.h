@@ -114,6 +114,15 @@ static inline protoop_arg_t run_param_with_pid(picoquic_cnx_t *cnx, char *pid_st
     return plugin_run_protoop(cnx, &pp, pid_str, pid);
 }
 
+static __attribute__((always_inline)) void helper_protoop_printf(picoquic_cnx_t *cnx, const char *fmt, protoop_arg_t *fmt_args, size_t args_len)
+{
+    protoop_arg_t args[3];
+    args[0] = (protoop_arg_t) fmt;
+    args[1] = (protoop_arg_t) fmt_args;
+    args[2] = (protoop_arg_t) args_len;
+    run_noparam(cnx, PROTOOPID_NOPARAM_PRINTF, 3, args, NULL);
+}
+
 /**
  * Sets the plugin-specific metadata of this packet at index `idx` to `val`
  * @param cnx The connection pointer
