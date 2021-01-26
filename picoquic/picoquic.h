@@ -347,13 +347,22 @@ typedef struct protoop_plugin protoop_plugin_t;
 typedef uint16_t param_id_t;
 typedef uint16_t opaque_id_t;
 
-typedef struct {
-    protoop_id_t *pid;
+typedef struct __attribute__((__packed__)) {
     param_id_t param;
-    bool caller_is_intern;
-    int inputc;
-    protoop_arg_t *inputv;
-    protoop_arg_t *outputv;
+    uint8_t caller_is_intern;
+    uint16_t inputc;
+    union {
+        protoop_id_t *pid;
+        uint64_t pid_u64;
+    };
+    union {
+        protoop_arg_t *inputv;
+        uint64_t inputv_u64;
+    };
+    union {
+        protoop_arg_t *outputv;
+        uint64_t outputv_u64;
+    };
 } protoop_params_t;
 
 #define NO_PARAM (param_id_t) -1

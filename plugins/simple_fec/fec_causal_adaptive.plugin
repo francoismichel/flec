@@ -2,4 +2,3 @@ be.michelfra.simple_fec rate_unlimited dynamic_memory
 core.plugin include
 causal_adaptive.plugin include
 window_framework.plugin include
-window_rlc_fec_scheme.plugin include

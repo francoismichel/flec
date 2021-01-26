@@ -26,7 +26,7 @@
 #define FEC_PROTOOP_WINDOW_CONTROLLER_FREE_SLOT "fec_controller_free_slot"
 #define WINDOW_INITIAL_SYMBOL_ID 1
 
-#define MAX_SENDING_WINDOW_SIZE 4000
+#define MAX_SENDING_WINDOW_SIZE 8000
 
 
 #define for_each_window_source_symbol(____sss, ____ss, ____nss) \
@@ -87,6 +87,13 @@ typedef struct __attribute__((__packed__)) {
     window_repair_symbol_packet_metadata_t repair_metadata;
     window_source_symbol_packet_metadata_t source_metadata;
 } window_packet_metadata_t;
+
+
+typedef struct {
+    uint64_t pn;
+    window_source_symbol_id_t id;
+    size_t n_symbols;
+} window_recovered_range_t;
 
 static __attribute__((always_inline)) window_source_symbol_t *create_window_source_symbol(picoquic_cnx_t *cnx, uint16_t symbol_size) {
     window_source_symbol_t *ss = my_malloc(cnx, MAX(MALLOC_SIZE_FOR_FRAGMENTATION, sizeof(window_source_symbol_t)));
@@ -200,8 +207,11 @@ static __attribute__((always_inline)) void delete_window_rwin_frame(picoquic_cnx
                                   member_size(window_repair_frame_t, n_repair_symbols))
 
 static __attribute__((always_inline)) int serialize_window_source_symbol_id(uint8_t *out_buffer, size_t buffer_length, window_source_symbol_id_t id, size_t *consumed) {
-    if (buffer_length < sizeof(id))
+    // TODO: remove this below and make it more generic
+    if (buffer_length < sizeof(id) || sizeof(id) != 4)
         return PICOQUIC_ERROR_FRAME_BUFFER_TOO_SMALL;
+    id &= 0x3FFFFFFF;
+    id |= 0x80000000;
     encode_un(id, out_buffer, sizeof(id));
     *consumed = sizeof(id);
     return 0;
@@ -213,17 +223,21 @@ static __attribute__((always_inline)) int serialize_window_repair_frame(picoquic
         return PICOQUIC_ERROR_FRAME_BUFFER_TOO_SMALL;
     *consumed = 0;
     // encode fec-scheme-specific
+    // 4 bytes
     my_memcpy(out_buffer, repair_frame->fss.val, sizeof(repair_frame->fss.val));
     *consumed += sizeof(repair_frame->fss.val);
     size_t tmp = 0;
     // encode symbol id
+    // 4 bytes
     int err = serialize_window_source_symbol_id(out_buffer + *consumed, buffer_length, repair_frame->first_protected_symbol, &tmp);
     if (err)
         return err;
     *consumed += tmp;
     // encode number of repair symbols (the symbol size is implicitly negociated so we don't need to encode it)
+    // 2 bytes
     encode_un(repair_frame->n_protected_symbols, out_buffer + *consumed, sizeof(repair_frame->n_protected_symbols));
     *consumed += sizeof(repair_frame->n_protected_symbols);
+    // 2 bytes
     encode_un(repair_frame->n_repair_symbols, out_buffer + *consumed, sizeof(repair_frame->n_repair_symbols));
     *consumed += sizeof(repair_frame->n_repair_symbols);
     // encode payload
@@ -245,8 +259,13 @@ static __attribute__((always_inline)) int decode_window_source_symbol_id(uint8_t
                                                                          window_source_symbol_id_t *id, size_t *consumed) {
     if (buffer_length < sizeof(window_source_symbol_id_t))
         return PICOQUIC_ERROR_MEMORY;
+    // TODO: remove this below and make it generic by using redular varints
+    // little hack it is encoded as a varint but it always takes 4 bytes
     *id = decode_u32(buffer);
+    *id &= 0x3FFFFFFF;
     *consumed = sizeof(window_source_symbol_id_t);
+
+
     return 0;
 }
 
@@ -376,21 +395,21 @@ static __attribute__((always_inline)) window_recovered_frame_t *create_window_re
     if (!rf)
         return NULL;
     my_memset(rf, 0, sizeof(window_recovered_frame_t));
-    rf->packet_numbers = my_malloc(cnx, PICOQUIC_MAX_PACKET_SIZE);
+    rf->max_packets = 1000;
+    rf->packet_numbers = my_malloc(cnx, rf->max_packets*sizeof(rf->packet_numbers[0]));
     if (!rf->packet_numbers) {
         my_free(cnx, rf);
         return NULL;
     }
-    rf->ids = my_malloc(cnx, PICOQUIC_MAX_PACKET_SIZE);
+    rf->ids = my_malloc(cnx, rf->max_packets*sizeof(rf->ids[0]));
     if (!rf->ids) {
         my_free(cnx, rf->packet_numbers);
         my_free(cnx, rf);
         return NULL;
     }
-    my_memset(rf->packet_numbers, 0, PICOQUIC_MAX_PACKET_SIZE);
-    my_memset(rf->ids, 0, PICOQUIC_MAX_PACKET_SIZE);
+    my_memset(rf->packet_numbers, 0, rf->max_packets*sizeof(rf->packet_numbers[0]));
+    my_memset(rf->ids, 0, rf->max_packets*sizeof(rf->ids[0]));
     rf->n_packets = 0;
-    rf->max_packets = MIN(PICOQUIC_MAX_PACKET_SIZE/sizeof(uint64_t), PICOQUIC_MAX_PACKET_SIZE/sizeof(window_source_symbol_id_t));
     return rf;
 }
 
@@ -433,36 +452,28 @@ static __attribute__((always_inline)) void print_source_symbol_payload(picoquic_
     PROTOOP_PRINTF(cnx, "DONE\n");
 }
 
-// we do not write the type byte
-static __attribute__((always_inline)) int serialize_window_recovered_frame(picoquic_cnx_t *cnx, uint8_t *bytes, size_t buffer_length, window_recovered_frame_t *rf, size_t *consumed) {
-    *consumed = 0;
-    //  frame header                           frame payload
-    if (sizeof(uint8_t) + sizeof(uint64_t) + rf->n_packets*(sizeof(uint64_t) + sizeof(window_source_symbol_id_t)) > buffer_length) {
-        // buffer too small
-        return PICOQUIC_ERROR_MEMORY;
-    }
-
+static __attribute__((always_inline)) int serialize_packet_ranges(picoquic_cnx_t *cnx, uint8_t *bytes, size_t buffer_length, uint64_t *packet_numbers, uint64_t n_packets, size_t *consumed) {
     // the packets in rp must be sorted according to their packet number
     ssize_t size = 0;
 
-    size = picoquic_varint_encode(bytes, buffer_length - *consumed, rf->n_packets);
+    size = picoquic_varint_encode(bytes, buffer_length - *consumed, n_packets);
     bytes += size;
     *consumed += size;
-
-    encode_u64(rf->packet_numbers[0], bytes);
+    // TODO: encode it as a normal varint and not a varint with a size of always 8 bytes
+    uint64_t packet_to_encode = packet_numbers[0] | 0xC000000000000000;
+    encode_u64(packet_to_encode, bytes);
     bytes += sizeof(uint64_t);
     *consumed += sizeof(uint64_t);
-
+    PROTOOP_PRINTF(cnx, "FIRST NUMBER = %lu\n", packet_numbers[0]);
     uint64_t range_length = 0;
-    for (int i = 1 ; i < rf->n_packets ; i++) {
-        // FIXME: handle gaps of more than 0xFF
-        if (rf->packet_numbers[i] <= rf->packet_numbers[i-1]) {
+    for (int i = 1 ; i < n_packets ; i++) {
+        if (packet_numbers[i] <= packet_numbers[i-1]) {
             // error
             *consumed = 0;
-            PROTOOP_PRINTF(cnx, "ERROR: THE PACKETS ARE NOT IN ORDER IN THE RECOVERED FRAME\n");
+            PROTOOP_PRINTF(cnx, "ERROR: THE PACKETS ARE NOT IN ORDER IN THE RECOVERED FRAME: %lx <= %lx\n", packet_numbers[i], packet_numbers[i-1]);
             return -1;
         }
-        if (rf->packet_numbers[i] == rf->packet_numbers[i-1]) {
+        if (packet_numbers[i] == packet_numbers[i-1] + 1 || packet_numbers[i] == packet_numbers[i-1]) {
             range_length++;
         } else {
             if (buffer_length - *consumed < 2*sizeof(uint8_t)) {
@@ -473,10 +484,12 @@ static __attribute__((always_inline)) int serialize_window_recovered_frame(picoq
             }
             // write range
             size = picoquic_varint_encode(bytes, buffer_length - *consumed, range_length);
+            PROTOOP_PRINTF(cnx, "WRITE STREAK %lu\n", range_length);
             bytes += size;
             *consumed += size;
             // write gap
-            size = picoquic_varint_encode(bytes, buffer_length - *consumed, (rf->packet_numbers[i] - rf->packet_numbers[i-1]) - 1);
+            size = picoquic_varint_encode(bytes, buffer_length - *consumed, (packet_numbers[i] - packet_numbers[i-1]) - 1);
+            PROTOOP_PRINTF(cnx, "WRITE GAP %lu\n", (packet_numbers[i] - packet_numbers[i-1]) - 1);
             bytes += size;
             *consumed += size;
             range_length = 0;
@@ -492,93 +505,214 @@ static __attribute__((always_inline)) int serialize_window_recovered_frame(picoq
         bytes += size;
         *consumed += size;
     }
-    // bulk-encode the sfpids
-    for (int i = 0 ; i < rf->n_packets ; i++) {
-        encode_u32(rf->ids[i], bytes);
-        *consumed += sizeof(uint32_t);
-        bytes += sizeof(uint32_t);
-    }
     return 0;
+}
+
+static __attribute__((always_inline)) int serialize_id_ranges(picoquic_cnx_t *cnx, uint8_t *bytes, size_t buffer_length, window_recovered_frame_t *rf, size_t *consumed) {
+    // quick ack: put the ids in a uint64_t array so that we can encode them the same way as the packet numbers
+    uint64_t *ids = my_malloc(cnx, rf->n_packets*sizeof(uint64_t));
+    if (!ids) {
+        return PICOQUIC_ERROR_MEMORY;
+    }
+    for (int i = 0 ; i < rf->n_packets ; i++) {
+        ids[i] = (uint64_t) rf->ids[i];
+    }
+    int err = serialize_packet_ranges(cnx, bytes, buffer_length, ids, rf->n_packets, consumed);
+    my_free(cnx, ids);
+    return err;
+}
+
+
+// we do not write the type byte
+static __attribute__((always_inline)) int serialize_window_recovered_frame(picoquic_cnx_t *cnx, uint8_t *bytes, size_t buffer_length, window_recovered_frame_t *rf, size_t *consumed) {
+    *consumed = 0;
+
+    int err = serialize_packet_ranges(cnx, bytes, buffer_length, rf->packet_numbers, rf->n_packets, consumed);
+
+    if (err) {
+        PROTOOP_PRINTF(cnx, "ERROR WHILE SERIALIZING RECOVERED FRAME PACKET RANGE");
+        return err;
+    }
+
+    uint64_t consumed_packets = *consumed;
+
+    PROTOOP_PRINTF(cnx, "WRITTEN PACKETS RANGE, CONSUMED = %lu\n", consumed_packets);
+    *consumed = 0;
+
+    bytes += consumed_packets;
+    buffer_length -= consumed_packets;
+    err = serialize_id_ranges(cnx, bytes, buffer_length, rf, consumed);
+
+    *consumed += consumed_packets;
+    PROTOOP_PRINTF(cnx, "WRITTEN IDS RANGE, TOTAL CONSUMED = %lu, LARGEST RECOVERED PACKET = %lx\n", *consumed, rf->packet_numbers[rf->n_packets-1]);
+
+    return err;
 
 
 }
 
-// we do not read the type byte
-static __attribute__((always_inline)) uint8_t *parse_window_recovered_frame(picoquic_cnx_t *cnx, uint8_t *bytes, uint8_t *bytes_max, size_t *consumed) {
-    PROTOOP_PRINTF(cnx, "PARSE RECOVERED FRAME, AVAILABLE SPACE = %ld\n", bytes_max - bytes);
+// also allocates the needed space for window source symbols ids to be appended after the packet numbers
+static __attribute__((always_inline)) uint8_t *parse_packets_range(picoquic_cnx_t *cnx, uint8_t *bytes, uint8_t *bytes_max, size_t *consumed, size_t *allocated_size) {
     uint64_t first_recovered_packet;
     uint8_t *bytes_orig = bytes;
     uint64_t number_of_packets;
     ssize_t size = picoquic_varint_decode(bytes, bytes_max - bytes, &number_of_packets);
     bytes += size;
 
+    // TODO: currently encoded as a varing but always on 8 bytes, we need to change it to a regular varint
     first_recovered_packet = decode_u64(bytes);
+    first_recovered_packet &= 0x3FFFFFFFFFFFFFFF;
     bytes += sizeof(uint64_t);
-    uint8_t *size_and_packets = my_malloc(cnx, sizeof(uint64_t) + number_of_packets*(sizeof(uint64_t) + sizeof(window_source_symbol_id_t))); // sadly, we must place everything in one single malloc, because skip_frame will free our output
+    *allocated_size = sizeof(uint64_t) + number_of_packets*(sizeof(window_recovered_range_t));  // sadly, we must place everything in one single malloc, because skip_frame will free our output
+    uint8_t *size_and_ranges = my_malloc(cnx, *allocated_size);
     if (!size)
         return NULL;
-    my_memset(size_and_packets, 0, sizeof(uint64_t) + number_of_packets*(sizeof(uint64_t) + sizeof(window_source_symbol_id_t)));
-    ((uint64_t *) size_and_packets)[0] = number_of_packets;
-    uint64_t *packets =&(((uint64_t *) size_and_packets)[1]);
-    packets[0] = first_recovered_packet;
+    my_memset(size_and_ranges, 0, *allocated_size);
+    window_recovered_range_t *ranges = (window_recovered_range_t *) &(((uint64_t *) size_and_ranges)[1]);
+
+    ranges[0].pn = first_recovered_packet;
+    ranges[0].n_symbols = 1;
+
     int currently_parsed_recovered_packets = 1;
-    uint64_t last_recovered_packet = first_recovered_packet;
+    uint64_t next_packet_to_check = first_recovered_packet + 1;
     bool range_is_gap = false;
-    while(currently_parsed_recovered_packets < number_of_packets && bytes < bytes_max - 1) {  // - 1 because there is the number of sfpid afterwards
-        uint64_t range;
-        size = picoquic_varint_decode(bytes, bytes_max - bytes, &range);
+    size_t n_ranges = 0;
+//    PROTOOP_PRINTF(cnx, "FIRST PACKET = %lu\n", ranges[0].pn);
+    while(currently_parsed_recovered_packets < number_of_packets && bytes < bytes_max) {
+        uint64_t range_size;
+        size = picoquic_varint_decode(bytes, bytes_max - bytes, &range_size);
         bytes += size;
         if (!range_is_gap) {
+//            PROTOOP_PRINTF(cnx, "STREAK SIZE = %lu\n", range_size);
             // this is a range of recovered packets
-            if (currently_parsed_recovered_packets + range > number_of_packets) {
-                PROTOOP_PRINTF(cnx, "ERROR PARSING RECOVERED FRAME: THE RANGE GOES OUT OF THE PACKET: %d + %lu > %lu\n", currently_parsed_recovered_packets, range, number_of_packets);
+            if (currently_parsed_recovered_packets + range_size > number_of_packets) {
+                PROTOOP_PRINTF(cnx, "ERROR PARSING RECOVERED FRAME: THE RANGE GOES OUT OF THE PACKET: %d + %lu > %lu\n", currently_parsed_recovered_packets, range_size, number_of_packets);
                 // error
-                my_free(cnx, size_and_packets);
+                my_free(cnx, size_and_ranges);
                 return NULL;
             }
-            for (int j = 0 ; j < range ; j++) { // we add each packet of the range in the recovered packets
-                last_recovered_packet++;    // the last recovered packet is now this one
-                packets[currently_parsed_recovered_packets] = last_recovered_packet;
-                PROTOOP_PRINTF(cnx, "PACKET %lx HAS BEEN RECOVERED BY THE PEER\n", last_recovered_packet);
-                currently_parsed_recovered_packets++;
+            if (ranges[n_ranges].n_symbols == 0) {
+                // new range
+                ranges[n_ranges].pn = next_packet_to_check;
+                ranges[n_ranges].n_symbols = range_size;
+                next_packet_to_check += range_size;
+            } else {
+                // update range
+                ranges[n_ranges].n_symbols += range_size;
+                next_packet_to_check += range_size;
             }
+//            PROTOOP_PRINTF(cnx, "ranges[%d].pn = %lu, n_ranges\n", n_ranges, ranges[n_ranges].pn, n_ranges);
+            currently_parsed_recovered_packets += range_size;
+            n_ranges++;
+
             range_is_gap = true; // after a range of recovered packets, there must be a gap or nothing
         } else {
+//            PROTOOP_PRINTF(cnx, "GAP SIZE = %lu\n", range_size);
             // this range is a gap of recovered packets
             // it implicitly announces the recovery of the packet just after this gap
-            last_recovered_packet += range + 1;
-            packets[currently_parsed_recovered_packets] = last_recovered_packet;
+            next_packet_to_check += range_size;
+            ranges[n_ranges].pn = next_packet_to_check;
+            ranges[n_ranges].n_symbols = 1;
+            next_packet_to_check++;
             currently_parsed_recovered_packets++;
             range_is_gap = false; // after a gap of recovered packets, there must be a range or nothing
-            PROTOOP_PRINTF(cnx, "PACKET %lx HAS BEEN RECOVERED BY THE PEER\n", last_recovered_packet);
+//            PROTOOP_PRINTF(cnx, "PACKET %lx HAS BEEN RECOVERED BY THE PEER\n", last_recovered_packet);
         }
     }
+    if (!range_is_gap) {
+        // means that we parsed a gap just before
+        n_ranges++;
+    }
+    ((uint64_t *) size_and_ranges)[0] = n_ranges;
 
-    if (currently_parsed_recovered_packets != number_of_packets || bytes >= bytes_max) {
+    if (currently_parsed_recovered_packets != number_of_packets || bytes > bytes_max) {
         // error
-        my_free(cnx, size_and_packets);
+        my_free(cnx, size_and_ranges);
         PROTOOP_PRINTF(cnx, "DID NOT PARSE THE CORRECT NUMBER OF RECOVERED PACKETS (%u < %u)\n", currently_parsed_recovered_packets, number_of_packets);
         return NULL;
     }
-
-    uint8_t currently_parsed_sfpids = 0;
-    window_source_symbol_id_t *idx = (window_source_symbol_id_t *) (packets + currently_parsed_recovered_packets);
-    while(currently_parsed_sfpids < number_of_packets && bytes < bytes_max) {
-        size_t cons = 0;
-        decode_window_source_symbol_id(bytes, bytes_max - bytes, &idx[currently_parsed_sfpids++], &cons);
-        bytes += cons;
-    }
-
     *consumed = bytes - bytes_orig;
+    return size_and_ranges;
+}
 
-    if (currently_parsed_sfpids != number_of_packets || bytes > bytes_max) {
-        // error
-        my_free(cnx, size_and_packets);
-        PROTOOP_PRINTF(cnx, "DID NOT PARSE THE CORRECT NUMBER OF RECOVERED SFPIDS (%u < %u OR %ld > 0)\n", currently_parsed_sfpids, number_of_packets, bytes - bytes_max);
+static __attribute__((always_inline)) int parse_ids_range(picoquic_cnx_t *cnx, uint8_t *bytes, uint8_t *bytes_max, size_t *consumed, window_recovered_range_t *ranges, int n_max_ranges) {
+    size_t tmp = 0;
+    // the packets range format is the same as the IDs ranges so we use a little hack here
+    uint8_t *size_and_ids_ranges = parse_packets_range(cnx, bytes, bytes_max, consumed, &tmp);
+    if (!size_and_ids_ranges) {
+        return PICOQUIC_ERROR_MEMORY;
+    }
+    size_t n_ranges = ((uint64_t *) size_and_ids_ranges)[0];
+    if (n_ranges > n_max_ranges) {
+        my_free(cnx, size_and_ids_ranges);
+        return PICOQUIC_ERROR_MEMORY;
+    }
+    window_recovered_range_t *ranges64 = (window_recovered_range_t *) &(((uint64_t *) size_and_ids_ranges)[1]);
+    int64_t next_range_start = -1L;
+    int n_remaining_numbers_in_range = 0;
+    if (n_ranges > 0) {
+        next_range_start = ranges64[0].pn;
+        n_remaining_numbers_in_range = ranges64[0].n_symbols;
+    }
+    int current_range64_idx = 0;
+    for (int i = 0 ; current_range64_idx < n_ranges ; i++) {
+//        PROTOOP_PRINTF(cnx, "SET RANGE ID TO %u (PACKET = %lx, LENGTH = %lu)\n", ranges64[current_range64_idx].pn, ranges[i].pn, ranges[i].n_symbols);
+        ranges[i].id = (window_source_symbol_id_t) next_range_start;
+        // we never have a n_remaining_numbers_in_range that is smaller than ranges[i].n_symbols because when packets are contiguous, IDs are contiguous
+        next_range_start = ranges64[current_range64_idx].pn + ranges[i].n_symbols;
+        n_remaining_numbers_in_range = n_remaining_numbers_in_range - ranges[i].n_symbols;
+        if (n_remaining_numbers_in_range == 0) {
+            current_range64_idx++;
+            if (current_range64_idx < n_ranges) {
+                next_range_start = ranges64[current_range64_idx].pn;
+                n_remaining_numbers_in_range = ranges64[current_range64_idx].n_symbols;
+            }
+        }
+    }
+    my_free(cnx, size_and_ids_ranges);
+    return 0;
+}
+
+// we do not read the type byte
+static __attribute__((always_inline)) uint8_t *parse_window_recovered_frame(picoquic_cnx_t *cnx, uint8_t *bytes, uint8_t *bytes_max, size_t *consumed) {
+    PROTOOP_PRINTF(cnx, "PARSE RECOVERED FRAME, AVAILABLE SPACE = %ld\n", bytes_max - bytes);
+
+    uint64_t now = picoquic_current_time();
+    size_t allocated_size = 0;
+    uint8_t *size_and_ranges = parse_packets_range(cnx, bytes, bytes_max, consumed, &allocated_size);
+    if (!size_and_ranges) {
         return NULL;
     }
+    PROTOOP_PRINTF(cnx, "PARSED PACKETS, CONSUMED = %lu\n", *consumed);
+    uint64_t n_ranges = (((uint64_t *) size_and_ranges)[0]);
+    window_recovered_range_t *ranges = (window_recovered_range_t *) &(((uint64_t *) size_and_ranges)[1]);
 
-    return size_and_packets;
+    size_t consumed_packets = *consumed;
+
+    *consumed = 0;
+    bytes += consumed_packets;
+
+    size_t n_max_ids_ranges = n_ranges;
+
+    if (n_max_ids_ranges != n_ranges) {
+        // error
+        my_free(cnx, size_and_ranges);
+        PROTOOP_PRINTF(cnx, "ERROR: PARSING RECOVERED FRAME: INVALID NUMBER OF IDS TO PARSED GIVEN THE SIZE OF THE OUTPUT BUFFER: %lu != %lu\n",
+                       n_max_ids_ranges, n_ranges);
+        return NULL;
+    }
+    PROTOOP_PRINTF(cnx, "PARSING IDS\n");
+
+    int err = parse_ids_range(cnx, bytes, bytes_max, consumed, ranges, n_max_ids_ranges);
+
+    if (err) {
+        my_free(cnx, size_and_ranges);
+        return NULL;
+    }
+    *consumed += consumed_packets;
+    PROTOOP_PRINTF(cnx, "PARSED IDS, CONSUMED = %lu, %lu RANGES, elapsed = %uµs\n", *consumed, n_ranges, picoquic_current_time() - now);
+
+    return size_and_ranges;
 }
 
 #define WINDOW_FEC_SCHEME_RECEIVE_SOURCE_SYMBOL "win_fs_recv_ss"
