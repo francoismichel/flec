@@ -18,6 +18,7 @@
 #define FEC_PACKET_HAVE_BEEN_RECEIVED "fec_packet_received"
 #define FEC_SENT_PACKET "fec_sent_packet"
 #define FEC_AFTER_INCOMING_PACKET "fec_after_incoming"
+#define FEC_PROTOOP_RETRANSMISSION_NEEDED "fec_retransmission_needed"
 
 
 // depends on the loss_monitor plugin

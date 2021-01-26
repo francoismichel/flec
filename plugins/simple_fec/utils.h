@@ -6,12 +6,21 @@
 #include <memcpy.h>
 #include "../helpers.h"
 #include "fec_constants.h"
+#include "red_black_tree.h"
 
 #define member_size(struct_type, member) (sizeof(((struct_type *) 0)->member))
 
 #define ALIGNMENT 32
 static __attribute__((always_inline)) size_t align(size_t val) {
-    return ( ( val - 1 ) | ( ((ALIGNMENT<<1) - 1 ) )) + 1;
+    return (val + ALIGNMENT - 1) / ALIGNMENT * ALIGNMENT;
+}
+
+static __attribute__((always_inline)) size_t align_below(size_t val) {
+    size_t retval = align(val);
+    if (retval > 0 && retval != val) {
+        retval -= ALIGNMENT;
+    }
+    return retval;
 }
 
 static __attribute__((always_inline)) uint64_t decode_un(uint8_t *bytes, int n) {
@@ -265,6 +274,9 @@ static __attribute__((always_inline)) what_to_send_t fec_has_protected_data_to_s
     return (int) run_noparam(cnx, FEC_PROTOOP_HAS_PROTECTED_DATA_TO_SEND, 0, NULL, NULL);
 }
 
+static __attribute__((always_inline)) what_to_send_t controller_retransmission_needed(picoquic_cnx_t *cnx) {
+    return (int) run_noparam(cnx, FEC_PROTOOP_RETRANSMISSION_NEEDED, 0, NULL, NULL);
+}
 
 // depends on the loss_monitor plugin
 static __attribute__((always_inline)) int get_loss_parameters(picoquic_cnx_t *cnx, picoquic_path_t *path, uint64_t current_time, uint64_t granularity,
@@ -313,11 +325,9 @@ typedef struct lost_packet {
 
 // we use a queue because it is more likely that we dequeue the packets in the order we inserted them
 typedef struct lost_packet_queue {
-    lost_packet_t *head;
-    lost_packet_t *tail;
+    red_black_tree_t rbt;
 } lost_packet_queue_t;
 
-// pre: queue != NULL
 static __attribute__((always_inline)) int add_lost_packet(picoquic_cnx_t *cnx, lost_packet_queue_t *queue, uint64_t pn, uint64_t slot, source_symbol_id_t id, uint16_t n_source_symbols, uint64_t send_time) {
     lost_packet_t *lp = my_malloc(cnx, sizeof(lost_packet_t));
     if (!lp) {
@@ -329,87 +339,62 @@ static __attribute__((always_inline)) int add_lost_packet(picoquic_cnx_t *cnx, l
     lp->id = id;
     lp->n_source_symbols = n_source_symbols;
     lp->send_time = send_time;
-    if (!queue->head && !queue->tail) {
-        queue->head = queue->tail = lp;
-        return 0;
-    }
-    queue->tail->next = lp;
-    lp->previous = queue->tail;
-    queue->tail = lp;
+    rbt_put(cnx, &queue->rbt, pn, lp);
     return 0;
 }
 
 // sets *slot to the slot when the packet was sent, dequeues the packet from the queue and returns true if this packet was present
 // if the packet was not present, does nothing and returns false
 static __attribute__((always_inline)) bool dequeue_lost_packet(picoquic_cnx_t *cnx, lost_packet_queue_t *queue, uint64_t pn, uint64_t *slot, source_symbol_id_t *id, uint16_t *n_source_symbols, uint64_t *send_time) {
-    if (!queue->head && !queue->tail)
-        return false;
-    lost_packet_t *previous = NULL;
-    lost_packet_t *current = queue->head;
-    while (current) {
-        if (current->pn == pn) {
-            if (slot)
-                *slot = current->slot;
-            if (id)
-                *id = current->id;
-            if (n_source_symbols)
-                *n_source_symbols = current->n_source_symbols;
-            if (send_time)
-                *send_time = current->send_time;
-            if (!previous) {
-                // head == current
-                queue->head = current->next;
-                if (queue->head)
-                    queue->head->previous = NULL;
-            } else {
-                previous->next = current->next;
-                if (current->next)
-                    current->next->previous = previous;
-            }
-            if (queue->tail == current) {
-                queue->tail = previous;
-            }
-            my_free(cnx, current);
-            return true;
-        }
-        previous = current;
-        current = current->next;
+    lost_packet_t *lpn = NULL;
+    bool present = rbt_get(cnx, &queue->rbt, pn, (void **) &lpn);
+    if (present) {
+        if (slot)
+            *slot = lpn->slot;
+        if (id)
+            *id = lpn->id;
+        if (n_source_symbols)
+            *n_source_symbols = lpn->n_source_symbols;
+        if (send_time)
+            *send_time = lpn->send_time;
+        rbt_delete(cnx, &queue->rbt, pn);
+        my_free(cnx, lpn);
+        return true;
     }
     return false;
 }
 
-
 // returns the packet number at first position of the queue (i.e. the oldest enqueued packet)
 // returns -1 if the queue is empty
 static __attribute__((always_inline)) lost_packet_t *get_first_lost_packet(picoquic_cnx_t *cnx, lost_packet_queue_t *queue) {
-    if (!queue->head && !queue->tail)
+    if (rbt_is_empty(cnx, &queue->rbt))
         return NULL;
-    return queue->head;
+    return rbt_min_val(cnx, &queue->rbt);
 }
 
 // returns the packet number at first position of the queue (i.e. the oldest enqueued packet)
 // returns -1 if the queue is empty
 static __attribute__((always_inline)) lost_packet_t *get_last_lost_packet(picoquic_cnx_t *cnx, lost_packet_queue_t *queue) {
-    if (!queue->head && !queue->tail)
+    if (rbt_is_empty(cnx, &queue->rbt))
         return NULL;
-    return queue->tail;
+    return rbt_max_val(cnx, &queue->rbt);
 }
 
-
-// returns the packet number at first position of the queue (i.e. the oldest enqueued packet)
+// returns the smallest-numbered packet with a packet number equal or bigger than pn. Returns NULL if there is no packet with this criterion
 // returns -1 if the queue is empty
-static __attribute__((always_inline)) lost_packet_t *get_lost_packet_equal_or_smaller(picoquic_cnx_t *cnx, lost_packet_queue_t *queue, uint64_t pn) {
-    if (!queue->head && !queue->tail)
+static __attribute__((always_inline)) lost_packet_t *get_smallest_lost_packet_equal_or_bigger(picoquic_cnx_t *cnx, lost_packet_queue_t *queue, uint64_t pn) {
+    if (rbt_is_empty(cnx, &queue->rbt))
         return NULL;
-    lost_packet_t *current = queue->tail;
-    while (current && current->pn > pn) {
-        current = current->previous;
+    lost_packet_t *lp = NULL;
+    bool present = (bool) rbt_ceiling_val(cnx, &queue->rbt, pn, (void **) &lp);
+    if (!present) {
+        return NULL;
     }
-    return current;
+    return lp;
 }
 
 static __attribute__((always_inline)) bool is_lost_packet_queue_empty(picoquic_cnx_t *cnx, lost_packet_queue_t *queue) {
-    return !queue->head || !queue->tail;
+    return rbt_is_empty(cnx, &queue->rbt);
 }
 
 #define MAX_RECOVERED_PACKETS_IN_BUFFER 50
@@ -453,12 +438,6 @@ static __attribute__((always_inline)) uint64_t dequeue_recovered_packet_from_buf
     b->size--;
     b->start = (b->start + 1) % MAX_RECOVERED_PACKETS_IN_BUFFER;
     return packet;
-}
-
-static __attribute__((always_inline)) void enqueue_recovered_packets(recovered_packets_buffer_t *b, uint64_t *rp, uint64_t n_packets) {
-    for(int i = 0 ; i < n_packets ; i++) {
-        enqueue_recovered_packet_to_buffer(b, rp[i]);
-    }
 }
 
 
