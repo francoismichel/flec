@@ -242,8 +242,11 @@ static __attribute__((always_inline)) window_fec_framework_t *create_framework_s
     return wff;
 }
 
-typedef struct __attribute__((__packed__)) {
-    uint32_t start, end;
+typedef union {
+    struct __attribute__((__packed__)) {
+        uint32_t start, end;
+    };
+    rbt_val val;
 } fec_window_t;
 
 static __attribute__((always_inline)) bool has_repair_symbol_at_index(window_fec_framework_t *wff, int idx) {
@@ -336,10 +339,6 @@ static __attribute__((always_inline)) int get_repair_symbols_from_queue(picoquic
     if (wff->repair_symbols_queue_length == 0)
         return 0;
     // FIXME: temporarily ensure that the repair symbols are not split into multiple frames
-    if (bytes_max < REPAIR_FRAME_HEADER_SIZE + symbol_size) {
-        PROTOOP_PRINTF(cnx, "NOT ENOUGH BYTES TO SEND SYMBOL: %u < %u\n", bytes_max, REPAIR_FRAME_HEADER_SIZE + symbol_size);
-        return PICOQUIC_ERROR_SEND_BUFFER_TOO_SMALL;
-    }
 
     *added_symbols = 0;
     *consumed = REPAIR_FRAME_HEADER_SIZE;
@@ -412,21 +411,23 @@ static __attribute__((always_inline)) bool has_frames_to_reserve(picoquic_cnx_t 
 
 static __attribute__((always_inline)) int window_reserve_repair_frames(picoquic_cnx_t *cnx, window_fec_framework_t *wff,
                                                                        size_t size_max, size_t symbol_size, bool feedback_implied) {
-    if (size_max < REPAIR_FRAME_HEADER_SIZE + symbol_size) {
-        PROTOOP_PRINTF(cnx, "NOT ENOUGH SPACE TO RESERVE A REPAIR FRAME\n");
-        return -1;
-    }
-    while (wff->repair_symbols_queue_length != 0 && size_max >= REPAIR_FRAME_HEADER_SIZE + symbol_size) {
+    while (wff->repair_symbols_queue_length != 0) {
         window_repair_frame_t *rf = create_repair_frame_without_symbols(cnx);
         if (!rf) {
             return PICOQUIC_ERROR_MEMORY;
         }
         size_t predicted_size = 0;
-        int err = get_repair_frame_to_send(cnx, wff, symbol_size, size_max - REPAIR_FRAME_TYPE_BYTE_SIZE,
+        int err = get_repair_frame_to_send(cnx, wff, symbol_size, 2*PICOQUIC_MAX_PACKET_SIZE, // we put max_packet_size because we do the size check afterwards as the frame might be compressed when written
                                            &predicted_size, rf);
         if (err) {
             my_free(cnx, rf);
             return err;
+        }
+
+        if (size_max < predicted_size) {
+            // FIXME: this means that the repair symbol is lost. Is that what we want ?
+            PROTOOP_PRINTF(cnx, "NOT ENOUGH SPACE TO RESERVE A REPAIR FRAME: %lu < %lu\n", size_max, predicted_size);
+            return 0;
         }
 
         rf->is_fb_fec = feedback_implied;
@@ -440,9 +441,9 @@ static __attribute__((always_inline)) int window_reserve_repair_frames(picoquic_
         slot->frame_type = FRAME_REPAIR;
         slot->nb_bytes = REPAIR_FRAME_TYPE_BYTE_SIZE + predicted_size;
         slot->frame_ctx = rf;
-        // FIXME: this is a test= when it is feedback-implied, we "retransmit" directly
+        // FIXME: this is a test: when it is feedback-implied, we "retransmit" directly
         slot->is_congestion_controlled = !feedback_implied; // true
-        PROTOOP_PRINTF(cnx, "RESERVE REPAIR FRAME, FSS = %u, FIRST ID = %i\n", decode_u32(rf->fss.val), rf->first_protected_symbol);
+        slot->contributes_to_bytes_in_transit = true;
         size_t reserved_size = reserve_frames(cnx, 1, slot);
         if (reserved_size < slot->nb_bytes) {
             PROTOOP_PRINTF(cnx, "Unable to reserve frame slot\n");
@@ -460,9 +461,8 @@ static __attribute__((always_inline)) int window_reserve_repair_frames(picoquic_
 static __attribute__((always_inline)) bool __remove_source_symbol_from_window(picoquic_cnx_t *cnx,
                                                                               window_fec_framework_t *wff,
                                                                               source_symbol_t *ss,
-                                                                              window_source_symbol_id_t id){
+                                                                              window_source_symbol_id_t id, int idx){
 
-    int idx = (int) (id % MAX_SENDING_WINDOW_SIZE);
     // wrong symbol ?
     if (!wff->fec_window[idx].symbol || wff->fec_window[idx].id != id)
         return false;
@@ -486,26 +486,32 @@ static __attribute__((always_inline)) bool _remove_source_symbol_from_window(pic
             return false;
         }
 
-        if (!__remove_source_symbol_from_window(cnx, wff, ss, id)) {
+        window_source_symbol_id_t idx = wff->smallest_in_transit % MAX_SENDING_WINDOW_SIZE;
+
+        if (!__remove_source_symbol_from_window(cnx, wff, ss, id, idx)) {
             PROTOOP_PRINTF(cnx, "ERROR __\n");
             return false;
         }
         wff->smallest_in_transit++;
+        idx = wff->smallest_in_transit % MAX_SENDING_WINDOW_SIZE;
 
-        while(!is_fec_window_empty(wff) && wff->fec_window[wff->smallest_in_transit % MAX_SENDING_WINDOW_SIZE].received) {
+        while(!is_fec_window_empty(wff) && wff->fec_window[idx].received) {
 
-            if (!__remove_source_symbol_from_window(cnx, wff, wff->fec_window[wff->smallest_in_transit %
-                                                                              MAX_SENDING_WINDOW_SIZE].symbol,
-                                                    wff->smallest_in_transit)) {
+            if (!__remove_source_symbol_from_window(cnx, wff, wff->fec_window[idx].symbol,
+                                                    wff->smallest_in_transit, idx)) {
                 return false;
             }
             wff->smallest_in_transit++;
+            idx = wff->smallest_in_transit;
+            if (wff->smallest_in_transit == MAX_SENDING_WINDOW_SIZE) {
+                idx = 0;
+            }
         }
 
         if (is_fec_window_empty(wff)) {
             wff->smallest_in_transit = wff->highest_in_transit = WINDOW_INITIAL_SYMBOL_ID - 1;
         }
-        PROTOOP_PRINTF(cnx, "REMOVED, SMALLEST = %lu\n", wff->smallest_in_transit);
+//        PROTOOP_PRINTF(cnx, "REMOVED, SMALLEST = %lu\n", wff->smallest_in_transit);
         return true;
     }
     return false;
@@ -513,26 +519,24 @@ static __attribute__((always_inline)) bool _remove_source_symbol_from_window(pic
 static __attribute__((always_inline)) int remove_source_symbol_id_from_window(picoquic_cnx_t *cnx, window_fec_framework_t *wff, window_source_symbol_id_t id) {
     uint32_t idx = id % MAX_SENDING_WINDOW_SIZE;
     if (wff->fec_window[idx].id == id && wff->fec_window[idx].symbol) {
-        if (rbt_contains(cnx, wff->deadlines_from_symbols, id)) {
-            rbt_val val;
-            bool found = (symbol_deadline_t) rbt_get(cnx, wff->deadlines_from_symbols, id, &val);
-            if (found) {
-                symbol_deadline_t deadline = (symbol_deadline_t) val;
-                // remove the symbol from the state
-                rbt_delete(cnx, wff->deadlines_from_symbols, id);
-                rbt_delete(cnx, wff->symbols_from_deadlines, deadline);
-            } else {
-                // should not happen given the guarding if
-                PROTOOP_PRINTF(cnx, "ERROR: COULD NOT FIND DEADLINE FOR MESSAGE\n");
-            }
+        rbt_val val;
+        uint64_t now = picoquic_current_time();
+        bool found = (symbol_deadline_t) rbt_get(cnx, wff->deadlines_from_symbols, id, &val);
+        if (found) {
+            PROTOOP_PRINTF(cnx, "DEADLINES REMOVE\n");
+            symbol_deadline_t deadline = (symbol_deadline_t) val;
+            // remove the symbol from the state
+            rbt_delete(cnx, wff->deadlines_from_symbols, id);
+            rbt_delete(cnx, wff->symbols_from_deadlines, deadline);
         }
         // if it is the first symbol of the window, let's prune the window
         if (!is_fec_window_empty(wff) && id == wff->smallest_in_transit) {
-            PROTOOP_PRINTF(cnx, "REMOVE SYMBOL %lu FROM WINDOW\n", id);
+//            PROTOOP_PRINTF(cnx, "REMOVE SYMBOL %lu FROM WINDOW\n", id);
             if (!_remove_source_symbol_from_window(cnx, wff, wff->fec_window[idx].symbol, id)) {
                 return -1;
             }
         }
+//        PROTOOP_PRINTF(cnx, "REMOVE SOURCE SYMBOL FROM WINDOW ELAPSED %luµs\n", picoquic_current_time() - now);
     } else {
         if (wff->fec_window[idx].symbol) {
             PROTOOP_PRINTF(cnx, "COULD NOT REMOVE SYMBOL AS THERE WAS NO SYMBOL\n");
@@ -585,12 +589,14 @@ static __attribute__((always_inline)) int update_window_bounds(picoquic_cnx_t *c
 static __attribute__((always_inline)) int sfpid_has_landed(picoquic_cnx_t *cnx, window_fec_framework_t *wff, window_source_symbol_id_t id, bool received) {
     PROTOOP_PRINTF(cnx, "SYMBOL %d LANDED, RECEIVED = %d\n", id, received);
     // remove all the needed symbols from the window
-    uint32_t idx = id % MAX_SENDING_WINDOW_SIZE;
     if (received) {
+        uint64_t now = picoquic_current_time();
         int err = remove_source_symbol_id_from_window(cnx, wff, id);
         if (!err) {
+            uint32_t idx = id % MAX_SENDING_WINDOW_SIZE;
             wff->fec_window[idx].received = true;
         }
+        PROTOOP_PRINTF(cnx, "REMOVE ID FROM WINDOW TOOK %luµs\n", picoquic_current_time() - now);
         return err;
     }
     return -1;
@@ -619,6 +625,7 @@ static __attribute__((always_inline)) int generate_and_queue_repair_symbols(pico
     uint16_t n_symbols = 0;
     source_symbol_id_t first_protected_id = 0;
     n_source_symbols_to_protect = MIN(n_source_symbols_to_protect, wff->highest_in_transit + 1 - first_id);
+    uint64_t now = picoquic_current_time();
     PROTOOP_PRINTF(cnx, "GENERATE AND QUEUE, SUBSET = %d, FIRST = %u, N = %u, SMALLEST IN TRANSIT = %u\n", protect_subset, first_id, n_source_symbols_to_protect, wff->smallest_in_transit);
     int ret = 0;
     if (!protect_subset || first_id < wff->smallest_in_transit) {
@@ -666,7 +673,9 @@ static __attribute__((always_inline)) int generate_and_queue_repair_symbols(pico
         args[4] = (protoop_arg_t) n_symbols_to_generate;
         args[5] = (protoop_arg_t) symbol_size;
         args[6] = (protoop_arg_t) first_protected_id;
+        uint64_t now2 = picoquic_current_time();
         ret = (int) run_noparam(cnx, "fec_generate_repair_symbols", 7, args, outs);
+        PROTOOP_PRINTF(cnx, "DONE GENERATED, ELAPSED = %luµs\n", picoquic_current_time() - now2);
         window_fec_scheme_specific_t first_fec_scheme_specific;
         first_fec_scheme_specific.val_big_endian = (uint32_t) outs[0];
         uint16_t n_symbols_generated = outs[1];
@@ -684,6 +693,7 @@ static __attribute__((always_inline)) int generate_and_queue_repair_symbols(pico
     } else {
         PROTOOP_PRINTF(cnx, "NO SYMBOL TO PROTECT\n");
     }
+    PROTOOP_PRINTF(cnx, "DONE PROTECTED, ELAPSED = %luµs\n", picoquic_current_time() - now);
 
     return ret;
 }
@@ -756,6 +766,7 @@ static __attribute__((always_inline)) int window_protect_packet_payload(picoquic
 }
 
 
+// end not included in the window !
 static __attribute__((always_inline)) void get_current_window_bounds(picoquic_cnx_t *cnx, window_fec_framework_t *wff, window_source_symbol_id_t *start, window_source_symbol_id_t *end) {
     *start = *end = 0;
     if (!is_fec_window_empty(wff)) {
@@ -801,7 +812,8 @@ static __attribute__((always_inline)) void window_slot_nacked(picoquic_cnx_t *cn
 
 static __attribute__((always_inline)) void window_packet_has_been_recovered(picoquic_cnx_t *cnx, plugin_state_t *state, window_fec_framework_t *wff, uint64_t pn, window_source_symbol_id_t first_id) {
 //    enqueue_recovered_packet_to_buffer(wff->rps, pn);
-    enqueue_recovered_packet_to_buffer(&state->recovered_packets, pn);
+//    enqueue_recovered_packet_to_buffer(&state->recovered_packets_ranges, pn);
+    rbt_put(cnx, &state->recovered_packets_ranges, pn, 0);
 }
 //
 //static __attribute__((always_inline)) int window_announce_symbols_as_landed(picoquic_cnx_t *cnx, window_fec_framework_t *wff, uint64_t pn64) {
@@ -847,15 +859,47 @@ static __attribute__((always_inline)) void window_packet_has_been_recovered(pico
 //    return -1;
 //}
 
-static __attribute__((always_inline)) void process_recovered_packets(picoquic_cnx_t *cnx, plugin_state_t *state, window_fec_framework_t *wff, const uint8_t *size_and_packets) {
-    uint64_t n_packets = *((uint64_t *) size_and_packets);
-    uint64_t *packet_numbers = (uint64_t *) (size_and_packets + sizeof(uint64_t));
-    window_source_symbol_id_t *ids = (window_source_symbol_id_t  *) (packet_numbers + n_packets);
-    PROTOOP_PRINTF(cnx, "PROCESS RF, %lu PACKETS\n", n_packets);
-    for (int i = 0 ; i < n_packets ; i++) {
-        PROTOOP_PRINTF(cnx, "PROCESS PACKET %lx\n", packet_numbers[i]);
-        window_packet_has_been_recovered(cnx, state, wff, packet_numbers[i], ids[i]);
-        //window_announce_symbols_as_landed(cnx, wff, packet_numbers[i]);
+static __attribute__((always_inline)) void process_recovered_packets(picoquic_cnx_t *cnx, picoquic_path_t *path, plugin_state_t *state, window_fec_framework_t *wff, const uint8_t *size_and_ranges) {
+    uint64_t n_ranges = *((uint64_t *) size_and_ranges);
+    window_recovered_range_t *ranges = (window_recovered_range_t *) (size_and_ranges + sizeof(uint64_t));
+    window_source_symbol_id_t start = 0, end = 0;
+    get_current_window_bounds(cnx, wff, &start, &end);
+    picoquic_packet_context_t *pktctx = (picoquic_packet_context_t *) get_path(path, AK_PATH_PKT_CTX, picoquic_packet_context_application);
+    uint64_t retransmit_oldest = get_pkt_ctx(pktctx, AK_PKTCTX_RETRANSMIT_OLDEST);
+    lost_packet_t *smallest_equal_or_bigger = NULL;
+    PROTOOP_PRINTF(cnx, "PROCESS RF, %lu PACKETS, WINDOW BOUNDS = [%u, %u[\n", n_ranges, start, end);
+    for (int i = 0 ; i < n_ranges ; i++) {
+        uint64_t now = picoquic_current_time();
+        window_recovered_range_t range = ranges[i];
+
+        PROTOOP_PRINTF(cnx, "PROCESS RECOVERED RANGE [%lx, %lx[, [%u, %u[\n", range.pn, range.pn + range.n_symbols, range.id, range.id + range.n_symbols);
+        if (MIN(end, range.id + range.n_symbols) > MAX(start, range.id)) { // checks whether it intersects
+            bool valuable_range = retransmit_oldest <= range.pn;
+            if (!valuable_range) {
+                if (smallest_equal_or_bigger == NULL || smallest_equal_or_bigger->pn < range.pn) {
+                    smallest_equal_or_bigger = get_smallest_lost_packet_equal_or_bigger(cnx, &state->lost_packets, range.pn);
+                }
+                valuable_range = smallest_equal_or_bigger != NULL && smallest_equal_or_bigger->pn < (range.pn + range.n_symbols);
+            }
+            if (valuable_range) {
+                // the range concerns at least one in-flight or one lost packet
+                uint64_t base_pn = range.pn;
+                window_source_symbol_id_t base_id = range.id;
+
+                rbt_put(cnx, &state->recovered_packets_ranges, base_pn, (rbt_val) range.n_symbols);
+
+            }
+//            for (int j = 0 ; j < range.n_symbols ; j++) {
+//                uint64_t pn = base_pn + j;
+//                window_source_symbol_id_t id = base_id + j;
+//                if (wff->smallest_in_transit < id && id < wff->highest_in_transit) {
+//                    PROTOOP_PRINTF(cnx, "PROCESS PACKET %lx\n", pn);
+//                    window_packet_has_been_recovered(cnx, state, wff, pn, id);
+//                }
+//            }
+            //window_announce_symbols_as_landed(cnx, wff, packet_numbers[i]);
+        }
+        PROTOOP_PRINTF(cnx, "PROCESSED RECOVERED RANGE, ELAPSED %luµs\n", picoquic_current_time() - now);
     }
 }
 

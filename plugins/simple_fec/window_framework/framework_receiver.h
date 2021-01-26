@@ -31,7 +31,7 @@ typedef struct {
     received_symbols_tracker_t symbols_tracker;
     ring_based_received_source_symbols_buffer_t *received_source_symbols;
 
-    min_max_pq_t recovered_packets;
+    red_black_tree_t recovered_packets;
 
     arraylist_t recovered_symbols;
 
@@ -57,7 +57,7 @@ static __attribute__((always_inline)) window_fec_framework_receiver_t *create_fr
         my_free(cnx, wff);
         return NULL;
     }
-    wff->recovered_packets = create_min_max_pq(cnx, receive_buffer_size);
+    rbt_init(cnx, &wff->recovered_packets);
     if (!wff->symbols_tracker) {
         release_ring_based_source_symbols_buffer(cnx, wff->received_source_symbols);
         delete_received_symbols_tracker(cnx, wff->symbols_tracker);
@@ -87,7 +87,7 @@ static __attribute__((always_inline)) int window_update_flow_control_infos(picoq
     return 0;
 }
 
-// returns true if the symbol has been successfully processed
+// returns true if the symbol has been processed
 // returns false otherwise: the symbol can be destroyed
 static __attribute__((always_inline)) int window_receive_source_symbol(picoquic_cnx_t *cnx, window_fec_framework_receiver_t *wff, window_source_symbol_t *ss){
     window_source_symbol_id_t removed_id = 0;
@@ -278,8 +278,7 @@ static __attribute__((always_inline)) bool reassemble_packet_from_recovered_symb
         *payload_size += ss->source_symbol.chunk_size - data_offset;
     }
 
-    PROTOOP_PRINTF(cnx, "SUCCESSFULLY REASSEMBLED !!\n");
-
+    PROTOOP_PRINTF(cnx, "SUCCESSFULLY REASSEMBLED !! PACKET NUMBER = %lx\n", *packet_number);
     // the packet has been reassembled !
 
     *first_id_in_packet = start_id;
@@ -313,6 +312,7 @@ static __attribute__((always_inline)) int _reserve_window_rwin_frame(picoquic_cn
 }
 
 static __attribute__((always_inline)) bool needs_a_rwin_frame(picoquic_cnx_t *cnx, window_fec_framework_receiver_t *wff) {
+#define PROTOOP_PRINTF2(cnx, fmt, ...)   helper_protoop_printf(cnx, fmt, (protoop_arg_t[]){__VA_ARGS__}, PROTOOP_NUMARGS(__VA_ARGS__))
 
     picoquic_stream_head *stream = (picoquic_stream_head *) get_cnx(cnx, AK_CNX_FIRST_STREAM, 0);
     if (wff->last_acknowledged_smallest_considered_id == 0 ||
@@ -336,37 +336,111 @@ static __attribute__((always_inline)) int reserve_window_rwin_frame_if_needed(pi
     return 0;
 }
 
+typedef struct {
+    size_t current_size;
+    size_t current_range;
+    size_t current_range_size;
+    int64_t last_val;
+} range_handler_t;
+
+static __attribute__((always_inline)) void range_handler_init(range_handler_t *h) {
+    // number of vals encoded on max bytes
+    h->current_size = 8 + 8; // number of packets + last range to write in the worst case (upper bound)
+    h->current_range = 0;
+    h->last_val = -1L;
+    h->current_range_size = 1;
+}
+
+static __attribute__((always_inline)) int range_add(range_handler_t *h, int64_t val) {
+    if (val < h->last_val) {
+        return -1;
+    }
+    if (h->last_val == -1L) {
+        // first val
+        h->current_size += 8;
+    } else {
+        if (val == h->last_val + 1 || val == h->last_val) {
+            size_t new_range_size = varint_len(h->current_range + 1);
+            h->current_size += new_range_size - h->current_range_size;
+            h->current_range++;
+            h->current_range_size = new_range_size;
+        } else {
+            // write range
+            h->current_size += varint_len(h->current_range);
+            h->current_range = 0;
+            h->current_range_size = 1;
+            // write gap
+            h->current_size += varint_len((val - h->last_val) - 1);
+        }
+    }
+    h->last_val = val;
+    return 0;
+}
+
+
+static __attribute__((always_inline)) int fill_recovered_frame(picoquic_cnx_t *cnx, window_fec_framework_receiver_t *wff,
+                                                                                     window_recovered_frame_t *rf, size_t max_bytes) {
+    range_handler_t ranges_packets;
+    range_handler_t ranges_ids;
+    range_handler_init(&ranges_packets);
+    range_handler_init(&ranges_ids);
+    size_t minimum_size = ranges_ids.current_size + ranges_packets.current_size;
+    if (max_bytes < minimum_size) // not enough space
+        return -1;
+    rf->n_packets = 0;
+    uint64_t current_pn = 0;
+    PROTOOP_PRINTF(cnx, "GET RECOVERED FRAME, MAX BYTES = %lu, RECOVERED PACKETS EMPTY = %d, CURRENT SIZE = %lu\n", max_bytes,
+            rbt_is_empty(cnx, &wff->recovered_packets), ranges_packets.current_size + ranges_ids.current_size + 1);
+    while(rf->n_packets < rf->max_packets && !rbt_is_empty(cnx, &wff->recovered_packets) && max_bytes > ranges_packets.current_size + ranges_ids.current_size + 1) {
+        uint64_t pn = 0;
+        uint64_t id = 0;
+        if (!rbt_ceiling(cnx, &wff->recovered_packets, current_pn, &pn, (rbt_val *) &id)) {
+            PROTOOP_PRINTF(cnx, "NO CEILING FOR %lu, MIN = %lu\n", current_pn, rbt_min_key(cnx, &wff->recovered_packets));
+            break;
+        }
+        PROTOOP_PRINTF(cnx, "ADDED %lx (%u), last = %lx, %lu %lx\n", pn, id, ranges_packets.last_val, ranges_ids.last_val);
+        if (range_add(&ranges_packets, pn) || range_add(&ranges_ids, id)) {
+            PROTOOP_PRINTF(cnx, "ERROR WHEN ADDING %lx (id %u) TO RANGES\n", pn, id);
+            return -1;
+        }
+        if (max_bytes < ranges_packets.current_size + ranges_ids.current_size + 1) {
+            // do not add this symbol as it would take too much place
+            PROTOOP_PRINTF(cnx, "MAX BYTES REACHED: %lu < %lu + %lu + 1 = %u\n", max_bytes, ranges_packets.current_size,
+                            ranges_ids.current_size, ranges_packets.current_size + ranges_ids.current_size + 1);
+            break;
+        }
+        PROTOOP_PRINTF(cnx, "ADD PACKET %lx TO RECOVERED FRAME\n", pn);
+        add_packet_to_recovered_frame(cnx, rf, pn, id);
+        current_pn = pn + 1;
+//        pq_pop_min(wff->recovered_packets_ranges);
+    }
+    return 0;
+}
 
 static __attribute__((always_inline)) window_recovered_frame_t *get_recovered_frame(picoquic_cnx_t *cnx, window_fec_framework_receiver_t *wff, size_t max_bytes) {
-    size_t minimum_size = 2*sizeof(uint64_t);
-    if (max_bytes < minimum_size) // not enough space
-        return NULL;
+
     window_recovered_frame_t *rf = create_window_recovered_frame(cnx);
     if (!rf)
         return NULL;
-    max_bytes -= minimum_size;
-    while(!pq_is_empty(wff->recovered_packets) && max_bytes > sizeof(uint64_t) + sizeof(window_source_symbol_id_t)) {
-        uint64_t pn = 0;
-        uint64_t id = 0;
-        pq_get_min_key_val(wff->recovered_packets, &pn, (void **) &id);
-        add_packet_to_recovered_frame(cnx, rf, pn, id);
-        max_bytes -= sizeof(uint64_t) + sizeof(window_source_symbol_id_t);
-        pq_pop_min(wff->recovered_packets);
+    int err = fill_recovered_frame(cnx, wff, rf, max_bytes);
+    if (err) {
+        my_free(cnx, rf);
+        return NULL;
     }
     return rf;
 }
 
-
 static __attribute__((always_inline)) int try_to_recover(picoquic_cnx_t *cnx, window_fec_framework_receiver_t *wff, uint16_t symbol_size) {
     PROTOOP_PRINTF(cnx, "MAYBE TRY TO RECOVER SYMBOLS\n");
 //    remove_and_free_unused_repair_symbols(cnx, wff->received_repair_symbols, get_highest_contiguous_received_source_symbol(wff->symbols_tracker) + 1);
-    fec_scheme_remove_unused_repair_symbols(cnx, wff->fs, get_highest_contiguous_received_source_symbol(wff->symbols_tracker));
     protoop_arg_t could_recover = false;
 //    if (first_selected_id > wff->highest_removed /*&& selected_repair_symbols >= n_missing_source_symbols*/) {
         recover_lost_symbols(cnx, wff, symbol_size, &wff->recovered_symbols, &could_recover);
         // we don't free anything, it will be freed when new symbols are received
 //    }
+    fec_scheme_remove_unused_repair_symbols(cnx, wff->fs, get_highest_contiguous_received_source_symbol(wff->symbols_tracker));
 
+    bool has_recovered_new_symbols = false;
     int err = 0;
     my_memset(wff->packet_sized_buffer, 0, PICOQUIC_MAX_PACKET_SIZE);
     for (int i = 0 ; could_recover && i < arraylist_size(&wff->recovered_symbols) ; i++) {
@@ -386,32 +460,42 @@ static __attribute__((always_inline)) int try_to_recover(picoquic_cnx_t *cnx, wi
                 if (err) {
                     PROTOOP_PRINTF(cnx, "ERROR WHILE DECODING RECOVERED PACKET: %d\n", err);
                 } else {
-                    PROTOOP_PRINTF(cnx, "RECOVERED PACKET %lx SUCCESSFULLY PARSED, QUEUE SIZE BEFORE = %d\n", packet_number, wff->recovered_packets->size);
+                    PROTOOP_PRINTF(cnx, "RECOVERED PACKET %lx SUCCESSFULLY PARSED, QUEUE SIZE BEFORE = %d\n", packet_number, rbt_size(cnx, &wff->recovered_packets));
                     // record this packet recovery
-                    pq_insert(wff->recovered_packets, packet_number, (void *) (uint64_t) first_id_in_packet);
-                    PROTOOP_PRINTF(cnx, "QUEUE SIZE AFTER = %d\n", packet_number, wff->recovered_packets->size);
+                    rbt_put(cnx, &wff->recovered_packets, packet_number, (void *) (uint64_t) first_id_in_packet);
+                    has_recovered_new_symbols = true;
+                    PROTOOP_PRINTF(cnx, "RECOVERED PACKETS QUEUE SIZE AFTER = %d\n", packet_number, rbt_size(cnx, &wff->recovered_packets));
                 }
             }
         }
     }
     arraylist_reset(&wff->recovered_symbols);
 
-    if (!pq_is_empty(wff->recovered_packets)) {
-        window_recovered_frame_t *rf = get_recovered_frame(cnx, wff, 200);
+    plugin_state_t *state = get_plugin_state(cnx);
+    if (!state) {
+        return PICOQUIC_ERROR_MEMORY;
+    }
+    if (has_recovered_new_symbols && !rbt_is_empty(cnx, &wff->recovered_packets) && state->n_reserved_recovered_frames == 0) {
+//        window_recovered_frame_t *rf = get_recovered_frame(cnx, wff, 1000);
+        window_recovered_frame_t *rf = create_window_recovered_frame(cnx);
         if (rf) {
+            PROTOOP_PRINTF(cnx, "GOT RF\n");
             reserve_frame_slot_t *slot = (reserve_frame_slot_t *) my_malloc(cnx, sizeof(reserve_frame_slot_t));
             if (!slot) {
                 my_free(cnx, rf);
                 return PICOQUIC_ERROR_MEMORY;
             }
+            PROTOOP_PRINTF(cnx, "GOT RF MALLOC\n");
             my_memset(slot, 0, sizeof(reserve_frame_slot_t));
+            PROTOOP_PRINTF(cnx, "GOT RF MEMSET\n");
             slot->frame_type = FRAME_RECOVERED;
-            slot->nb_bytes = 200;
+            slot->nb_bytes = 1000;
             slot->frame_ctx = rf;
-            slot->is_congestion_controlled = true;
+            slot->is_congestion_controlled = false;
             if (reserve_frames(cnx, 1, slot) != slot->nb_bytes) {
                 return PICOQUIC_ERROR_MEMORY;
             }
+            state->n_reserved_recovered_frames++;
             PROTOOP_PRINTF(cnx, "RESERVED RECOVERED FRAME\n");
         } else {
             PROTOOP_PRINTF(cnx, "COULD NOT GET A RF\n");
