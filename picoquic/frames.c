@@ -2579,6 +2579,7 @@ protoop_arg_t parse_ack_frame_maybe_ecn(picoquic_cnx_t* cnx)
     return (protoop_arg_t) bytes;
 }
 
+#define SKIP_SPURIOUS_CHECK 1
 protoop_arg_t process_ack_frame_maybe_ecn(picoquic_cnx_t* cnx)
 {
     ack_frame_t *frame = (ack_frame_t *) cnx->protoop_inputv[0];
@@ -2641,7 +2642,7 @@ protoop_arg_t process_ack_frame_maybe_ecn(picoquic_cnx_t* cnx)
             return 1;
         }
 
-        if (range > 0) {
+        if (!SKIP_SPURIOUS_CHECK && range > 0) {
             picoquic_check_spurious_retransmission(cnx, frame->largest_acknowledged + 1 - range, frame->largest_acknowledged, current_time, pc, path_x);
         }
 
@@ -2674,7 +2675,11 @@ protoop_arg_t process_ack_frame_maybe_ecn(picoquic_cnx_t* cnx)
                 return 1;
             }
 
-            if (range > 0) {
+            if (path_x->pkt_ctx[pc].retransmit_oldest == NULL || path_x->pkt_ctx[pc].retransmit_oldest->sequence_number > largest) {
+                // no need to  process the ack range if no further packet is concerned
+                break;
+            }
+            if (!SKIP_SPURIOUS_CHECK && range > 0) {  // only process short ack ranges
                 picoquic_check_spurious_retransmission(cnx, largest + 1 - range, largest, current_time, pc, path_x);
             }
         }
