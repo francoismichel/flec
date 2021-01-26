@@ -232,23 +232,19 @@ static __attribute__((always_inline)) equation_t *equation_alloc_with_given_data
         return NULL;
     }
     /* allocate coef and data, round the size to a multiple of 2*ALIGNEMENT to ensure no everlap */
-    uint8_t *coefs = (uint8_t *)calloc_fn(cnx, ( ( n_coefs - 1 ) | ( (ALIGNMENT<<1) - 1 ) ) + 1, sizeof(uint8_t));
+    uint8_t *coefs = (uint8_t *)calloc_fn(cnx, align(n_coefs), sizeof(uint8_t));
     if (coefs == NULL) {
         /* free the structure in case of problem */
         free_fn(cnx, result);
         return NULL;
     }
-    result->_coefs_allocated_size = ( ( n_coefs - 1 ) | ( (ALIGNMENT<<1) - 1 ) ) + 1;
+    result->_coefs_allocated_size = align(n_coefs);
     result->coefs = coefs;
     result->n_coefs = n_coefs;
 
 
     /* fill content */
     result->constant_term = *rs;
-//    result->constant_term.repair_symbol.repair_payload = data ;
-//    result->constant_term.metadata.first_id = first_id_id;
-//    result->constant_term.metadata.n_protected_symbols = (last_symbol_id + 1) - first_id_id;
-//    result->constant_term.repair_symbol.payload_length= symbol_size;
     equation_adjust_non_zero_bounds(result);
 
     return result;
@@ -268,11 +264,7 @@ static __attribute__((always_inline)) equation_t *equation_alloc
         safe_symbol_size = 1; /* because calloc_fn(0,...) can return NULL */
     }
 
-    uint8_t *data = (uint8_t *)calloc_fn(cnx,  ( ( safe_symbol_size - 1 ) | ( ((ALIGNMENT<<1) - 1 ) )) + 1, sizeof(uint8_t));
-//    uint8_t *data = NULL;
-//    posix_memalign((void **) &data, 32, safe_symbol_size);
-//    data = memalign(32, safe_symbol_size);
-//    uint8_t *data = (uint8_t *)calloc_fn(2*safe_symbol_size, sizeof(uint8_t));
+    uint8_t *data = (uint8_t *)calloc_fn(cnx,  align(safe_symbol_size), sizeof(uint8_t));
     if (data == NULL) {
         /* free the structure in case of problem */
         PROTOOP_PRINTF(cnx, "could not alloc data\n");
@@ -282,6 +274,7 @@ static __attribute__((always_inline)) equation_t *equation_alloc
     window_repair_symbol_t rs;
     rs.metadata.first_id = first_id_id;
     rs.metadata.n_protected_symbols = last_symbol_id + 1 - first_id_id;
+    rs.repair_symbol.repair_payload = data;
 
     equation_t *result = equation_alloc_with_given_data(cnx, &rs);
 
@@ -334,7 +327,7 @@ static __attribute__((always_inline)) void equation_clear_unused_coefs(equation_
 }
 
 // pre: eq1 can welcome eq2 in its coefs buffer
-static __attribute__((always_inline)) void add_coefs(equation_t *eq1, equation_t *eq2, source_symbol_id_t from, source_symbol_id_t to) {
+static __attribute__((always_inline)) void add_coefs(picoquic_cnx_t *cnx, equation_t *eq1, equation_t *eq2, source_symbol_id_t from, source_symbol_id_t to) {
     from = MAX(from, eq2->constant_term.metadata.first_id);
     to = MIN(to, repair_symbol_last_id(&eq2->constant_term));
     uint8_t *eq1_coefs_buffer = &eq1->coefs[from - eq1->constant_term.metadata.first_id];
@@ -350,17 +343,10 @@ static __attribute__((always_inline)) void add_coefs(equation_t *eq1, equation_t
 
 static __attribute__((always_inline)) void equation_multiply(equation_t  *eq, coef_t coef, uint8_t **mul_table) {
     // multiply the coefficients of the equation (we can do it with one call)
-    symbol_mul(eq->coefs, coef, eq->constant_term.metadata.n_protected_symbols, mul_table);
+    symbol_mul(eq->coefs, coef, align(eq->constant_term.metadata.n_protected_symbols), mul_table);
     // multiply the constant term of the equation
-    symbol_mul(eq->constant_term.repair_symbol.repair_payload, coef, eq->constant_term.repair_symbol.payload_length, mul_table);
+    symbol_mul(eq->constant_term.repair_symbol.repair_payload, coef, align(eq->constant_term.repair_symbol.payload_length), mul_table);
 }
-
-//void equation_add(equation_t  *eq1, equation_t eq2) {
-//    // add the coefficients of the equation (we can do it with one call)
-//    symbol_add(eq->coefs, coef, eq->constant_term.n_protected_symbols);
-//    // multiply the constant term of the equation
-//    symbol_mul(eq->constant_term.data, coef, eq->constant_term.data_length, mul_table);
-//}
 
 
 
@@ -389,28 +375,9 @@ static __attribute__((always_inline)) void full_symbol_add_base(picoquic_cnx_t *
         eq1->pivot = SYMBOL_ID_NONE;
         eq1->last_non_zero_id = SYMBOL_ID_NONE;
     }
-//    if (eq1->pivot <= eq2->pivot){
-//        first_coef_index = eq2->pivot;
-//    }
-//    else {
-//        first_coef_index = eq1->pivot;
-//    }
-//    first_coef_index = eq2->pivot;
-
-//    window_source_symbol_id_t eq2_last_id = repair_symbol_last_id(&eq2->constant_term);
-//    PROTOOP_PRINTF(cnx, "PRINT BEFORE CLEAR EQ\n");
-//
-//    PROTOOP_PRINTF(cnx, "0x%x\n", eq2->constant_term.repair_symbol.repair_payload[0]);
-//    PROTOOP_PRINTF(cnx, "??? %u > %u && %u > %u\n", eq1->last_non_zero_id, eq2->last_non_zero_id, repair_symbol_last_id(&eq2->constant_term), eq2->last_non_zero_id);
     if (eq1->last_non_zero_id > eq2->last_non_zero_id){
         equation_clear_unused_coefs(eq2);
     }
-//    last_coef_index = eq2->last_non_zero_id;
-
-//    memset(symbol_result->coef , 0, sizeof(uint8_t)*(first_coef_index-symbol_result->first_id));
-//    memset(symbol_result->coef+(last_coef_index+1-symbol_result->first_id) , 0 ,
-//           sizeof(uint8_t)*(symbol_result->last_id-last_coef_index));
-
     bool add_fast = true;
     if (!add_fast) {
 
@@ -420,13 +387,11 @@ static __attribute__((always_inline)) void full_symbol_add_base(picoquic_cnx_t *
         }
     } else {
 
-        add_coefs(eq1, eq2, eq2->pivot, eq2->last_non_zero_id);
+        add_coefs(cnx, eq1, eq2, eq2->pivot, eq2->last_non_zero_id);
     }
 
     equation_adjust_non_zero_bounds(eq1);
-
-    // eq1->data_size >= eq2->data_size is always true here due to the function's precondition
-    symbol_add((void *)eq1->constant_term.repair_symbol.repair_payload, (void *)eq2->constant_term.repair_symbol.repair_payload, eq2->constant_term.repair_symbol.payload_length);
+    symbol_add((void *)eq1->constant_term.repair_symbol.repair_payload, (void *)eq2->constant_term.repair_symbol.repair_payload, align(eq2->constant_term.repair_symbol.payload_length));
 }
 
 
@@ -468,12 +433,6 @@ static __attribute__((always_inline)) int equation_add(picoquic_cnx_t *cnx, equa
     // quite likely to enter in this if
     if (eq1->n_coefs < (last_coef_index + 1) - first_coef_index) {
 
-//        PROTOOP_PRINTF(cnx, "PRINT BEFORE TAIL ADJUST EQ\n");
-//
-//        for (window_source_symbol_id_t id = eq1->constant_term.metadata.first_id ; id <= repair_symbol_last_id(&eq1->constant_term) ; id++) {
-//            PROTOOP_PRINTF(cnx,"%u, ", eq1->coefs[id - eq1->constant_term.metadata.first_id]);
-//        }
-//        PROTOOP_PRINTF(cnx, "0x%x\n", eq1->constant_term.repair_symbol.repair_payload[0]);
         uint32_t new_size = align(MAX(eq1->_coefs_allocated_size, (last_coef_index + 1) - first_coef_index));
         uint8_t *new_coefs = malloc_fn(cnx, new_size);
         if (!new_coefs) {
@@ -487,24 +446,11 @@ static __attribute__((always_inline)) int equation_add(picoquic_cnx_t *cnx, equa
         eq1->_coefs_allocated_size = new_size;
         eq1->n_coefs = (last_coef_index + 1) - first_coef_index;
         // no need to update the pivot bounds right now
-//        PROTOOP_PRINTF(cnx, "PRINT TAIL-ADJUSTED EQ\n");
-//
-//        for (window_source_symbol_id_t id = eq1->constant_term.metadata.first_id ; id <= repair_symbol_last_id(&eq1->constant_term) ; id++) {
-//            PROTOOP_PRINTF(cnx,"%u, ", eq1->coefs[id - eq1->constant_term.metadata.first_id]);
-//        }
-//        PROTOOP_PRINTF(cnx, "0x%x\n", eq1->constant_term.repair_symbol.repair_payload[0]);
 
     }
     // here, the repair symbol has changed, it only concerns the ids with a non-zero coefficient in eq1 or eq2, so we update it
     if (eq1->constant_term.metadata.first_id <= first_coef_index && repair_symbol_last_id(&eq1->constant_term) < last_coef_index) {
-//        PROTOOP_PRINTF(cnx, "PRINT BEFORE PIVOT ADJUST EQ\n");
-//
-//        for (window_source_symbol_id_t id = eq1->constant_term.metadata.first_id ; id <= repair_symbol_last_id(&eq1->constant_term) ; id++) {
-//            PROTOOP_PRINTF(cnx,"%u, ", eq1->coefs[id - eq1->constant_term.metadata.first_id]);
-//        }
-//        PROTOOP_PRINTF(cnx, "0x%x\n", eq1->constant_term.repair_symbol.repair_payload[0]);
         uint32_t new_n_nonzero_symbols = repair_symbol_last_id(&eq1->constant_term) + 1 - first_coef_index;
-//        printf("redefine symbol bounds new n non-zero symbols = %u, from %u to 0\n", new_n_nonzero_symbols, first_coef_index - eq1->constant_term.first_id);
 
         memmove_fn(eq1->coefs, &eq1->coefs[first_coef_index - eq1->constant_term.metadata.first_id], new_n_nonzero_symbols);
         if (new_n_nonzero_symbols < eq1->n_coefs) {
@@ -513,12 +459,6 @@ static __attribute__((always_inline)) int equation_add(picoquic_cnx_t *cnx, equa
         eq1->constant_term.metadata.first_id = first_coef_index;
         eq1->constant_term.metadata.n_protected_symbols = (last_coef_index + 1) - first_coef_index;
         equation_adjust_non_zero_bounds(eq1);
-//        PROTOOP_PRINTF(cnx, "PRINT PIVOT-ADJUSTED EQ\n");
-//
-//        for (window_source_symbol_id_t id = eq1->constant_term.metadata.first_id ; id <= repair_symbol_last_id(&eq1->constant_term) ; id++) {
-//            PROTOOP_PRINTF(cnx,"%u, ", eq1->coefs[id - eq1->constant_term.metadata.first_id]);
-//        }
-//        PROTOOP_PRINTF(cnx, "0x%x\n", eq1->constant_term.repair_symbol.repair_payload[0]);
     }
 
 
@@ -537,22 +477,9 @@ static __attribute__((always_inline)) int equation_add(picoquic_cnx_t *cnx, equa
         eq1->constant_term.repair_symbol.payload_length = data_length;
     }
 
-
-//    PROTOOP_PRINTF(cnx, "PRINT EQ2 BEFORE AFTER ADD EQ\n");
-//
-//    for (window_source_symbol_id_t id = eq2->constant_term.metadata.first_id ; id <= repair_symbol_last_id(&eq2->constant_term) ; id++) {
-//        PROTOOP_PRINTF(cnx,"%u, ", eq2->coefs[id - eq2->constant_term.metadata.first_id]);
-//    }
-//    PROTOOP_PRINTF(cnx, "0x%x\n", eq2->constant_term.repair_symbol.repair_payload[0]);
     // results stored in eq1
     full_symbol_add_base(cnx, eq1, eq2);
 
-//    PROTOOP_PRINTF(cnx, "PRINT EQ1 AFTER ADD EQ\n");
-//
-//    for (window_source_symbol_id_t id = eq1->constant_term.metadata.first_id ; id <= repair_symbol_last_id(&eq1->constant_term) ; id++) {
-//        PROTOOP_PRINTF(cnx,"%u, ", eq1->coefs[id - eq1->constant_term.metadata.first_id]);
-//    }
-//    PROTOOP_PRINTF(cnx, "0x%x\n", eq1->constant_term.repair_symbol.repair_payload[0]);
     return 0;
 }
 
