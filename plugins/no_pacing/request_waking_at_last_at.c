@@ -1,7 +1,7 @@
 #include "picoquic.h"
 #include "plugin.h"
 #include "../helpers.h"
-#include "no_pacing_with_event.h"
+#include "pacing_with_event.h"
 
 /**
  * See PROTOOP_NOPARAM_SET_NEXT_WAKE_TIME

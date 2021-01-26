@@ -1,7 +1,7 @@
 #include "picoquic.h"
 #include "plugin.h"
 #include "../helpers.h"
-#include "no_pacing_with_event.h"
+#include "pacing_with_event.h"
 
 /* Special wake up decision logic in initial state */
 /* TODO: tie with per path scheduling */
@@ -180,7 +180,6 @@ static void cnx_set_next_wake_time_init(picoquic_cnx_t* cnx, uint64_t current_ti
 protoop_arg_t set_next_wake_time(picoquic_cnx_t *cnx)
 {
     uint64_t current_time = (uint64_t) get_cnx(cnx, AK_CNX_INPUT, 0);
-    uint32_t last_pkt_length = (uint32_t) get_cnx(cnx, AK_CNX_INPUT, 1);
     int client_mode = (int) get_cnx(cnx, AK_CNX_CLIENT_MODE, 0);
     uint64_t latest_progress_time = (uint64_t) get_cnx(cnx, AK_CNX_LATEST_PROGRESS_TIME, 0);
     uint64_t next_time = latest_progress_time + PICOQUIC_MICROSEC_SILENCE_MAX * (2 - client_mode);
@@ -219,7 +218,7 @@ protoop_arg_t set_next_wake_time(picoquic_cnx_t *cnx)
 
     int nb_paths = (int) get_cnx(cnx, AK_CNX_NB_PATHS, 0);
 
-    for (int i = 0; last_pkt_length > 0 && blocked != 0 && pacing == 0 && i < nb_paths; i++) {
+    for (int i = 0; blocked != 0 &&  pacing == 0 && i < nb_paths; i++) {
         picoquic_path_t * path_x = (picoquic_path_t *) get_cnx(cnx, AK_CNX_PATH, i);
         uint64_t cwin_x = (uint64_t) get_path(path_x, AK_PATH_CWIN, 0);
         uint64_t bytes_in_transit_x = (uint64_t) get_path(path_x, AK_PATH_BYTES_IN_TRANSIT, 0);
@@ -347,7 +346,7 @@ protoop_arg_t set_next_wake_time(picoquic_cnx_t *cnx)
 
     set_cnx(cnx, AK_CNX_WAKE_NOW, 0, 0);
 
-    PROTOOP_PRINTF(cnx, "NEXT TIME = %lu, MIN WAKE TIME = %lu\n", next_time, min_wake_time);
+    PROTOOP_PRINTF(cnx, "Next time = %lu, current time = %lu, diff = %lu\n", next_time, current_time, next_time - current_time);
 
     /* reset the connection at its new logical position */
     picoquic_reinsert_cnx_by_wake_time(cnx, MIN(next_time, min_wake_time));
