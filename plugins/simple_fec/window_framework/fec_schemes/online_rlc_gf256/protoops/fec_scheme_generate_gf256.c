@@ -49,19 +49,9 @@ protoop_arg_t get_one_coded_symbol(picoquic_cnx_t *cnx)
 
 
     uint8_t *coefs = my_malloc(cnx, align(n_source_symbols*sizeof(uint8_t)));
-//    uint8_t **knowns = my_malloc(cnx, n_source_symbols*sizeof(uint8_t *));
-
-//    for (int i = 0 ; i < n_source_symbols ; i++) {
-//        knowns[i] = my_malloc(cnx, align(symbol_size));
-//        my_memset(knowns[i], 0, symbol_size);
-//        my_memcpy(knowns[i], source_symbols[i]->_whole_data, symbol_size);
-//    }
-
-
 
     uint32_t first_seed = fs->current_repair_symbol;
     for (int i = 0 ; i < n_symbols_to_generate ; i++) {
-//        PROTOOP_PRINTF(cnx, "EQUATION %d\n", i);
         uint32_t seed = fs->current_repair_symbol++;
 
         // generate one symbol
@@ -70,27 +60,17 @@ protoop_arg_t get_one_coded_symbol(picoquic_cnx_t *cnx)
         if (!rs)
             return PICOQUIC_ERROR_MEMORY;
         for (int j = 0 ; j < n_source_symbols ; j++) {
-//            PROTOOP_PRINTF(cnx, "SYMBOL %d, COEF %d, CRC = 0x%x, first = 0x%x\n", first_protected_id + j, coefs[j], crc32(0, source_symbols[j]->_whole_data, symbol_size), source_symbols[j]->_whole_data[0]);
-//            print_source_symbol(cnx, (window_source_symbol_t *) source_symbols[j]);
-//            print_source_symbol_payload(cnx, knowns[j], symbol_size);
-//            PROTOOP_PRINTF(cnx, "MUL[%u] = %p, size = %u\n", coefs[j], (protoop_arg_t) mul[coefs[j]], symbol_size);
-//            symbol_add_scaled(rs->repair_symbol.repair_payload, coefs[j], knowns[j], symbol_size, mul);
-            symbol_add_scaled(rs->repair_symbol.repair_payload, coefs[j], source_symbols[j]->_whole_data, symbol_size, mul);
+            symbol_add_scaled(rs->repair_symbol.repair_payload, coefs[j], source_symbols[j]->_whole_data, align(symbol_size), mul);
         }
         rs->metadata.n_protected_symbols = n_source_symbols;
         rs->metadata.first_id = first_protected_id;
         rs->repair_symbol.payload_length = symbol_size;
         encode_u32(seed, rs->metadata.fss.val);
         repair_symbols[i] = rs;
-//        PROTOOP_PRINTF(cnx, "GENERATED RS CRC = 0x%x\n", crc32(0, rs->repair_symbol.repair_payload, rs->repair_symbol.payload_length));
     }
     // done
 
-//    for (int i = 0 ; i < n_source_symbols ; i++) {
-//        my_free(cnx, knowns[i]);
-//    }
     my_free(cnx, coefs);
-//    my_free(cnx, knowns);
     // the fec-scheme specific is network-byte ordered
     encode_u32(first_seed, (uint8_t *) &first_seed);
     set_cnx(cnx, AK_CNX_OUTPUT, 0, first_seed);
