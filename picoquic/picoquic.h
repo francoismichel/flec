@@ -353,6 +353,8 @@ typedef struct {
  */
 #define REASONPHRASELENGTH_MAX 200
 
+#define MAX_ACK_BLOCKS 512
+
 typedef struct padding_or_ping_frame {
     int is_ping;
     int num_block; /** How many consecutive frames? */
@@ -436,7 +438,7 @@ typedef struct ack_frame {
     /** \todo Fixme we do not support ACK frames with more than 63 ack blocks */
     uint64_t ack_block_count;
     uint64_t first_ack_block;
-    ack_block_t ack_blocks[63];
+    ack_block_t ack_blocks[MAX_ACK_BLOCKS];
 } ack_frame_t;
 
 typedef struct path_challenge_frame {

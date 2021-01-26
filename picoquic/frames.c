@@ -2529,8 +2529,8 @@ protoop_arg_t parse_ack_frame_maybe_ecn(picoquic_cnx_t* cnx)
     }
 
     /** \todo FIXME */
-    if (frame->ack_block_count > 63) {
-        printf("ACK frame parsing error: does not support ack_blocks > 63 elements\n");
+    if (frame->ack_block_count > MAX_ACK_BLOCKS) {
+        printf("ACK frame parsing error: does not support ack_blocks > %u elements\n", MAX_ACK_BLOCKS);
         picoquic_connection_error(cnx, PICOQUIC_TRANSPORT_FRAME_FORMAT_ERROR,
             frame->is_ack_ecn ? picoquic_frame_type_ack_ecn : picoquic_frame_type_ack);
         free(frame);
@@ -2721,7 +2721,7 @@ int picoquic_prepare_ack_frame_maybe_ecn(picoquic_cnx_t* cnx, uint64_t current_t
     /* Check that there is enough room in the packet, and something to acknowledge */
     if (pkt_ctx->first_sack_item.start_of_sack_range == (uint64_t)((int64_t)-1)) {
         *consumed = 0;
-    } else if (bytes_max < 13) {
+    } else if (bytes_max < 14) {
         /* A valid ACK, with our encoding, uses at least 13 bytes.
         * If there is not enough space, don't attempt to encode it.
         */
@@ -2749,9 +2749,9 @@ int picoquic_prepare_ack_frame_maybe_ecn(picoquic_cnx_t* cnx, uint64_t current_t
         }
 
         if (ret == 0) {
-            /* Reserve one byte for the number of blocks */
+            /* Reserve two bytes for the number of blocks */
             num_block_index = byte_index;
-            byte_index++;
+            byte_index += 2;
             /* Encode the size of the first ack range */
             if (byte_index < bytes_max) {
                 ack_range = pkt_ctx->first_sack_item.end_of_sack_range - pkt_ctx->first_sack_item.start_of_sack_range;
@@ -2770,7 +2770,7 @@ int picoquic_prepare_ack_frame_maybe_ecn(picoquic_cnx_t* cnx, uint64_t current_t
             /* Set the lowest acknowledged */
             lowest_acknowledged = pkt_ctx->first_sack_item.start_of_sack_range;
             /* Encode the ack blocks that fit in the allocated space */
-            while (num_block < 63 && next_sack != NULL) {
+            while (num_block < MAX_ACK_BLOCKS && next_sack != NULL) {
                 size_t l_gap = 0;
                 size_t l_range = 0;
 
@@ -2825,11 +2825,12 @@ int picoquic_prepare_ack_frame_maybe_ecn(picoquic_cnx_t* cnx, uint64_t current_t
             frame.ack_block_count = num_block;
 
             LOG {
-                char ack_str[800];
+                ssize_t ack_str_size = 800;
+                char *ack_str = malloc(ack_str_size);
                 size_t ack_ofs = 0;
                 uint64_t largest = frame.largest_acknowledged;
                 int ack_block_count = frame.ack_block_count;
-                for (int num_block = -1; num_block < ack_block_count && ack_ofs < sizeof(ack_str); num_block++) {
+                for (int num_block = -1; num_block < ack_block_count; num_block++) {
                     uint64_t block_to_block;
                     uint64_t range;
                     if (num_block == -1) {
@@ -2837,12 +2838,35 @@ int picoquic_prepare_ack_frame_maybe_ecn(picoquic_cnx_t* cnx, uint64_t current_t
                     } else {
                         range = frame.ack_blocks[num_block].additional_ack_block + 1;
                     }
-
-                    if (range <= 1)
-                        ack_ofs += snprintf(ack_str + ack_ofs, sizeof(ack_str) - ack_ofs, "[%" PRIu64 "]%s", largest, num_block == ack_block_count - 1 ? "" : ", ");
-                    else
-                        ack_ofs += snprintf(ack_str + ack_ofs, sizeof(ack_str) - ack_ofs, "[%" PRIu64 ", %" PRIu64 "]%s", largest - range + 1, largest, num_block == ack_block_count - 1 ? "" : ", ");
-
+                    ssize_t size = ack_str_size - ack_ofs;
+                    int written;
+                    if (range <= 1) {
+                        written = snprintf(ack_str + ack_ofs, size, "[%" PRIu64 "]%s", largest, (num_block == ack_block_count - 1) ? "" : ", ");
+                        if (written >= size) {  // ack_str was too small: resize it
+                            ssize_t ack_str_new_size = MAX(ack_str_size * 2, ack_str_size + written);
+                            ack_str = realloc(ack_str, ack_str_new_size);
+                            if (!ack_str)
+                                return PICOQUIC_ERROR_MEMORY;
+                            ack_str_size = ack_str_new_size;
+                            size = ack_str_size - ack_ofs;
+                            // we redo the writing, with the correct buffer size now
+                            written = snprintf(ack_str + ack_ofs, size, "[%" PRIu64 "]%s", largest, (num_block == ack_block_count - 1) ? "" : ", ");
+                        }
+                    }
+                    else {
+                        written = snprintf(ack_str + ack_ofs, size, "[%" PRIu64 ", %" PRIu64 "]%s", largest - range + 1, largest, (num_block == ack_block_count - 1) ? "" : ", ");
+                        if (written >= size) {  // ack_str was too small: resize it
+                            ssize_t ack_str_new_size = MAX(ack_str_size * 2, ack_str_size + written);
+                            ack_str = realloc(ack_str, ack_str_new_size);
+                            if (!ack_str)
+                                return PICOQUIC_ERROR_MEMORY;
+                            ack_str_size = ack_str_new_size;
+                            size = ack_str_size - ack_ofs;
+                            // we redo the writing, with the correct buffer size now
+                            written = snprintf(ack_str + ack_ofs, size, "[%" PRIu64 ", %" PRIu64 "]%s", largest - range + 1, largest, (num_block == ack_block_count - 1) ? "" : ", ");
+                        }
+                    }
+                    ack_ofs += written;
                     if (num_block == ack_block_count - 1)
                         break;
 
@@ -2853,10 +2877,12 @@ int picoquic_prepare_ack_frame_maybe_ecn(picoquic_cnx_t* cnx, uint64_t current_t
                 }
                 ack_str[ack_ofs] = 0;
                 LOG_EVENT(cnx, "FRAMES", "ACK_FRAME_CREATED", "", "{\"data_ptr\": \"%p\", \"largest\": %" PRIu64 ", \"blocks\": [%s]}", bytes, frame.largest_acknowledged, ack_str);
+                free(ack_str);
             }
 
-            /* When numbers are lower than 64, varint encoding fits on one byte */
-            bytes[num_block_index] = (uint8_t)num_block;
+            /* systematically encode it as a varint on 2 bytes for simplicity */
+            bytes[num_block_index] = (uint8_t) (0x40 | (num_block >> 8));
+            bytes[num_block_index + 1] = (uint8_t)num_block;
 
             /* Remember the ACK value and time */
             pkt_ctx->highest_ack_sent = pkt_ctx->first_sack_item.end_of_sack_range;
