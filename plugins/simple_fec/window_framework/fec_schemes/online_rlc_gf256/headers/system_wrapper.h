@@ -32,7 +32,7 @@ static __attribute__((always_inline)) int wrapper_init(picoquic_cnx_t *cnx, syst
 }
 
 static __attribute__((always_inline)) int id_in_unknowns(system_wrapper_t *wrapper, source_symbol_id_t id) {
-    for (int i = 0 ; i < wrapper->system->n_source_symbols ; i++) {
+    for (int i = 0 ; i < arraylist_size(&wrapper->unknowns_ids) ; i++) {
         if (arraylist_get(&wrapper->unknowns_ids, i) == id) {
             return i;
         }
@@ -42,26 +42,26 @@ static __attribute__((always_inline)) int id_in_unknowns(system_wrapper_t *wrapp
 
 static __attribute__((always_inline)) int wrapper_receive_source_symbol(picoquic_cnx_t *cnx, system_wrapper_t *wrapper, window_source_symbol_t *ss, equation_t **removed, int *used_in_system) {
     *used_in_system = 0;
-    if (ss->id < arraylist_get(&wrapper->unknowns_ids, 0)) {
+    int index = -1;
+    if (arraylist_is_empty(&wrapper->unknowns_ids) || ss->id < arraylist_get(&wrapper->unknowns_ids, 0)) {
         // should be ignored, because unknowns_ids[0] - 1 is the highest contiguously recieved
-    } else if (ss->id > arraylist_get(&wrapper->unknowns_ids, wrapper->system->n_source_symbols - 1)) {
+    } else if (arraylist_is_empty(&wrapper->unknowns_ids) || ss->id > arraylist_get_last(&wrapper->unknowns_ids)) {
         // should be ignored, nothing to do right now
-    } else {
-        equation_t *eq = equation_create_from_source(cnx, ss->id, ss->source_symbol._whole_data, ss->source_symbol.chunk_size+1);
+                                                                                                                // avoid adding if already recovered
+    } else if (!arraylist_is_empty(&wrapper->unknowns_ids) && (index = id_in_unknowns(wrapper, ss->id)) != -1 && !arraylist_get(&wrapper->unknown_recovered, index)) {
+        equation_t *eq = equation_create_from_source(cnx, index, ss->source_symbol._whole_data, ss->source_symbol.chunk_size+1);
         if (eq == NULL) {
             PROTOOP_PRINTF(cnx, "COULD NOT RECEIVE SOURCE SYMBOL\n");
             return PICOQUIC_ERROR_MEMORY;
         }
+        PROTOOP_PRINTF(cnx, "ADD SOURCE SYMBOL %u\n", ss->id);
         // unlikely
-        int index = -1;
-        if ((index = id_in_unknowns(wrapper, ss->id)) != -1) {
-            int decoded = 0;
-            system_add_with_elimination(cnx, wrapper->system, eq, wrapper->inv_table, wrapper->mul_table, &decoded, removed, used_in_system);
-            if (*used_in_system) {
-                arraylist_set(&wrapper->unknown_recovered, index, true);
-            }
-            // TODO; handle recovered symbols
+        int decoded = 0;
+        system_add_with_elimination(cnx, wrapper->system, eq, wrapper->inv_table, wrapper->mul_table, &decoded, removed, used_in_system);
+        if (*used_in_system) {
+            arraylist_set(&wrapper->unknown_recovered, index, true);
         }
+        // TODO; handle recovered symbols
         if (!*used_in_system) {
             equation_free(cnx, eq);
         }
@@ -69,7 +69,8 @@ static __attribute__((always_inline)) int wrapper_receive_source_symbol(picoquic
     return 0;
 }
 
-static __attribute__((always_inline)) int extend_wrapper_and_adjust_repair_symbol(picoquic_cnx_t *cnx, system_wrapper_t *wrapper, equation_t *rs, ring_based_received_source_symbols_buffer_t *source_symbols) {
+static __attribute__((always_inline)) int
+extend_wrapper_and_adjust_repair_symbol(picoquic_cnx_t *cnx, system_wrapper_t *wrapper, equation_t *rs, ring_based_received_source_symbols_buffer_t *source_symbols) {
     if (wrapper->system->first_id_id != SYMBOL_ID_NONE && rs->pivot < wrapper->system->first_id_id) {
         // the rs is too old
         PROTOOP_PRINTF(cnx, "should not happen !\n");
@@ -92,8 +93,6 @@ static __attribute__((always_inline)) int extend_wrapper_and_adjust_repair_symbo
             }
             if (first_wrapper_id_in_new_rs == -1 && !arraylist_is_empty(&wrapper->unknowns_ids) && arraylist_get_last(&wrapper->unknowns_ids) < arraylist_get_first(&wrapper->temp_arraylist)) {
                 first_wrapper_id_in_new_rs = arraylist_size(&wrapper->unknowns_ids) - 1;
-//                printf("first wrapper id = %lu - %lu = %lu\n", arraylist_get_first(&wrapper->temp_arraylist), arraylist_get_first(&wrapper->unknowns_ids), arraylist_get_first(&wrapper->temp_arraylist) - arraylist_get_first(&wrapper->unknowns_ids));
-//                first_wrapper_id_in_new_rs = arraylist_get_first(&wrapper->temp_arraylist) - arraylist_get_first(&wrapper->unknowns_ids);
             }
         } else if (current_id < arraylist_get_first(&wrapper->unknowns_ids)) {
             PROTOOP_PRINTF(cnx, "should not happen !\n");
@@ -116,20 +115,13 @@ static __attribute__((always_inline)) int extend_wrapper_and_adjust_repair_symbo
     int index_of_last_unknown = arraylist_index(&wrapper->unknowns_ids, arraylist_get_last(&wrapper->temp_arraylist));
     uint8_t *temp_coefs = my_malloc(cnx, rs->_coefs_allocated_size);
     my_memcpy(temp_coefs, rs->coefs, rs->_coefs_allocated_size);
-    PROTOOP_PRINTF(cnx, "MEMSET 0 %u BYTES at %p\n", rs->_coefs_allocated_size, (protoop_arg_t) rs->coefs);
     my_memset(rs->coefs, 0, rs->_coefs_allocated_size);
-    PROTOOP_PRINTF(cnx, "DONE MEMSET\n");
     // build the new ID with coefs concerning only the lost symbols
     for(int i = 0 ; i < arraylist_size(&wrapper->temp_arraylist) ; i++) {
         source_symbol_id_t current_id = arraylist_get(&wrapper->temp_arraylist, i);
         // reset the coefs of the rs progressively
         int index_in_unknowns = arraylist_index(&wrapper->unknowns_ids, current_id);
         rs->coefs[index_in_unknowns - index_of_first_unknown] = temp_coefs[current_id - rs->constant_term.metadata.first_id];
-//        rs->coefs[i] = rs->coefs[current_id - rs->constant_term.metadata.first_id];
-//        PROTOOP_PRINTF(cnx, "MAP %u TO %u\n", current_id, first_wrapper_id_in_new_rs + i);
-//        PROTOOP_PRINTF(cnx, "CURRENT ID = %u, index in unknowns = %u, index of first_unknown = %u\n", current_id, index_in_unknowns, index_of_first_unknown);
-//        PROTOOP_PRINTF(cnx, "SET rs->coefs[%u] = rs->coefs[%u] = %u\n", index_in_unknowns - index_of_first_unknown, current_id - rs->constant_term.metadata.first_id, rs->coefs[current_id - rs->constant_term.metadata.first_id]);
-//        PROTOOP_PRINTF(cnx, "MAP %u TO %u\n", current_id, first_wrapper_id_in_new_rs + (index_in_unknowns - index_of_first_unknown));
     }
     rs->constant_term.metadata.first_id = first_wrapper_id_in_new_rs;
     rs->pivot = first_wrapper_id_in_new_rs;
@@ -147,18 +139,14 @@ static __attribute__((always_inline)) int wrapper_receive_repair_symbol(picoquic
 
     *removed = NULL;
     *used_in_system = 0;
-//    PROTOOP_PRINTF(cnx, "WRAPPER RECEIVE RS, FIRST %u, %u RS\n", rs->constant_term.metadata.first_id, rs->constant_term.metadata.n_protected_symbols);
 
     window_source_symbol_id_t last_id_to_check = repair_symbol_last_id(&rs->constant_term);
     for (source_symbol_id_t i = rs->constant_term.metadata.first_id ; i <= last_id_to_check ; i++) {
         window_source_symbol_id_t idx = i - rs->constant_term.metadata.first_id;
         if (ring_based_source_symbols_buffer_contains(cnx, source_symbols, i)) {
-            symbol_add_scaled(rs->constant_term.repair_symbol.repair_payload, rs->coefs[idx], ring_based_source_symbols_buffer_get(cnx, source_symbols, i)->source_symbol._whole_data, rs->constant_term.repair_symbol.payload_length, wrapper->mul_table);
-//            PROTOOP_PRINTF(cnx, "RS += coefs[%u] (%u) * %u\n",
-//                    idx, rs->coefs[idx], ring_based_source_symbols_buffer_get(cnx, source_symbols, i)->id);
+            symbol_add_scaled(rs->constant_term.repair_symbol.repair_payload, rs->coefs[idx], ring_based_source_symbols_buffer_get(cnx, source_symbols, i)->source_symbol._whole_data, align(rs->constant_term.repair_symbol.payload_length), wrapper->mul_table);
             rs->coefs[idx] = 0;
         } else {
-//            PROTOOP_PRINTF(cnx, "UNKNOWN %u\n", i);
             arraylist_push(cnx, &wrapper->temp_arraylist, i);
         }
     }
@@ -173,20 +161,20 @@ static __attribute__((always_inline)) int wrapper_receive_repair_symbol(picoquic
         PROTOOP_PRINTF(cnx, "ignore source symbol\n");
         return 0;
     }
-    PROTOOP_PRINTF(cnx, "BEFORE ADJUST RS, temp_arraylist_size = %d\n", arraylist_size(&wrapper->temp_arraylist));
     extend_wrapper_and_adjust_repair_symbol(cnx, wrapper, rs, source_symbols);
-//    PROTOOP_PRINTF(cnx, "rs[0, 1, 2, 3] = %u, %u, %u, %u, %u, %u, %u, %u, %u\n", rs->constant_term.repair_symbol.repair_payload[0], rs->constant_term.repair_symbol.repair_payload[1], rs->constant_term.repair_symbol.repair_payload[2],
-//                   rs->constant_term.repair_symbol.repair_payload[3], rs->constant_term.repair_symbol.repair_payload[4], rs->constant_term.repair_symbol.repair_payload[5], rs->constant_term.repair_symbol.repair_payload[6],
-//                   rs->constant_term.repair_symbol.repair_payload[7], rs->constant_term.repair_symbol.repair_payload[8]);
-//    PROTOOP_PRINTF(cnx, "PIVOT = %u, PIVOT COEF = %u\n", rs->pivot, equation_get_coef(rs, rs->pivot));
 
+    if (wrapper->system->first_id_id == SYMBOL_ID_NONE && rs->pivot != 0) {
+        // this can happen when there are unknown source symbols for which no repair symbol has been received yet
+        // in that case, we add the knowledge of symbols from 0 to pivot - 1 to the system
+        system_set_bounds(cnx, wrapper->system, 0, rs->pivot-1);
+    }
 
     int decoded = 0;
 
     system_add_with_elimination(cnx, wrapper->system, rs, wrapper->inv_table, wrapper->mul_table, &decoded, removed, used_in_system);
     if (decoded) {
         int n_non_null_equations = 0;
-        for (int i = 0 ; i < wrapper->system->max_equations && n_non_null_equations < wrapper->system->n_equations; i++) {
+        for (int i = 0 ; i < wrapper->system->max_equations && n_non_null_equations < wrapper->system->n_equations && i < arraylist_size(&wrapper->unknowns_ids); i++) {
             equation_t *eq = wrapper->system->equations[i];
             if (eq != NULL) {
                 n_non_null_equations++;
@@ -206,7 +194,6 @@ static __attribute__((always_inline)) int wrapper_remove_recovered_symbols(picoq
     if (arraylist_size(&wrapper->unknowns_ids) == 0 || id < arraylist_get_first(&wrapper->unknowns_ids)) {
         return 0;
     }
-    PROTOOP_PRINTF(cnx, "N UNKNOWNS IS CURRENTLY %u\n", arraylist_size(&wrapper->unknowns_ids));
     int index = -1;// arraylist_index(&wrapper->unknowns_ids, id);
 
     for (int i = 0 ; i < arraylist_size(&wrapper->unknowns_ids) ; i++) {
@@ -220,16 +207,20 @@ static __attribute__((always_inline)) int wrapper_remove_recovered_symbols(picoq
         return -1;
     }
     source_symbol_id_t first_id_before = wrapper->system->first_id_id;
-    PROTOOP_PRINTF(cnx, "FIRST SYSTEM ID = %u, REMOVE PIVOTS UNTIL %u\n", first_id_before, index + wrapper->system->first_id_id);
     int err = remove_all_pivots_until(cnx, wrapper->system, index + wrapper->system->first_id_id);
     if (err) {
         return err;
     }
-    source_symbol_id_t n_removed_unknowns = wrapper->system->first_id_id - first_id_before;
-    PROTOOP_PRINTF(cnx, "SHIFT UNKNOWNS LEFT OF %u SLOTS, FIRST = %u\n", n_removed_unknowns, arraylist_get_first(&wrapper->unknowns_ids));
-    arraylist_shift_left(cnx, &wrapper->unknowns_ids, n_removed_unknowns);
-    PROTOOP_PRINTF(cnx, "FIRST AFTER = %u\n", arraylist_get_first(&wrapper->unknowns_ids));
-    arraylist_shift_left(cnx, &wrapper->unknown_recovered, n_removed_unknowns);
+    if (wrapper->system->first_id_id == SYMBOL_ID_NONE) {
+        // the system has been emptied
+        arraylist_reset(&wrapper->unknowns_ids);
+        arraylist_reset(&wrapper->unknown_recovered);
+    } else {
+        source_symbol_id_t n_removed_unknowns = wrapper->system->first_id_id - first_id_before;
+        arraylist_shift_left(cnx, &wrapper->unknowns_ids, n_removed_unknowns);
+        arraylist_shift_left(cnx, &wrapper->unknown_recovered, n_removed_unknowns);
+    }
+
     return 0;
 }
 #endif //ONLINE_GAUSSIAN_SYSTEM_WRAPPER_H
