@@ -46,5 +46,5 @@ protoop_arg_t protoop_get_loss_parameters(picoquic_cnx_t *cnx) {
     set_cnx(cnx, AK_CNX_OUTPUT, 2, monitor->estimations.r_times_granularity);
     PROTOOP_PRINTF(cnx, "MONITOR GET LOSS END\n");
 
-    return monitor->has_done_estimations;
+    return monitor->has_done_estimations && rbt_size(cnx, &monitor->packet_events) >= MIN_STORED_EVENTS_FOR_ESTIMATION;
 }
