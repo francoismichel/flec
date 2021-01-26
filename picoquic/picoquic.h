@@ -252,23 +252,34 @@ typedef struct protoop_plugin protoop_plugin_t;
 typedef struct st_plugin_struct_metadata plugin_struct_metadata_t;
 
 /* This structure is used for sending booking purposes */
-typedef struct reserve_frame_slot {
-    size_t nb_bytes;
-    uint8_t is_congestion_controlled:1;
-    bool low_priority:1;
+typedef struct __attribute__((__packed__)) reserve_frame_slot {
+    uint8_t is_congestion_controlled;
+    uint8_t contributes_to_bytes_in_transit; // only checked when is_congestion_controlled is set to false: the frame is sent outside the cwin but its bytes are added to the bytes in transit
+    uint8_t low_priority;
     uint64_t frame_type;
-    protoop_plugin_t *p; /* Whathever you place here, it will be overwritten */
+    size_t nb_bytes;
+
+    union {
+        protoop_plugin_t *p; /* Whathever you place here, it will be overwritten */
+        uint64_t p_u64;
+    };
     /* TODO FIXME position */
-    void *frame_ctx;
+    union {
+        void *frame_ctx;
+        uint64_t frame_ctx_u64;
+    };
 } reserve_frame_slot_t;
 
-typedef struct reserve_frames_block {
+typedef struct __attribute__((__packed__)) reserve_frames_block {
     size_t total_bytes;
     uint8_t nb_frames;
-    uint8_t is_congestion_controlled:1;
-    bool low_priority:1; // if false, picoquic will wake as soon as it is reserved
+    uint8_t is_congestion_controlled;
+    uint8_t low_priority; // if false, picoquic will wake as soon as it is reserved
     /* The following pointer is an array! */
-    reserve_frame_slot_t *frames;
+    union {
+        reserve_frame_slot_t *frames;
+        uint64_t frames_u64;
+    };
 } reserve_frames_block_t;
 
 typedef struct st_picoquic_packet_plugin_frame_t {

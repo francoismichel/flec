@@ -1248,7 +1248,7 @@ protoop_arg_t scheduler_write_new_frames(picoquic_cnx_t *cnx) {
             if (is_retransmittable) {
                 is_pure_ack = 0;
             }
-            packet->is_congestion_controlled |= rfs->is_congestion_controlled;
+            packet->is_congestion_controlled |= (rfs->is_congestion_controlled | rfs->contributes_to_bytes_in_transit);
             /* And let the packet know that it has plugin bytes */
             register_plugin_in_pkt(packet, p, frame_offset, (uint64_t) data_bytes, rfs);
         } else if (ret == PICOQUIC_MISCCODE_RETRY_NXT_PKT) {
@@ -1299,7 +1299,7 @@ protoop_arg_t scheduler_write_new_frames(picoquic_cnx_t *cnx) {
             if (is_retransmittable) {
                 is_pure_ack = 0;
             }
-            packet->is_congestion_controlled |= rfs->is_congestion_controlled;
+            packet->is_congestion_controlled |= (rfs->is_congestion_controlled | rfs->contributes_to_bytes_in_transit);
             /* And let the packet know that it has plugin bytes */
             register_plugin_in_pkt(packet, p, frame_offset, (uint64_t) data_bytes, rfs);
         } else if (ret == PICOQUIC_MISCCODE_RETRY_NXT_PKT) {
@@ -3065,6 +3065,7 @@ protoop_arg_t schedule_frames_on_path(picoquic_cnx_t *cnx)
         }
         /* document the send time & overhead */
         packet->is_pure_ack = 0;
+        packet->is_congestion_controlled = 1;
         packet->send_time = current_time;
         packet->checksum_overhead = checksum_overhead;
     }
@@ -3258,7 +3259,8 @@ protoop_arg_t schedule_frames_on_path(picoquic_cnx_t *cnx)
                         }
 
                         size_t stream_bytes_max = picoquic_stream_bytes_max(cnx, send_buffer_min_max - checksum_overhead - length, header_length, bytes);
-                        stream = picoquic_schedule_next_stream(cnx, stream_bytes_max, path_x);
+                        if (stream == NULL)
+                            stream = picoquic_schedule_next_stream(cnx, stream_bytes_max, path_x);
 
                         /* Encode the stream frame, or frames */
                         while (stream != NULL) {
