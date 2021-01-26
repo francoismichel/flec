@@ -1462,7 +1462,7 @@ picoquic_cnx_t* picoquic_create_cnx(picoquic_quic_t* quic,
     picoquic_tp_t tp;
     memset(&tp, 0, sizeof(picoquic_tp_t));
     picoquic_init_transport_parameters(&tp, client_mode);
-    picoquic_create_cnx_with_transport_parameters(quic, initial_cnx_id, remote_cnx_id, addr, start_time, preferred_version,
+    return picoquic_create_cnx_with_transport_parameters(quic, initial_cnx_id, remote_cnx_id, addr, start_time, preferred_version,
                                                   sni, alpn, client_mode, tp);
 }
 
