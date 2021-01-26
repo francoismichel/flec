@@ -41,6 +41,9 @@ protoop_arg_t is_max_stream_data_frame_required(picoquic_cnx_t *cnx) {
     }
     bool should_update = (desired_offset < largest_possible_offset &&  2 * consumed_offset > maxdata_local)   // we're not rwin-limited
                          || (desired_offset >= largest_possible_offset && ((maxdata_local - consumed_offset)) < max_stream_receive_window_size/2);  // we are rwin-limited, only update when 50% of the buffer has been read
-    return (get_stream_head(stream, AK_STREAMHEAD_STREAM_FLAGS) & (  picoquic_stream_flag_fin_received | picoquic_stream_flag_reset_received)) == 0
+
+    PROTOOP_PRINTF(cnx, "SHOULD UPDATE MAX_STREAM_DATA = %d, desired_offset = %lu, largest_possible_offset = %lu, consumed_offset = %lu, maxdata_local = %lu, max_stream_receive_window_size = %lu\n",
+                   should_update, desired_offset, largest_possible_offset, consumed_offset, maxdata_local, max_stream_receive_window_size);
+    return (!PSTREAM_FIN_RCVD(stream) && !PSTREAM_RESET_RCVD(stream))
            && should_update;
 }
