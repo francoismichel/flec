@@ -31,6 +31,9 @@ protoop_arg_t schedule_frames_on_path(picoquic_cnx_t *cnx)
     state->has_written_repair_frame = false;
     state->has_written_fb_fec_repair_frame = false;
     state->has_written_recovered_frame = false;
+    state->retried_repair_for_ack = false;
+    picoquic_path_t *path = (picoquic_path_t *) get_cnx(cnx, AK_CNX_PATH, 0);
+    state->ack_needed = helper_is_ack_needed(cnx, current_time, picoquic_packet_context_application, path);
     if (state->n_reserved_id_or_repair_frames == 0)
         // we maybe have a completely free slot (should be rare, only at the connection startup)
         fec_check_for_available_slot(cnx, available_slot_reason_none, current_time);

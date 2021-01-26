@@ -12,7 +12,7 @@ protoop_arg_t write_frame(picoquic_cnx_t *cnx) {
     plugin_state_t *state = get_plugin_state(cnx);
     if (!state)
         return PICOQUIC_ERROR_MEMORY;
-    if(state->has_written_fpi_frame)
+    if(state->has_written_fpi_frame || (state->ack_needed && !fec_has_protected_data_to_send(cnx)))
         return PICOQUIC_MISCCODE_RETRY_NXT_PKT;
     uint8_t* bytes = (uint8_t *) get_cnx(cnx, AK_CNX_INPUT, 0);
     const uint8_t* bytes_max = (const uint8_t *) get_cnx(cnx, AK_CNX_INPUT, 1);
