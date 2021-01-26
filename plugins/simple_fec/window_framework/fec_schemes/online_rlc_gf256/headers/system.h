@@ -7,14 +7,13 @@
 typedef struct {
     int max_equations;
     int n_equations;
-    int n_source_symbols;
     source_symbol_id_t first_id_id;
     source_symbol_id_t last_symbol_id;
     equation_t **equations;
 } system_t;
 
 #define ENTRY_INDEX_NONE 0xfffffffful
-#define SYSTEM_INITIAL_SIZE 100;
+#define SYSTEM_INITIAL_SIZE 2000;
 
 static __attribute__((always_inline)) int system_resize(picoquic_cnx_t *cnx, system_t *system, int new_max_equations) {
     if (new_max_equations > system->max_equations) {
@@ -94,15 +93,6 @@ static __attribute__((always_inline)) int reduce_equation(picoquic_cnx_t *cnx, s
         return 0;
 
     int err = 0;
-//    if (!equation_is_zero(eq) && system->first_id_id != SYMBOL_ID_NONE && system->last_symbol_id != SYMBOL_ID_NONE) {
-//
-//        PROTOOP_PRINTF(cnx, "PRINT BEFORE REDUCE REDUCE MULTIPLY\n");
-//
-//        for (window_source_symbol_id_t id = system->first_id_id ;  id <= MAX(eq->last_non_zero_id, system->last_symbol_id) ; id++) {
-//            PROTOOP_PRINTF(cnx,"%u, ", equation_get_coef(eq, id));
-//        }
-//        PROTOOP_PRINTF(cnx, "0x%x\n", eq->constant_term.repair_symbol.repair_payload[0]);
-//    }
     for (uint32_t id = eq->pivot ; id <= eq->last_non_zero_id && !equation_is_zero(eq); id++) {
         uint8_t coef = equation_get_coef(eq, id);
         if (coef != 0) {
@@ -112,15 +102,7 @@ static __attribute__((always_inline)) int reduce_equation(picoquic_cnx_t *cnx, s
                 /* we cancel the coef */
 
                 equation_multiply(eq, mul_table[equation_get_coef(pivot_equation, pivot_equation->pivot)][inv_table[coef]], mul_table);
-//                if (system->first_id_id != SYMBOL_ID_NONE && system->last_symbol_id != SYMBOL_ID_NONE) {
-//                    PROTOOP_PRINTF(cnx, "PRINT REDUCE MULTIPLY\n");
-//
-//                    for (window_source_symbol_id_t id = system->first_id_id ;  id <= MAX(eq->last_non_zero_id, system->last_symbol_id) ; id++) {
-//                        PROTOOP_PRINTF(cnx,"%u, ", equation_get_coef(eq, id));
-//                    }
-//                    PROTOOP_PRINTF(cnx, "0x%x\n", eq->constant_term.repair_symbol.repair_payload[0]);
-//                }
-//                PROTOOP_PRINTF(cnx, "BEFORE ADD, PIVOTEQ FIRST = %u, LAST = %u, EQ FIRST = %u, LAST = %u\n", pivot_equation->pivot, pivot_equation->last_non_zero_id, eq->pivot, eq->last_non_zero_id);
+
                 // we reduce the equation and remove its pivot coefficient by adding the multiplied equation and the system's pivot equation
                 err = equation_add(cnx, eq, pivot_equation);
                 if (err) {
@@ -131,6 +113,25 @@ static __attribute__((always_inline)) int reduce_equation(picoquic_cnx_t *cnx, s
     }
 
     return err;
+}
+
+static __attribute__((always_inline)) bool system_set_bounds
+        (picoquic_cnx_t *cnx, system_t *system, source_symbol_id_t first, source_symbol_id_t last) {
+    if (last + 1 - first > system->max_equations) {
+        PROTOOP_PRINTF(cnx, "ERROR: BOUNDS TOO LARGE FOR SYSTEM (%u > %u)\n", last + 1 - first, system->max_equations);
+        return false;
+    }
+    if (system->first_id_id < first) {
+        PROTOOP_PRINTF(cnx, "ERROR: FIRST BOUND TOO HIGH COMPARED TO THE EXISTING SYSTEM\n");
+        return false;
+    }
+    system->first_id_id = first;
+    if (last < system->last_symbol_id && system->last_symbol_id != SYMBOL_ID_NONE) {
+        PROTOOP_PRINTF(cnx, "ERROR: LAST BOUND TOO LOW COMPARED TO THE EXISTING SYSTEM\n");
+        return false;
+    }
+    system->last_symbol_id = last;
+    return true;
 }
 
 
@@ -211,8 +212,9 @@ static __attribute__((always_inline)) uint32_t system_add
     uint32_t idx_pos = new_i0 - set_i0;
     if (idx_pos < system->max_equations) {
         if (system->equations[idx_pos] != NULL) {
-            WARNING_PRINT(cnx, "overwriting one full_symbol in set\n");
+            PROTOOP_PRINTF(cnx, "overwriting one full_symbol in set\n");
             *removed = system->equations[idx_pos];
+            system->n_equations--;
 //            equation_free(cnx, system->equations[idx_pos]);
         }
         system->equations[idx_pos] = eq;
@@ -225,28 +227,9 @@ static __attribute__((always_inline)) uint32_t system_add
         return idx_pos;
     }
     PROTOOP_PRINTF(cnx, "ERROR: COULD NOT ADD EQUATION IN FULL SYSTEM, IDX = %u, MAX EQ = %u\n", idx_pos, system->max_equations);
-//    else if (idx_pos < (system->max_equations * 2)) {
-//        system->max_equations *= 2;
-//    } else { /* new_i0-set_i0 >= set->size*2 */
-//        system->max_equations = idx_pos + 1; /* hence: new set->size >= old_size *2 + 1 */
-//    }
     assert(idx_pos < system->max_equations);
 
-    /* reallocate memory for the table of pointers in full_symbol */
-//    system->equations = realloc(
-//            system->equations, system->max_equations * sizeof(equation_t *));
-//    memset(system->equations + old_size, 0, sizeof(equation_t *) * (system->max_equations - old_size));
-
-//    if (system->equations == NULL) {
-//        WARNING_PRINT("failed to reallocate equations");
-//        equation_free(cnx, eq);
-//        free(system->equations);
-//        return ENTRY_INDEX_NONE;
-//    }
-
-//    system->equations[idx_pos] = eq;
-//    system->n_equations++;
-    return idx_pos;
+    return ENTRY_INDEX_NONE;
 }
 
 static __attribute__((always_inline)) uint32_t system_add_as_pivot
@@ -258,13 +241,11 @@ static __attribute__((always_inline)) uint32_t system_add_as_pivot
         return 0;
     }
     source_symbol_id_t first_id = eq->pivot;
-//    PROTOOP_PRINTF(cnx, "ADD AS PIVOT, PIVOT = %u\n", eq->pivot);
 
     int n_non_null_equations = 0;
     for(uint32_t i = 0 ; i < system->max_equations && n_non_null_equations < system->n_equations; i++) {
         if (system->equations[i]) {
             n_non_null_equations++;
-//            PROTOOP_PRINTF(cnx, "TRY EQ %u, COEF %u = %u\n", i, first_id, equation_get_coef(system->equations[i], first_id));
         }
         // TODO: add one temp equation to store the add and mul results  (it could belong to the system) so that we avoid doing inv each time
         // TODO: instead we could also, instead of doing inv to reset at 1, multiplying  by coef*inv[pivot] instead of just coef and remove the multiplication by inv !
@@ -277,14 +258,6 @@ static __attribute__((always_inline)) uint32_t system_add_as_pivot
                 assert(mul_table[inv_table[pivot_coef]][coef] != 0);
                 equation_multiply(eq, mul_table[inv_table[pivot_coef]][coef], mul_table);
 
-                if (system->first_id_id != SYMBOL_ID_NONE && system->last_symbol_id != SYMBOL_ID_NONE) {
-//                    PROTOOP_PRINTF(cnx, "PRINT EQ AFTER MULTIPLY\n");
-//
-//                    for (window_source_symbol_id_t id = system->first_id_id ;  id <= MAX(eq->last_non_zero_id, system->last_symbol_id) ; id++) {
-//                        PROTOOP_PRINTF(cnx,"%u, ", equation_get_coef(eq, id));
-//                    }
-//                    PROTOOP_PRINTF(cnx, "0x%x\n", eq->constant_term.repair_symbol.repair_payload[0]);
-                }
                 bool has_one_id_before_add = equation_has_one_id(system->equations[i]);
                 int err = equation_add(cnx, system->equations[i], eq);
                 bool is_decoded = !has_one_id_before_add && equation_has_one_id(system->equations[i]);
@@ -312,11 +285,12 @@ static __attribute__((always_inline)) int re_adjust_system_to(picoquic_cnx_t *cn
         // nothing to do
         return 0;
     }
-    if (id - system->first_id_id > system->max_equations) {
-         memset_fn(&system->equations, 0, system->max_equations*sizeof(equation_t *));
+    if (id - system->first_id_id > system->max_equations || id > system->last_symbol_id) {
+         memset_fn(&system->equations[0], 0, system->max_equations*sizeof(equation_t *));
          system->n_equations = 0;
          system->first_id_id = SYMBOL_ID_NONE;
          system->last_symbol_id = SYMBOL_ID_NONE;
+         PROTOOP_PRINTF(cnx, "SET TO 0 BECAUSE ID LARGE");
     } else {
         memmove_fn(&system->equations[0], &system->equations[n_equations_offset], (system->max_equations - (n_equations_offset))*sizeof(equation_t *));
         memset_fn(&system->equations[system->max_equations - n_equations_offset], 0, n_equations_offset*sizeof(equation_t *));
@@ -330,6 +304,13 @@ static __attribute__((always_inline)) int re_adjust_system_to(picoquic_cnx_t *cn
             }
         }
         system->first_id_id = id;
+        if (n_non_null_equations == 0) {
+            PROTOOP_PRINTF(cnx, "SET TO 0 BECAUSE NO NOTNULL FOUND\n");
+            memset_fn(&system->equations[0], 0, system->max_equations*sizeof(equation_t *));
+            system->n_equations = 0;
+            system->first_id_id = SYMBOL_ID_NONE;
+            system->last_symbol_id = SYMBOL_ID_NONE;
+        }
     }
     return 0;
 }
@@ -358,32 +339,10 @@ static __attribute__((always_inline)) int system_add_with_elimination(picoquic_c
                                 equation_t *eq, uint8_t *inv_table, uint8_t **mul_table, int *decoded, equation_t **removed, int *used_in_system)
 {
 
-
-//    PROTOOP_PRINTF(cnx, "PRINT SYSTEM, FIRST = %u, LAST = %u\n", system->first_id_id, system->last_symbol_id);
-//    int current_eq = 0;
-//    for (int i = 0 ; i < system->max_equations && current_eq < system->n_equations ; i++) {
-//        equation_t *e = system->equations[i];
-//        if (e != NULL) {
-//            current_eq++;
-//            for (window_source_symbol_id_t id = system->first_id_id ; id <= system->last_symbol_id ; id++) {
-//                PROTOOP_PRINTF(cnx,"%u, ", equation_get_coef(e, id));
-//            }
-//            PROTOOP_PRINTF(cnx, "0x%x\n", e->constant_term.repair_symbol.repair_payload[0]);
-//        }
-//    }
-
     *removed = NULL;
     *decoded = 0;
     *used_in_system = 0;
     int err = reduce_equation(cnx, system, eq, mul_table, inv_table);
-    if (system->first_id_id != SYMBOL_ID_NONE && system->last_symbol_id != SYMBOL_ID_NONE && !equation_is_zero(eq)) {
-//        PROTOOP_PRINTF(cnx, "PRINT REDUCED EQ\n");
-//
-//        for (window_source_symbol_id_t id = system->first_id_id ;  id <= MAX(eq->last_non_zero_id, system->last_symbol_id) ; id++) {
-//            PROTOOP_PRINTF(cnx,"%u, ", equation_get_coef(eq, id));
-//        }
-//        PROTOOP_PRINTF(cnx, "0x%x\n", eq->constant_term.repair_symbol.repair_payload[0]);
-    }
     if (!err && !equation_is_zero(eq)) {
         uint32_t idx = system_add_as_pivot(cnx,
                 system, eq, inv_table, mul_table, decoded, removed);
@@ -404,18 +363,6 @@ static __attribute__((always_inline)) int system_add_with_elimination(picoquic_c
         }
         PROTOOP_PRINTF(cnx, "DECODED = %d\n", *decoded);
     }
-//    current_eq = 0;
-//    PROTOOP_PRINTF(cnx, "PRINT SYSTEM, FIRST = %u, LAST = %u\n", system->first_id_id, system->last_symbol_id);
-//    for (int i = 0 ; i < system->max_equations && current_eq < system->n_equations ; i++) {
-//        equation_t *e = system->equations[i];
-//        if (e != NULL && !equation_is_zero(e)) {
-//            current_eq++;
-//            for (window_source_symbol_id_t id = system->first_id_id ; id <= system->last_symbol_id ; id++) {
-//                PROTOOP_PRINTF(cnx,"%u, ", equation_get_coef(e, id));
-//            }
-//            PROTOOP_PRINTF(cnx, "0x%x\n", e->constant_term.repair_symbol.repair_payload[0]);
-//        }
-//    }
     return err;
 }
 
