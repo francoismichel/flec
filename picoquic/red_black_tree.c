@@ -692,53 +692,51 @@ rbt_node_t *rbt_node_delete(picoquic_cnx_t *cnx, rbt_node_t *node, rbt_key key) 
 
 // the smallest key in the subtree rooted at x greater than or equal to the given key
 rbt_node_t *rbt_node_ceiling(picoquic_cnx_t *cnx, rbt_node_t *node, rbt_key key, rbt_key *out_key, rbt_val *out_val) {
-
     if (node == NULL) {
         return NULL;
     }
 
-    if (!IS_IN_PLUGIN_MEMORY(cnx->current_plugin, node)) {
-        printf("Error: tried to access to node out of plugin memory: %p\n", node);
-        return 0;
-    }
+    rbt_node_t *ceil = NULL, *floor = NULL;
 
-    int cmp = key_compare(key, node->key);
-    if (cmp == 0) {
-        if (out_key) {
-            *out_key = node->key;
+    while (node) {
+        if (!IS_IN_PLUGIN_MEMORY(cnx->current_plugin, node)) {
+            printf("Error: tried to access to node out of plugin memory: %p\n", node);
+            return 0;
         }
-        if (out_val) {
-            *out_val = node->val;
+
+        int cmp = key_compare(key, node->key);
+        if (cmp == 0) {
+
+            if (out_key) {
+                *out_key = node->key;
+            }
+            if (out_val) {
+                *out_val = node->val;
+            }
+            return node;
         }
-        return node;
-    } else if (cmp > 0) {
-        if (out_key) {
-            *out_key = node->key;
+
+        if (cmp > 0) {
+            node = node->right;
+        } else {
+            if (out_key) {
+                *out_key = node->key;
+            }
+            if (out_val) {
+                *out_val = node->val;
+            }
+            ceil = node;
+            node = node->left;
         }
-        if (out_val) {
-            *out_val = node->val;
-        }
-        return rbt_node_ceiling(cnx, node->right, key, out_key, out_val);
     }
-    rbt_node_t *t = rbt_node_ceiling(cnx, node->left, key, out_key, out_val);
-    if (t != NULL) {
-        node = t;
-    }
-    if (out_key) {
-        *out_key = node->key;
-    }
-    if (out_val) {
-        *out_val = node->val;
-    }
-    return node;
+    return ceil;
 }
-
 
 /**
      * @pre: the tree must not be empty
      * Returns the smallest key in the symbol table greater than or equal to {@code key}.
      * @param key the key
-     * @return the smallest key in the symbol table greater than or equal to {@code key}
+     * @return true if a ceiling exists, false otherwise {@code key}
      */
 uint64_t rbt_ceiling(picoquic_cnx_t *cnx, red_black_tree_t *tree, rbt_key key, rbt_key *out_key, rbt_val *out_val) {
     if (!tree)
