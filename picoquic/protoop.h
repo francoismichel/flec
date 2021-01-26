@@ -28,7 +28,7 @@
 
 /* Typedef for plugins */
 typedef char* protoop_str_id_t;
-typedef struct protoop_id {
+typedef struct __attribute__((__packed__)) protoop_id {
     uint64_t hash;
     char* id;
 } protoop_id_t;
