@@ -71,14 +71,16 @@ static __attribute__((always_inline)) void symbol_add_scaled
     }
 }
 
-static __attribute__((always_inline)) void symbol_add_slow(void *symbol1, void *symbol2, uint32_t symbol_size) {
-    uint8_t *data1 = (uint8_t *) symbol1;
-    uint8_t *data2 = (uint8_t *) symbol2;
+static __attribute__((always_inline)) void symbol_add_slow_safe(void *symbol1, void *symbol2, uint32_t symbol_size) {
+#define data1 ((uint8_t *) symbol1)
+#define data2 ((uint8_t *) symbol2)
     for (uint32_t i=0; i<symbol_size; i++) {
         data1[i] ^= data2[i];
     }
+#undef data1
+#undef data2
 }
-static __attribute__((always_inline)) void symbol_add_fast(void *symbol1, void *symbol2, uint32_t symbol_size) {
+static __attribute__((always_inline)) void symbol_add_fast_safe(void *symbol1, void *symbol2, uint32_t symbol_size) {
     uint8_t *data1 = (uint8_t *) symbol1;
     uint8_t *data2 = (uint8_t *) symbol2;
     uint64_t *data64_1 = (uint64_t *) symbol1;
@@ -104,9 +106,9 @@ static __attribute__((always_inline)) void symbol_add
     } else {
 
         if (SYMBOL_FAST_MODE) {
-            symbol_add_fast(symbol1, symbol2, symbol_size);
+            symbol_add_fast_safe(symbol1, symbol2, symbol_size);
         } else {
-            symbol_add_slow(symbol1, symbol2, symbol_size);
+            symbol_add_slow_safe(symbol1, symbol2, symbol_size);
         }
     }
 }
