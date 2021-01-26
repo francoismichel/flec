@@ -29,6 +29,6 @@ protoop_arg_t write_frame(picoquic_cnx_t *cnx) {
         wff->a_window_frame_has_been_written = true;
     }
     set_cnx(cnx, AK_CNX_OUTPUT, 0, (protoop_arg_t) 1 + consumed);
-    set_cnx(cnx, AK_CNX_OUTPUT, 1, (protoop_arg_t) 1);
+    set_cnx(cnx, AK_CNX_OUTPUT, 1, (protoop_arg_t) 0);  // if set tu retransmittable, sometimes the connection never terminates because the frame stays in the retransmission backlog
     return err;
 }
