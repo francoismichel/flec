@@ -24,7 +24,7 @@ protoop_arg_t pre_packet_has_been_received(picoquic_cnx_t *cnx) {
         }
     }
     int err = 0;
-    if ((err = fec_check_for_available_slot(cnx, available_slot_reason_ack, current_time)) != 0)
-        return err;
+//    if ((err = fec_check_for_available_slot(cnx, available_slot_reason_ack, current_time)) != 0)
+//        return err;
     return err;
 }
