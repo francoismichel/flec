@@ -943,21 +943,21 @@ void picoquic_init_transport_parameters(picoquic_tp_t* tp, int client_mode);
 #define LOG
 #else
 #define LOG if (0)
-#endif
-#endif
+#endif // DISABLE_QLOG
+#endif // LOG
 
 #ifndef LOG_EVENT
 #ifndef DISABLE_QLOG
 #define LOG_EVENT(cnx, cat, ev_type, trig, data_fmt, ...)                                                                                                                    \
     do {                                                                                                                                                                     \
-        char ___data[1024];                                                                                                                                                  \
-        snprintf(___data, 1024, data_fmt, __VA_ARGS__);                                                                                                                      \
+        char ___data[10240];                                                                                                                                                  \
+        snprintf(___data, 10240, data_fmt, __VA_ARGS__);                                                                                                                      \
         protoop_prepare_and_run_noparam(cnx, &PROTOOP_NOPARAM_LOG_EVENT, NULL, (protoop_arg_t) cat, (protoop_arg_t) ev_type, (protoop_arg_t) trig, (protoop_arg_t) NULL, (protoop_arg_t) ___data); \
     } while (0)
 #else
 #define LOG_EVENT(cnx, cat, ev_type, trig, data_fmt, ...)
-#endif
-#endif
+#endif // DISABLE_QLOG
+#endif // LOG_EVENT
 
 #ifndef PUSH_LOG_CTX
 #ifndef DISABLE_QLOG
@@ -969,35 +969,35 @@ void picoquic_init_transport_parameters(picoquic_tp_t* tp, int client_mode);
     } while (0)
 #else
 #define PUSH_LOG_CTX(cnx, ctx_fmt, ...)
-#endif
-#endif
+#endif // DISABLE_QLOG
+#endif // PUSH_LOG_CTX
 
 #ifndef POP_LOG_CTX
 #ifndef DISABLE_QLOG
 #define POP_LOG_CTX(cnx)    protoop_prepare_and_run_noparam(cnx, &PROTOOP_NOPARAM_POP_LOG_CONTEXT, NULL, NULL)
 #else
 #define POP_LOG_CTX(cnx)
-#endif
-#endif
+#endif // DISABLE_QLOG
+#endif // POP_LOG_CTX
 
 #elif defined(__GNUC__)
 
 /* GCC-style: named argument, empty arg is OK */
 
-# define N_ARGS(args...) N_ARGS_HELPER1(args, 9, 8, 7, 6, 5, 4, 3, 2, 1)
-# define N_ARGS_HELPER1(args...) N_ARGS_HELPER2(args)
-# define N_ARGS_HELPER2(x1, x2, x3, x4, x5, x6, x7, x8, x9, n, x...) n
+#define N_ARGS(args...) N_ARGS_HELPER1(args, 9, 8, 7, 6, 5, 4, 3, 2, 1)
+#define N_ARGS_HELPER1(args...) N_ARGS_HELPER2(args)
+#define N_ARGS_HELPER2(x1, x2, x3, x4, x5, x6, x7, x8, x9, n, x...) n
 
 
-# define protoop_prepare_and_run_noparam(cnx, pid, outputv, ...) protoop_prepare_and_run_noparam_helper(cnx, pid, NO_PARAM, outputv, N_ARGS(args), args)
-# define protoop_prepare_and_run_param(cnx, pid, param, outputv, ...) protoop_prepare_and_run_noparam_helper(cnx, pid, param, outputv, N_ARGS(args), args)
-# define protoop_save_outputs(cnx, ...) protoop_save_outputs_helper(cnx, N_ARGS(args), args)
+#define protoop_prepare_and_run_noparam(cnx, pid, outputv, ...) protoop_prepare_and_run_noparam_helper(cnx, pid, NO_PARAM, outputv, N_ARGS(args), args)
+#define protoop_prepare_and_run_param(cnx, pid, param, outputv, ...) protoop_prepare_and_run_noparam_helper(cnx, pid, param, outputv, N_ARGS(args), args)
+#define protoop_save_outputs(cnx, ...) protoop_save_outputs_helper(cnx, N_ARGS(args), args)
 
 #else
 
 #error variadic macros for your compiler here
 
-#endif
+#endif // defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 199901L)
 
 static inline protoop_arg_t protoop_prepare_and_run_helper(picoquic_cnx_t *cnx, protoop_id_t *pid, param_id_t param, bool caller, protoop_arg_t *outputv, unsigned int n_args, ...)
 {
@@ -1358,5 +1358,5 @@ protoop_arg_t protoop_false(picoquic_cnx_t *cnx);
 
 #ifdef __cplusplus
 }
-#endif
+#endif // __cplusplus
 #endif /* PICOQUIC_INTERNAL_H */
