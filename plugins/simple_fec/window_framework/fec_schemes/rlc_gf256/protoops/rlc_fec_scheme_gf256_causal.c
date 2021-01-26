@@ -102,7 +102,7 @@ static __attribute__((always_inline)) void gaussElimination(picoquic_cnx_t *cnx,
                       a[k][j] = gf256_sub(a[k][j], gf256_mul(term, a[i][j], mul));
                 }
                 // a[k][j] -= a[k][i]/a[i][i]*a[i][j] for the big, constant term
-                symbol_sub_scaled(constant_terms[k], term, constant_terms[i], symbol_size, mul);
+                symbol_sub_scaled(constant_terms[k], term, constant_terms[i], align(symbol_size), mul);
             }
         }
     }
@@ -133,7 +133,7 @@ static __attribute__((always_inline)) void gaussElimination(picoquic_cnx_t *cnx,
                         a[i][l] = gf256_sub(a[i][l], gf256_mul(term, a[k][l], mul));
 //                        a[i][l] = a[i][l] - a[i][j]*a[k][l]/a[k][j];
                     }
-                    symbol_sub_scaled(constant_terms[i], term, constant_terms[k], symbol_size, mul);
+                    symbol_sub_scaled(constant_terms[i], term, constant_terms[k], align(symbol_size), mul);
                     break;
                 }
             }
@@ -190,7 +190,7 @@ static __attribute__((always_inline)) void gaussElimination(picoquic_cnx_t *cnx,
                         // if the unknown depends on an undetermined unknown, this unknown is undetermined
                         undetermined[candidate] = true;
                     } else {
-                        symbol_sub_scaled(x[candidate], a[i][j], x[j], symbol_size, mul);
+                        symbol_sub_scaled(x[candidate], a[i][j], x[j], align(symbol_size), mul);
                         a[i][j] = 0;
                     }
                 }
@@ -459,7 +459,7 @@ protoop_arg_t fec_recover(picoquic_cnx_t *cnx)
                     if (source_symbols[j]) {
 //                        PROTOOP_PRINTF(cnx, "SYMBOL %u NOT NULL\n", j + smallest_protected);
 //                        PROTOOP_PRINTF(cnx, "ADD KNOWN TO CT, COEF = %u, CRC = 0x%x\n", coefs[j], crc32(0, source_symbols[j]->source_symbol._whole_data, symbol_size));
-                        symbol_sub_scaled(constant_terms[i], coefs[j], source_symbols[j]->source_symbol._whole_data, symbol_size, mul);
+                        symbol_sub_scaled(constant_terms[i], coefs[j], source_symbols[j]->source_symbol._whole_data, align(symbol_size), mul);
                     } else if (current_unknown < n_missing_source_symbols) {
 //                        PROTOOP_PRINTF(cnx, "ADDING UNKNOWN %u, COEF %u\n", j + smallest_protected, coefs[j]);
 //                        system_coefs[i][current_unknown++] = coefs[j];
