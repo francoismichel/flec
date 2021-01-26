@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <picoquic.h>
+#include <red_black_tree.h>
 #include "../helpers.h"
 #include "fec_constants.h"
 #include "utils.h"
@@ -16,6 +17,8 @@ typedef struct {
     bool has_written_repair_frame;
     bool has_written_fb_fec_repair_frame;
     bool has_written_recovered_frame;
+    bool ack_needed;
+    bool retried_repair_for_ack;
     bool is_incoming_packet_fec_protected;
     bool current_packet_is_lost;
 
@@ -36,6 +39,8 @@ typedef struct {
 
     uint64_t n_reserved_id_or_repair_frames;
 
+    uint64_t n_reserved_recovered_frames;
+
     uint8_t *current_packet;
     source_symbol_id_t current_packet_first_id;
     uint16_t current_packet_length;
@@ -43,8 +48,9 @@ typedef struct {
     framework_sender_t framework_sender;
     framework_receiver_t framework_receiver;
     lost_packet_queue_t lost_packets;
-    recovered_packets_buffer_t recovered_packets;
+    red_black_tree_t recovered_packets_ranges;
 
+    int64_t n_recovered_frames_in_flight;
 
     uint16_t symbol_size;
 
@@ -107,6 +113,7 @@ typedef struct source_symbol {
     uint16_t chunk_size;
     uint8_t *chunk_data;
     uint8_t *_whole_data;    // md + chunk data
+    uint8_t *_allocated_unaligned_whole_data;    // md + chunk data
 } source_symbol_t;
 
 static __attribute__((always_inline)) void set_ss_metadata_N(source_symbol_t *ss, bool val) {
@@ -288,7 +295,7 @@ static __attribute__((always_inline)) source_symbol_t **packet_payload_to_source
 
 
 static __attribute__((always_inline)) int maybe_notify_recovered_packets_to_everybody(picoquic_cnx_t *cnx,
-                                                                                       recovered_packets_buffer_t *b,
+                                                                                       red_black_tree_t *b,
                                                                                        uint64_t current_time) {
     plugin_state_t *state = get_plugin_state(cnx);
     if (!state)
@@ -297,10 +304,21 @@ static __attribute__((always_inline)) int maybe_notify_recovered_packets_to_ever
     picoquic_path_t *path = (picoquic_path_t *) get_cnx(cnx, AK_CNX_PATH, 0);
     picoquic_packet_context_t *pkt_ctx = (picoquic_packet_context_t *) get_path(path, AK_PATH_PKT_CTX, picoquic_packet_context_application);
     picoquic_packet_t *current_packet = (picoquic_packet_t *) get_pkt_ctx(pkt_ctx, AK_PKTCTX_RETRANSMIT_OLDEST);
-    while(b->size > 0 && current_packet) {
+    rbt_key k = 0;
+    rbt_val v = 0;
+    if (!rbt_is_empty(cnx, b)) {
+        rbt_min(cnx, b, &k, &v);
+    }
+    uint64_t range_first_pn = (uint64_t) k;
+    size_t range_size = (size_t) v;
+    uint64_t range_last_pn = range_first_pn + range_size - 1;
+    lost_packet_t *first_lost = NULL;
+    while(!rbt_is_empty(cnx, b) && current_packet) {
+        PROTOOP_PRINTF(cnx, "FIRST RECOVERED RANGE IN BUFFER = [%lx, %lx]\n", range_first_pn, range_last_pn);
         picoquic_packet_t *pnext = (picoquic_packet_t *) get_pkt(current_packet, AK_PKT_NEXT_PACKET);
         uint64_t current_pn64 = get_pkt(current_packet, AK_PKT_SEQUENCE_NUMBER);
-        if (current_pn64 == peek_first_recovered_packet_in_buffer(b)) {
+        PROTOOP_PRINTF(cnx, "RETRANSMIT_OLDEST = %lx\n", current_pn64);
+        if (current_pn64 == range_first_pn) {
             int timer_based = 0;
             if (!helper_retransmit_needed_by_packet(cnx, current_packet, current_time, &timer_based, NULL, NULL)) {
                 // we don't need to notify it now: the packet is not considered as lost
@@ -325,26 +343,60 @@ static __attribute__((always_inline)) int maybe_notify_recovered_packets_to_ever
                                                    current_pn64, current_time);
             }
             PROTOOP_PRINTF(cnx, "[[PACKET RECOVERED]] %lu,%lu\n", current_pn64, current_time - get_pkt(current_packet, AK_PKT_SEND_TIME));
-            dequeue_recovered_packet_from_buffer(b);
-        } else if (current_pn64 > peek_first_recovered_packet_in_buffer(b)) {
+            rbt_delete_min(cnx, b);
+//            dequeue_recovered_packet_from_buffer(b);
+            range_first_pn = current_pn64 + 1;
+            current_packet = pnext;
+        } else if (current_pn64 > range_first_pn) {
             // the packet to remove is already gone from the retransmit queue
-            uint64_t pn64 = dequeue_recovered_packet_from_buffer(b);
-            uint64_t slot;
-            source_symbol_id_t first_id;
-            uint16_t n_source_symbols;
-            uint64_t send_time;
-
-            // announce the reception of the source symbols
-            bool present = dequeue_lost_packet(cnx, &state->lost_packets, pn64, &slot, &first_id, &n_source_symbols, &send_time);
-            if (present) {
-                fec_packet_symbols_have_been_received(cnx, pn64, slot, first_id, n_source_symbols, true, false, send_time, current_time, &state->pid_received_packet);
-            } else {
-                // this is not normal
-                PROTOOP_PRINTF(cnx, "ERROR: THE FRECOVERED PACKET %lx (%lu) IS NEITHER IN THE RETRANSMIT QUEUE, NEITHER IN THE LOST PACKETS\n", pn64, pn64);
-                return -1;
+            // remove all the packets before current_pn64 that are in the lost_packets queue
+//            if (first_lost == NULL) {
+            first_lost = get_smallest_lost_packet_equal_or_bigger(cnx, &state->lost_packets, range_first_pn);
+//            } else {
+//                first_lost = _get_smallest_lost_packet_equal_or_bigger(cnx, first_lost, range_first_pn);
+//            }
+            if (first_lost) {
+                PROTOOP_PRINTF(cnx, "SMALLEST LOST EQUAL OR BIGGER THAN %lx IS %lx\n", range_first_pn, first_lost->pn);
             }
-        } // else, do nothing, try the next packet
-        current_packet = pnext;
+            uint64_t pn64 = 0;
+            if (first_lost && first_lost->pn < MIN(current_pn64, range_last_pn + 1)) {
+                pn64 = first_lost->pn;
+//                rbt_delete_and_get_min(cnx, b, &pn64, NULL);
+//                uint64_t pn64 = dequeue_recovered_packet_from_buffer(b);
+                uint64_t slot;
+                source_symbol_id_t first_id;
+                uint16_t n_source_symbols;
+                uint64_t send_time;
+                PROTOOP_PRINTF(cnx, "%lx ALREADY LOST\n", pn64);
+                // announce the reception of the source symbols
+                bool present = dequeue_lost_packet(cnx, &state->lost_packets, pn64, &slot, &first_id, &n_source_symbols, &send_time);
+                if (present) {
+                    fec_packet_symbols_have_been_received(cnx, pn64, slot, first_id, n_source_symbols, true, false, send_time, current_time, &state->pid_received_packet);
+                } else {
+                    // this can happen when a packet is present in several recovered frames
+                    PROTOOP_PRINTF(cnx, "THE RECOVERED PACKET %lx (%lu) IS NEITHER IN THE RETRANSMIT QUEUE, NEITHER IN THE LOST PACKETS\n", pn64, pn64);
+//                return -1;
+                }
+                first_lost = NULL;
+
+                range_first_pn = MIN(current_pn64, pn64 + 1);
+            } else {
+                range_first_pn = current_pn64;
+            }
+            PROTOOP_PRINTF(cnx, "NEW FIRST PN IN RANGE = %lx\n", range_first_pn);
+
+            // here, we do not do current_packet = pnext as we may still have packets sent earlier than the current packet
+        } else { // else, do nothing, try the next packet
+            current_packet = pnext;
+        }
+        if (range_first_pn > range_last_pn) {
+            PROTOOP_PRINTF(cnx, "UPDATE RECOVERED RANGE BECAUSE %lx > %lx\n", range_first_pn, range_last_pn);
+            rbt_delete_min(cnx, b);
+            rbt_min(cnx, b, &k, &v);
+            range_first_pn = (uint64_t) k;
+            range_size = (size_t) v;
+            range_last_pn = range_first_pn + range_size - 1;
+        }
     }
     return 0;
 }
