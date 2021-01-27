@@ -1306,10 +1306,17 @@ int quic_client(const char* ip_address_text, int server_port, const char * sni,
     }
 
     /* Wait for packets */
+    picoquic_state_enum last_checked_state = picoquic_get_cnx_state(cnx_client);
     while (ret == 0 && picoquic_get_cnx_state(cnx_client) != picoquic_state_disconnected) {
         int bytes_recv;
 
         from_length = to_length = sizeof(struct sockaddr_storage);
+
+        if (last_checked_state != picoquic_state_client_ready && picoquic_get_cnx_state(cnx_client) == picoquic_state_client_ready) {
+            // wake up directly to setup streams etc
+            delta_t = 0;
+        }
+        last_checked_state = picoquic_get_cnx_state(cnx_client);
 
         uint64_t select_time = picoquic_current_time();
         bytes_recv = picoquic_select(&fd, 1, &packet_from, &from_length,
@@ -1373,8 +1380,8 @@ int quic_client(const char* ip_address_text, int server_port, const char * sni,
              * the occasion to send acknowledgements. The server will start retransmissions,
              * and may eventually drop the connection for lack of acks. So we limit
              * the number of packets that can be received before sending responses. */
-
-            if (bytes_recv == 0 || (ret == 0 && client_receive_loop > PICOQUIC_DEMO_CLIENT_MAX_RECEIVE_BATCH)) {
+            if (bytes_recv == 0 || (last_checked_state != picoquic_state_client_ready && picoquic_get_cnx_state(cnx_client) == picoquic_state_client_ready)
+            || (ret == 0 && client_receive_loop > PICOQUIC_DEMO_CLIENT_MAX_RECEIVE_BATCH)) {
                 client_receive_loop = 0;
 
                 if (ret == 0 && picoquic_get_cnx_state(cnx_client) == picoquic_state_client_ready) {
