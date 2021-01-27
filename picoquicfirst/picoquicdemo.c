@@ -1253,19 +1253,34 @@ int quic_client(const char* ip_address_text, int server_port, const char * sni,
                         callback_ctx.nb_demo_streams = test_scenario_nb;
                     } else {
                         sprintf(buf, "doc-%d.html", get_size);
+                        demo_stream_desc_t *tab = calloc(sizeof(demo_stream_desc_t), (only_stream_4 ? 1 : 2));
                         if (only_stream_4) {
-                            callback_ctx.demo_stream =  (demo_stream_desc_t []) {{ 4, 0xFFFFFFFF, buf, "/dev/null", 0 }};
+                            if (!tab) {
+                                printf("error malloc");
+                                exit(-1);
+                            }
+                            tab->stream_id = 4;
+                            tab->previous_stream_id = 0xFFFFFFFF;
+                            tab->doc_name = buf;
+                            tab->f_name = "/dev/null";
+                            tab->is_binary = 0;
+                            callback_ctx.demo_stream = tab;
                             callback_ctx.nb_demo_streams = 1;
                         } else {
-                            callback_ctx.demo_stream =  (demo_stream_desc_t []) {{ 0, 0xFFFFFFFF, "index.html", "/dev/null", 0 }, { 4, 0, buf, "/dev/null", 0 }};
+                            demo_stream_desc_t stream_1 = { 0, 0xFFFFFFFF, "index.html", "/dev/null", 0 };
+                            demo_stream_desc_t stream_2 = { 4, 0, buf, "/dev/null", 0 };
+                            tab[0] = stream_1;
+                            tab[1] = stream_2;
+                            callback_ctx.demo_stream =  tab;
                             callback_ctx.nb_demo_streams = 2;
                         }
-                        gettimeofday(&callback_ctx.tv_start, NULL);
                         callback_ctx.stream_ok = false;
                         callback_ctx.only_get = true;
                     }
 
                     demo_client_start_streams(cnx_client, &callback_ctx, 0xFFFFFFFF);
+                    current_requests++;
+                    last_performed_request = current_time;
                 }
 
                 ret = picoquic_prepare_packet(cnx_client, picoquic_current_time(),
