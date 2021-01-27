@@ -119,6 +119,7 @@ static const char* response_buffer = NULL;
 static size_t response_length = 0;
 
 static size_t max_stream_receive_window_size = SIZE_MAX;
+static ssize_t initial_receive_window_size = 0;
 static ssize_t repair_receive_window_size = -1L;
 
 picoquic_congestion_algorithm_t* cc_algorithm = NULL;
@@ -1182,9 +1183,10 @@ int quic_client(const char* ip_address_text, int server_port, const char * sni,
         memset(&tp, 0, sizeof(picoquic_tp_t));
         picoquic_init_transport_parameters(&tp, 1);
         // ensure that the receive window is respected at the beginning of the transfer
-        tp.initial_max_stream_data_bidi_local = MIN(tp.initial_max_stream_data_bidi_local, max_stream_receive_window_size);
-        tp.initial_max_stream_data_bidi_remote = MIN(tp.initial_max_stream_data_bidi_remote, max_stream_receive_window_size);
-        tp.initial_max_stream_data_uni = MIN(tp.initial_max_stream_data_uni, max_stream_receive_window_size);
+        tp.initial_max_stream_data_bidi_local = MIN(MAX(initial_receive_window_size, tp.initial_max_stream_data_bidi_local), max_stream_receive_window_size);
+        tp.initial_max_stream_data_bidi_remote = MIN(MAX(initial_receive_window_size, tp.initial_max_stream_data_bidi_remote), max_stream_receive_window_size);
+        tp.initial_max_stream_data_uni = MIN(MAX(initial_receive_window_size, tp.initial_max_stream_data_uni), max_stream_receive_window_size);
+        tp.initial_max_data = MAX(initial_receive_window_size, tp.initial_max_data);
         qclient->default_tp = &tp;
         /* Create a client connection */
         cnx_client = picoquic_create_cnx_with_transport_parameters(qclient, picoquic_null_connection_id, picoquic_null_connection_id,
@@ -1237,7 +1239,6 @@ int quic_client(const char* ip_address_text, int server_port, const char * sni,
             if (ret == 0) {
                 if (picoquic_is_0rtt_available(cnx_client) && (proposed_version & 0x0a0a0a0a) != 0x0a0a0a0a) {
                     zero_rtt_available = 1;
-
                     /* Queue a simple frame to perform 0-RTT test */
                     /* Start the download scenario */
                     /* If get_size is greater than 0, select it */
@@ -1618,6 +1619,7 @@ void usage()
     fprintf(stderr, "  -q output.qlog        qlog output file\n");
     fprintf(stderr, "  -S filename           if set, write plugin statistics in the specified file (- for stdout)\n");
     fprintf(stderr, "  -w stream_rwin_max    sets the maximum value in bytes for the size of the streams receive window\n");
+    fprintf(stderr, "  -E stream_rwin_max    sets the initial value in bytes for the size of the streams receive window\n");
     fprintf(stderr, "  -N n_requests         if -G is set, specifies how much time to perform the same request\n");
     fprintf(stderr, "  -I interval_microsec  if -G is set and -N > 1n specifies the interval between each request\n");
     fprintf(stderr, "  -W cwin               sets the congestion window\n");
@@ -1808,6 +1810,14 @@ int main(int argc, char** argv)
         case 'w':
             max_stream_receive_window_size = atol(optarg);
             if (max_stream_receive_window_size <= 0) {
+                fprintf(stderr, "Invalid max stream receive window size: %s\n", optarg);
+                usage();
+            }
+            printf("SET RWIN TO %lu BYTES\n", max_stream_receive_window_size);
+            break;
+        case 'E':
+            initial_receive_window_size = atol(optarg);
+            if (initial_receive_window_size <= 0) {
                 fprintf(stderr, "Invalid max stream receive window size: %s\n", optarg);
                 usage();
             }
