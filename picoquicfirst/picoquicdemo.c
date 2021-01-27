@@ -1207,11 +1207,6 @@ int quic_client(const char* ip_address_text, int server_port, const char * sni,
         }
         else {
             cnx_client->max_stream_receive_window_size = max_stream_receive_window_size;
-            if (local_plugins > 0) {
-                printf("%" PRIx64 ": ",
-                        picoquic_val64_connection_id(picoquic_get_logging_cnxid(cnx_client)));
-                plugin_insert_plugins_from_fnames(cnx_client, local_plugins, (char **) local_plugin_fnames);
-            }
 
             if (qlog_filename) {
                 qlog_fd = open(qlog_filename, O_WRONLY | O_CREAT | O_TRUNC, 00755);
