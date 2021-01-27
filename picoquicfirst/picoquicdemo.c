@@ -121,6 +121,8 @@ static size_t response_length = 0;
 static size_t max_stream_receive_window_size = SIZE_MAX;
 static ssize_t repair_receive_window_size = -1L;
 
+picoquic_congestion_algorithm_t* cc_algorithm = NULL;
+
 uint64_t fixed_cwin = 0;
 
 void print_address(struct sockaddr* address, char* label, picoquic_connection_id_t cnx_id)
@@ -649,6 +651,10 @@ int quic_server(const char* server_name, int server_port,
                         } else {
                             perror("qlog_fd");
                         }
+                    }
+
+                    if (cc_algorithm) {
+                        picoquic_set_congestion_algorithm(cnx_server, cc_algorithm);
                     }
 
                     if (repair_receive_window_size != -1L) {
@@ -1185,6 +1191,9 @@ int quic_client(const char* ip_address_text, int server_port, const char * sni,
             (struct sockaddr*)&server_address, current_time,
             proposed_version, sni, alpn, 1, tp);
 
+        if (cc_algorithm) {
+            picoquic_set_congestion_algorithm(cnx_client, cc_algorithm);
+        }
         if (cnx_client == NULL) {
             ret = -1;
         }
@@ -1613,6 +1622,7 @@ void usage()
     fprintf(stderr, "  -I interval_microsec  if -G is set and -N > 1n specifies the interval between each request\n");
     fprintf(stderr, "  -W cwin               sets the congestion window\n");
     fprintf(stderr, "  -F repair_receive_window_size               sets the size of the buffer allocated to store repair symbols when using FEC\n");
+    fprintf(stderr, "  -A bbr|cubic|newreno               sets the used congestion control algorithm\n");
     fprintf(stderr, "  -h                    This help message\n");
     exit(1);
 }
@@ -1690,7 +1700,7 @@ int main(int argc, char** argv)
 
     /* Get the parameters */
     int opt;
-    while ((opt = getopt(argc, argv, "c:k:P:C:Q:G:p:v:L14rhzRX:S:i:s:l:m:n:t:q:w:N:I:W:F:")) != -1) {
+    while ((opt = getopt(argc, argv, "c:k:P:C:Q:G:p:v:L14rhzRX:S:i:s:l:m:n:t:q:w:E:N:I:W:F:A:")) != -1) {
         switch (opt) {
         case 'c':
             server_cert_file = optarg;
@@ -1819,6 +1829,19 @@ int main(int argc, char** argv)
         case 'F':
             repair_receive_window_size = atol(optarg);
             printf("SET REPAIR RWIN %lu\n", repair_receive_window_size);
+            break;
+        case 'A':
+            // cc algorithm
+            if (strcasecmp(optarg, "bbr") == 0) {
+                cc_algorithm = picoquic_bbr_algorithm;
+            } else if (strcasecmp(optarg, "cubic") == 0) {
+                cc_algorithm = picoquic_cubic_algorithm;
+            } else if (strcasecmp(optarg, "newreno") == 0) {
+                cc_algorithm = picoquic_newreno_algorithm;
+            } else {
+                fprintf(stderr, "Invalid cc algorithm: %s\n", optarg);
+                usage();
+            }
             break;
         case 'h':
             usage();
