@@ -504,6 +504,7 @@ static int first_server_callback(picoquic_cnx_t* cnx,
     return 0;
 }
 
+#define PICOQUIC_DEMO_SERVER_MAX_SEND_BATCH 5
 int quic_server(const char* server_name, int server_port,
     const char* pem_cert, const char* pem_key,
     int just_once, int do_hrr, cnx_id_cb_fn cnx_id_callback,
@@ -702,8 +703,8 @@ int quic_server(const char* server_name, int server_port,
 
                     picoquic_delete_stateless_packet(sp);
                 }
-
-                while (ret == 0 && (cnx_next = picoquic_get_earliest_cnx_to_wake(qserver, loop_time)) != NULL) {
+                int n_loop_turns = 0;
+                while (ret == 0 && bytes_recv == 0 && n_loop_turns++ < PICOQUIC_DEMO_SERVER_MAX_SEND_BATCH && (cnx_next = picoquic_get_earliest_cnx_to_wake(qserver, loop_time)) != NULL) {
                     ret = picoquic_prepare_packet(cnx_next, picoquic_current_time(),
                         send_buffer, sizeof(send_buffer), &send_length, &path);
 
@@ -1108,6 +1109,11 @@ int quic_client(const char* ip_address_text, int server_port, const char * sni,
             ret = setsockopt(fd, IPPROTO_IPV6, IPV6_DONTFRAG, &val, sizeof(val));
             if (ret != 0) {
                 perror("setsockopt IPV6_DONTFRAG");
+            }
+            int n = 8 * 1024 * 1024;    // 8MB receive buffer by default
+            ret = setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &n, sizeof(n));
+            if (ret != 0) {
+                perror("setsockopt SO_RCVBUF");
             }
         }
     }
