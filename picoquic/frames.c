@@ -2432,6 +2432,14 @@ protoop_arg_t process_ack_range(picoquic_cnx_t *cnx)
                 picoquic_path_t * old_path = p->send_path;
 
                 old_path->delivered += p->length;
+
+                if (pc == picoquic_packet_context_application &&
+                    (p->sequence_number > old_path->last_1rtt_acknowledged ||
+                     old_path->last_1rtt_acknowledged == UINT64_MAX)) {
+                    old_path->last_1rtt_acknowledged = p->sequence_number;
+                    old_path->last_1rtt_acknowledged_at = current_time;
+                }
+
                 if (cnx->congestion_alg != NULL) {
                     picoquic_congestion_algorithm_notify_func(cnx, old_path,
                         picoquic_congestion_notification_acknowledgement,

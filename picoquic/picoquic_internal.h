@@ -441,6 +441,15 @@ typedef struct st_picoquic_path_t {
     unsigned int ping_received : 1;
     unsigned int last_bw_estimate_path_limited : 1;
 
+    /* Management of retransmissions in a path.
+     * The "last_1rtt_acknowledged" is used for the RACK algorithm, per path, to avoid
+     * declaring packets lost just because another path is delivering them faster.
+     * The "number of retransmit" counts the number of unsuccessful retransmissions; it
+     * is reset to zero if a new packet is acknowledged.
+     */
+    uint64_t last_1rtt_acknowledged;
+    uint64_t last_1rtt_acknowledged_at;
+
     /* Time measurement */
     uint64_t max_ack_delay;
     uint64_t rtt_sample;

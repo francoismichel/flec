@@ -1106,9 +1106,15 @@ protoop_arg_t retransmit_needed_by_packet(picoquic_cnx_t *cnx)
         }
     } else {
         /* There has not been any higher packet acknowledged, thus we fall back on timer logic. */
+        uint64_t alt_pto = p->send_path->last_1rtt_acknowledged_at + (p->send_path->smoothed_rtt >> 2);
         uint64_t rto = (send_path->pkt_ctx[pc].nb_retransmit == 0) ?
             send_path->retransmit_timer : (1000000ull << (send_path->pkt_ctx[pc].nb_retransmit - 1));
         retransmit_time = p->send_time + rto;
+
+        if (alt_pto > retransmit_time) {
+            retransmit_time = alt_pto;
+        }
+
         is_timer_based = 1;
     }
     if (p->ptype == picoquic_packet_0rtt_protected) {
