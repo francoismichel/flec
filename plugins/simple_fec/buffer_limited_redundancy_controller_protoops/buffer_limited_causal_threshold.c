@@ -17,5 +17,6 @@ protoop_arg_t bulk_causal_threshold(picoquic_cnx_t *cnx) {
     causal_redundancy_controller_t *controller = (causal_redundancy_controller_t *) get_cnx(cnx, AK_CNX_INPUT, 1);
     uint64_t granularity = (protoop_arg_t) get_cnx(cnx, AK_CNX_INPUT, 2);
     uint64_t current_time = (protoop_arg_t) get_cnx(cnx, AK_CNX_INPUT, 3);
-    return (protoop_arg_t) (1*GRANULARITY - r_times_granularity(controller));
+    // r = receive rate, so 1 - r = loss rate
+    return (protoop_arg_t) (1*GRANULARITY - r_times_granularity(controller)); // r_times_granularity = receive rate = 1 - loss_rate
 }

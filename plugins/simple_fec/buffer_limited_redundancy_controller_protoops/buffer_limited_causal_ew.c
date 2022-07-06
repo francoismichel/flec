@@ -27,7 +27,7 @@ protoop_arg_t bulk_causal_ew(picoquic_cnx_t *cnx) {
     }
 
     int n_unprotected = current_window->end - addon->last_packet_since_ew;
-    bool fc_blocked = !fec_has_protected_data_to_send(cnx);
+    bool fc_blocked = !state->has_fec_protected_data_to_send;
     PROTOOP_PRINTF(cnx, "UNIFORM LOSS RATE TIMES RGRANULARITY = %lu, WINDOW SIZE = %lu\n", uniform_loss_rate_times_granularity, window_size(current_window));
     PROTOOP_PRINTF(cnx, "1/r = %lu, max_trigger = %lu\n", granularity/MAX(1, gemodel_r_times_granularity), addon->max_trigger);
     if ((fc_blocked && (n_unprotected == 0 && addon->n_ew_for_last_packet >= addon->max_trigger && controller->n_fec_in_flight >= 2*MAX(1, uniform_loss_rate_times_granularity*window_size(current_window)/granularity))) || (!fc_blocked && controller->n_fec_in_flight >= 2*MAX(1, uniform_loss_rate_times_granularity*window_size(current_window)/granularity))) {

@@ -9,6 +9,7 @@
 
 typedef struct {
     uint64_t last_fully_protected_message_deadline;
+    uint64_t last_fully_protected_window_end_id;
     uint64_t last_packet_since_ew;
     uint64_t n_ew_for_last_packet;
     uint64_t max_trigger;

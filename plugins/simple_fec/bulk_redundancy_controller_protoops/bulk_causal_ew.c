@@ -19,18 +19,19 @@ protoop_arg_t bulk_causal_ew(picoquic_cnx_t *cnx) {
     uint64_t wsize = window_size(current_window);
     if(!get_loss_parameters(cnx, path, current_time, granularity, &loss_rate_times_granularity, NULL, &gemodel_r_times_granularity)) {
         if (wsize < SMALL_WINDOW) {
-            max_proportion = wsize/2;
+            max_proportion = (3*wsize)/4;
         } else {
-            max_proportion = wsize/2;
+            max_proportion = (3*wsize)/4;
         }
     } else {
         PROTOOP_PRINTF(cnx, "loss rate times granularity = %lu\n", loss_rate_times_granularity);
-        max_proportion = window_size(current_window)*2*loss_rate_times_granularity/GRANULARITY;
+        max_proportion = window_size(current_window)*2*MAX(loss_rate_times_granularity, 1*GRANULARITY)/GRANULARITY;
         PROTOOP_PRINTF(cnx, "loss rate times granularity = %lu, window size = %lu, max proportion = %lu\n", loss_rate_times_granularity, window_size(current_window), max_proportion);
     }
     PROTOOP_PRINTF(cnx, "N FEC IN FLIGHT = %lu, WINDOW SIZE = %lu, LIKELY TO BE LOST = %lu, GEMODEL R = %lu, MAX PROPORTION = %lu\n", controller->n_fec_in_flight, wsize, (1 + MAX(granularity/MAX(1, gemodel_r_times_granularity), max_proportion)), gemodel_r_times_granularity, (1 + MAX(granularity/MAX(1, gemodel_r_times_granularity), max_proportion)));
     // we send FEC to cover the number of lost packets i) given the uniform loss rate ii) given the expected Gilbert Model burst size
-    uint64_t time_threshold = get_path(path, AK_PATH_SMOOTHED_RTT, 0)/10;    // wait for a silence of 1/10 of RTT
+    uint64_t time_threshold = get_path(path, AK_PATH_SMOOTHED_RTT, 0)/8;    // wait for a silence of 1/8 of RTT
+//    uint64_t time_threshold = 0; // test not waiting for starlink
 //    PROTOOP_PRINTF2(cnx, "SRTT = %lu, CURRENT = %lu, LAST = %lu, total_threshold = %lu\n", get_path(path, AK_PATH_SMOOTHED_RTT, 0), current_time, controller->last_sent_id_timestamp, controller->last_sent_id_timestamp + time_threshold);
     bool conditions_to_send_fec = !fec_has_protected_data_to_send(cnx) && controller->n_fec_in_flight < (1 + MAX(granularity/MAX(1, gemodel_r_times_granularity), max_proportion));
     if (conditions_to_send_fec) {
