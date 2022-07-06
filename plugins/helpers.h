@@ -8,12 +8,12 @@
 #include "getset.h"
 #include "util.h"
 
-#define PICOQUIC_MAX_PACKET_SIZE 1536
+#define PICOQUIC_MAX_PACKET_SIZE 1350
 #define PICOQUIC_MIN_SEGMENT_SIZE 256
-#define PICOQUIC_INITIAL_MTU_IPV4 1252
+#define PICOQUIC_INITIAL_MTU_IPV4 1300
 #define PICOQUIC_INITIAL_MTU_IPV6 1232
 #define PICOQUIC_ENFORCED_INITIAL_MTU 1200
-#define PICOQUIC_PRACTICAL_MAX_MTU 1440
+#define PICOQUIC_PRACTICAL_MAX_MTU 1300
 #define PICOQUIC_RETRY_SECRET_SIZE 64
 #define PICOQUIC_DEFAULT_0RTT_WINDOW 4096
 
@@ -130,7 +130,7 @@ static __attribute__((always_inline)) void helper_protoop_printf(picoquic_cnx_t 
  * @param idx The index of the plugin-specific metadata
  * @param val The value of the metadata to set
  */
-void set_pkt_metadata(picoquic_cnx_t *cnx, picoquic_packet_t *pkt, int idx, protoop_arg_t val) {
+static __attribute__((always_inline)) void set_pkt_metadata(picoquic_cnx_t *cnx, picoquic_packet_t *pkt, int idx, protoop_arg_t val) {
     set_pkt_n_metadata(cnx, pkt, &idx, &val, 1);
 }
 
