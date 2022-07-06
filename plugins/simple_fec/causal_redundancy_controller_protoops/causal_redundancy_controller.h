@@ -677,11 +677,12 @@ static __attribute__((always_inline)) uint32_t compute_md(picoquic_cnx_t *cnx, c
 
 static __attribute__((always_inline)) causal_packet_type_t what_to_send(picoquic_cnx_t *cnx, window_redundancy_controller_t c, window_source_symbol_id_t *first_id_to_protect, uint16_t *n_symbols_to_protect, fec_window_t *window) {
     causal_redundancy_controller_t *controller = (causal_redundancy_controller_t *) c;
-    if (is_buffer_empty_old(controller->what_to_send))
+    bool wts_empty = is_buffer_empty_old(controller->what_to_send);
+    if (wts_empty && is_buffer_empty_old(controller->lost_and_non_fec_retransmitted_slots))
         return nothing;
     buffer_elem_t type;
     dequeue_elem_from_buffer_old(controller->what_to_send, &type);
-    if (type == fb_fec_packet || (type == fec_packet && !is_buffer_empty_old(controller->lost_and_non_fec_retransmitted_slots))) {
+    if (type == fb_fec_packet || !is_buffer_empty_old(controller->lost_and_non_fec_retransmitted_slots)) {
             uint64_t lost_slot;
             bool dequeued;
             window_packet_metadata_t md;
