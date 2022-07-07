@@ -1332,8 +1332,22 @@ size_t picoquic_log_datagram_frame(FILE* F, uint64_t cnx_id64, uint8_t* bytes, s
     return byte_index;
 }
 
+size_t picoquic_log_fec_window_rwin_frame(FILE* F, uint64_t cnx_id64, uint8_t* bytes, size_t bytes_max) {
+    size_t byte_index = 0;
+    byte_index++;
+    uint64_t smallest_id = 0;
+    uint64_t window_size = 0;
+    byte_index += picoquic_varint_decode(bytes + byte_index, bytes_max - byte_index, &smallest_id);
+    byte_index += picoquic_varint_decode(bytes + byte_index, bytes_max - byte_index, &window_size);
+
+    fprintf(F, " \tWINDOW RWIN FRAME: [%lu, %lu[ (size = %lu)\n", smallest_id, smallest_id + window_size, window_size);
+    return byte_index;
+}
+
 size_t picoquic_log_sfpid_frame(FILE* F, uint64_t cnx_id64, uint8_t* bytes, size_t bytes_max) {
-    fprintf(F, " \tSFPID FRAME: ID %u\n", be32toh(*((uint32_t *) (bytes+1))));
+    uint64_t val = 0;
+    picoquic_varint_decode(bytes + 1, bytes_max - 1, &val);
+    fprintf(F, " \tSFPID FRAME: ID %lu\n", val);
     return 5;
 }
 
@@ -1454,10 +1468,14 @@ void picoquic_log_frames(FILE* F, uint64_t cnx_id64, uint8_t* bytes, size_t leng
             byte_index += picoquic_log_plugin_frame(F, bytes + byte_index,
                 length - byte_index);
             break;
+        case 0x28: /* FEC WINDOW RWIN */
+            byte_index += picoquic_log_fec_window_rwin_frame(F, cnx_id64, bytes + byte_index,
+                                                             length - byte_index);
+            break;
         case 0x29: /* FEC SFPID */
             byte_index += picoquic_log_sfpid_frame(F, cnx_id64, bytes + byte_index,
-                                                    length - byte_index);
-                break;
+                                                   length - byte_index);
+            break;
         case 0x40: /* MP_NEW_CONNECTION_ID */
             byte_index += picoquic_log_mp_new_connection_id_frame(F, bytes + byte_index,
                 length - byte_index);
