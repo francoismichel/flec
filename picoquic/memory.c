@@ -221,7 +221,7 @@ int destroy_block_memory_management(protoop_plugin_t *p)
 
 #define ALIGNMENT 32
 static __attribute__((always_inline)) size_t align(size_t val) {
-    return ( ( val - 1 ) | ( ((ALIGNMENT<<1) - 1 ) )) + 1;
+    return (val + ALIGNMENT - 1) / ALIGNMENT * ALIGNMENT;
 }
 
 
