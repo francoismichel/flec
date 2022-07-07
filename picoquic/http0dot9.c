@@ -24,6 +24,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 /* We want a highly portable pseudorandom generator. We don't really care 
  * about the randomness, because this is a silly app, so we pick something really
@@ -280,6 +281,51 @@ static int http09_compare_name(uint8_t* command, size_t length, size_t byte_inde
             }
         }
     }
+
+    return ret;
+}
+
+int pseudo_http_post(const uint8_t* command, size_t command_length) {
+
+    int ret = 0;
+    size_t byte_index = 4;
+    size_t doc_length = 0;
+
+    /* Strip white spaces at the end of the command */
+    while (command_length > 0) {
+        int c = command[command_length - 1];
+
+        if (c == ' ' || c == '\n' || c == '\r' || c == '\t') {
+            command_length--;
+        } else {
+            break;
+        }
+    }
+
+    /* Check whether someone added an HTTP/0.9 tag at the end of the command */
+    if (command_length > 8 && command[command_length - 1] == '9' && command[command_length - 2] == '.' && command[command_length - 3] == '0' && command[command_length - 4] == '/' && (command[command_length - 5] == 'p' || command[command_length - 5] == 'P') && (command[command_length - 6] == 't' || command[command_length - 6] == 'T') && (command[command_length - 7] == 't' || command[command_length - 7] == 'T') && (command[command_length - 8] == 'h' || command[command_length - 8] == 'H')) {
+        command_length -= 8;
+
+        while (command_length > 0 && (command[command_length - 1] == ' ' || command[command_length - 1] == '\t')) {
+            command_length--;
+        }
+    }
+
+    /* Parse the input. It should be "post <docname> */
+    if (command_length < 4 || (command[0] != 'P' && command[0] != 'p') || (command[1] != 'O' && command[1] != 'o') || (command[2] != 'S' && command[2] != 's') || (command[3] != 'T' && command[3] != 't')) {
+        ret = -1;
+        printf("ret -1, command length = %lu\n", command_length);
+    } else {
+        /* Skip at list one space */
+        while (command_length > byte_index && (command[byte_index] == ' ' || command[byte_index] == '\t')) {
+            byte_index++;
+        }
+
+        if (byte_index == 4 || byte_index >= command_length) {
+            ret = -1;
+        }
+    }
+
 
     return ret;
 }
