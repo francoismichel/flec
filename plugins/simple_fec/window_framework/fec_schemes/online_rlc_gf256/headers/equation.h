@@ -439,7 +439,7 @@ static __attribute__((always_inline)) int equation_add(picoquic_cnx_t *cnx, equa
             return -1;
         }
         memset_fn(new_coefs, 0, new_size);
-        // copy the old coefs in the new array at the right place
+        // copy the old coefs in the new array at the right place (same place as before)
         memcpy_fn(&new_coefs[equation_get_coef_index(eq1, eq1->pivot)], &eq1->coefs[equation_get_coef_index(eq1, eq1->pivot)], (eq1->last_non_zero_id + 1) - eq1->pivot);
         free_fn(cnx, eq1->coefs);
         eq1->coefs = new_coefs;

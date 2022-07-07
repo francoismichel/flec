@@ -5,7 +5,7 @@
 #include "tetrys_framework.h"
 #include "wire.h"
 
-#define INITIAL_SYMBOL_ID 1
+#define WINDOW_INITIAL_SYMBOL_ID 1
 #define MAX_QUEUED_REPAIR_SYMBOLS 6
 #define NUMBER_OF_SYMBOLS_TO_FLUSH 5
 
@@ -24,8 +24,7 @@ static __attribute__((always_inline)) void tetrys_id_takes_off(tetrys_fec_framew
 }
 
 static __attribute__((always_inline)) void tetrys_packet_has_been_recovered(picoquic_cnx_t *cnx, plugin_state_t *state, tetrys_fec_framework_sender_t *wff, uint64_t pn, tetrys_source_symbol_id_t first_id) {
-//    enqueue_recovered_packet_to_buffer(wff->rps, pn);
-    enqueue_recovered_packet_to_buffer(&state->recovered_packets, pn);
+    rbt_put(cnx, &state->recovered_packets_ranges, pn, 0);
 }
 
 static __attribute__((always_inline)) void tetrys_process_recovered_packets(picoquic_cnx_t *cnx, plugin_state_t *state, tetrys_fec_framework_sender_t *wff, const uint8_t *size_and_packets) {
@@ -150,7 +149,7 @@ static __attribute__((always_inline)) int tetrys_protect_packet_payload(picoquic
                                                                         uint8_t *payload, size_t payload_length, uint64_t packet_number,
                                                                         source_symbol_id_t *first_symbol_id, uint16_t *n_chunks, size_t symbol_size) {
     *n_chunks = 0;
-    source_symbol_t **sss = packet_payload_to_source_symbols(cnx, payload, payload_length, symbol_size, packet_number, n_chunks, sizeof(tetrys_source_symbol_t));
+    source_symbol_t **sss = packet_payload_to_source_symbols(cnx, payload, payload_length, symbol_size, packet_number, n_chunks, sizeof(tetrys_source_symbol_t), ff->packet_sized_buffer);
     if (!sss)
         return PICOQUIC_ERROR_MEMORY;
     for (int i = 0 ; i < *n_chunks ; i++) {

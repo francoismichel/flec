@@ -32,6 +32,7 @@
 #include "picosocks.h"
 #include "uthash.h"
 #include "plugin.h"
+#define printf(fmt, ...)
 
 #ifdef __APPLE__
 #include <machine/endian.h>
@@ -53,18 +54,18 @@
 #define le64toh(x) OSSwapLittleToHostInt64(x)
 #else
 #include <endian.h>
-#endif
+#endif // __APPLE__
 
 #ifdef __cplusplus
 extern "C" {
-#endif
+#endif // __cplusplus
 
-#define PICOQUIC_MAX_PACKET_SIZE 1536
+#define PICOQUIC_MAX_PACKET_SIZE 1350
 #define PICOQUIC_MIN_SEGMENT_SIZE 256
-#define PICOQUIC_INITIAL_MTU_IPV4 1252
+#define PICOQUIC_INITIAL_MTU_IPV4 1300
 #define PICOQUIC_INITIAL_MTU_IPV6 1232
 #define PICOQUIC_ENFORCED_INITIAL_MTU 1200
-#define PICOQUIC_PRACTICAL_MAX_MTU 1440
+#define PICOQUIC_PRACTICAL_MAX_MTU 1300
 #define PICOQUIC_RETRY_SECRET_SIZE 64
 #define PICOQUIC_DEFAULT_0RTT_WINDOW 4096
 
@@ -797,6 +798,8 @@ typedef struct st_picoquic_cnx_t {
     pluglet_type_enum current_anchor;
     protoop_plugin_t *current_plugin; /* This should not be modified by the plugins... */
     protoop_plugin_t *previous_plugin_in_replace; /* To free memory, we might be interested to know if it is in plugin or core memory */;
+
+    int sent_stream0;
 } picoquic_cnx_t;
 
 /* Init of transport parameters */

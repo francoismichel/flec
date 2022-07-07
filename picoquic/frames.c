@@ -1311,7 +1311,12 @@ protoop_arg_t prepare_stream_frame(picoquic_cnx_t* cnx)
 
                     LOG_EVENT(cnx, "FRAMES", "STREAM_FRAME_CREATED", "", "{\"data_ptr\": \"%p\", \"stream_id\": %" PRIu64 ", \"offset\": %" PRIu64 ", \"length\": %" PRIu64 ", \"fin\": %d, \"queued_size\": %" PRIu64 "}", bytes, stream->stream_id, stream->sent_offset, length, stream->fin_requested && stream->send_queue == 0, stream->sending_offset - stream->sent_offset);
 
+                    if (DEBUG_EVENT) {
+                        printf("EVENT::{\"time\": %ld, \"type\": \"stream_send\", \"range\": [%lu, %lu]}\n", picoquic_current_time(), stream->sent_offset, length);
+                    }
                     stream->sent_offset += length;
+                    /* The client does not handle this correctly, so fix this at client side... */
+                    // if (stream->stream_id != 0) {
                     cnx->data_sent += length;
                 }
                 consumed = byte_index;
@@ -1337,6 +1342,10 @@ protoop_arg_t prepare_stream_frame(picoquic_cnx_t* cnx)
             /* remember the last stream on which data is sent so each stream is visited in turn. */
             cnx->last_visited_stream_id = stream->stream_id;
         }
+    }
+
+    if (consumed > 0 && stream->stream_id == 0) {
+        cnx->sent_stream0 = true;
     }
 
     protoop_save_outputs(cnx, consumed);
@@ -2420,6 +2429,7 @@ protoop_arg_t process_ack_range(picoquic_cnx_t *cnx)
     uint64_t current_time = (uint64_t) cnx->protoop_inputv[4];
 
     picoquic_packet_t* p = ppacket;
+
     int ret = 0;
     /* Compare the range to the retransmit queue */
     while (p != NULL && range > 0) {

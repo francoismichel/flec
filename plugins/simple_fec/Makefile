@@ -1,6 +1,6 @@
 SRC=$(shell find . -wholename "*protoops/*.c")
 OBJ=$(SRC:.c=.o)
-CFLAGS=-I../../picoquic #-DDISABLE_PROTOOP_PRINTF
+CFLAGS=-I../../picoquic -DDISABLE_PROTOOP_PRINTF
 
 all: $(SRC) $(OBJ)
 
@@ -12,7 +12,7 @@ tetrys_flags:
 $(OBJ): %.o
 
 %.o: %.c
-	clang $(CFLAGS) -O2 -fno-gnu-inline-asm -emit-llvm -c $< -o - | llc -march=bpf -filetype=obj -o $@
+	clang-9 $(CFLAGS) -O2 -fno-gnu-inline-asm -emit-llvm -c $< -o - | llc-9 -march=bpf -filetype=obj -o $@
 
 .PHONY: %.o
 

@@ -21,7 +21,7 @@
 //#define PSTREAM_FLAGS_SEND_FIN(flags) (PSTREAM_FLAGS_FIN_NOTIFIED(flags) && !PSTREAM_FLAGS_FIN_SENT(flags))
 //#define PSTREAM_FLAGS_CLOSED(flags) ((PSTREAM_FLAGS_FIN_SENT(flags) || ((flags) & picoquic_stream_flag_reset_received) != 0) && (PSTREAM_FLAGS_RESET_SENT(flags)) || (get_stream_head(stream, AK_STREAMHEAD_STREAM_FLAGS) & picoquic_stream_flag_fin_received) != 0)
 
-#define DEBUG_PROTECT_STREAM_4_ONLY (1)
+#define DEBUG_PROTECT_STREAM_4_ONLY (0)
 
 /**
  * Returns true if there are protected data to send

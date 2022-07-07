@@ -1,0 +1,3 @@
+be.michelfra.no_pacing
+set_next_wake_time replace set_next_wake_time_with_event.o
+request_waking_at_last_at replace request_waking_at_last_at.o

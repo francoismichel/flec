@@ -21,17 +21,21 @@ protoop_arg_t receive_repair_symbol(picoquic_cnx_t *cnx) {
     equation_t *eq = equation_alloc_with_given_data(cnx, rs);
 
     // TODO: coefs
-    tinymt32_t prng;
-    prng.mat1 = 0x8f7011ee;
-    prng.mat2 = 0xfc78ff1f;
-    prng.tmat = 0x3793fdff;
+    tinymt32_t *prng = my_malloc(cnx, sizeof(tinymt32_t));
+    if (!prng) {
+        return -1;
+    }
+    prng->mat1 = 0x8f7011ee;
+    prng->mat2 = 0xfc78ff1f;
+    prng->tmat = 0x3793fdff;
 
-    get_coefs(cnx, &prng, decode_u32(rs->metadata.fss.val), rs->metadata.n_protected_symbols, eq->coefs);
+    get_coefs(cnx, prng, decode_u32(rs->metadata.fss.val), rs->metadata.n_protected_symbols, eq->coefs);
 
 //    window_source_symbol_id_t first_id = MIN(fec_scheme->wrapper.system->first_id_id, rs->metadata.first_id);
 //    window_source_symbol_id_t last_id = MAX(fec_scheme->wrapper.system->last_symbol_id, repair_symbol_last_id(rs));
 
 
+    my_free(cnx, prng);
     equation_t *removed = NULL;
     int used_in_system = 0;
     int ret = wrapper_receive_repair_symbol(cnx, &fec_scheme->wrapper, eq, wff->received_source_symbols, &removed, &used_in_system);

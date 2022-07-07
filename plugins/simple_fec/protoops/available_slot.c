@@ -26,6 +26,7 @@ protoop_arg_t available_slot(picoquic_cnx_t *cnx) {
     plugin_state_t *state = get_plugin_state(cnx);
     if (!state)
         return PICOQUIC_ERROR_MEMORY;
+    state->has_fec_protected_data_to_send = fec_has_protected_data_to_send(cnx);
     protoop_arg_t args[1];
     args[0] = reason;
     what_to_send_t wts = 0;
@@ -46,7 +47,7 @@ protoop_arg_t available_slot(picoquic_cnx_t *cnx) {
 
     switch (wts) {
         case what_to_send_new_symbol:
-            if (run_noparam(cnx, FEC_PROTOOP_HAS_PROTECTED_DATA_TO_SEND, 0, NULL, NULL)) {
+            if (state->has_fec_protected_data_to_send) {
                 err = reserve_fpi_frame(cnx, state);
                 break;
             }
@@ -62,7 +63,7 @@ protoop_arg_t available_slot(picoquic_cnx_t *cnx) {
                                         first_id, n_symbols_to_protect, &could_reserve);
             if (!could_reserve) {
                 // if we could not reserve, we try sending a new packet
-                if (run_noparam(cnx, FEC_PROTOOP_HAS_PROTECTED_DATA_TO_SEND, 0, NULL, NULL)) {
+                if (state->has_fec_protected_data_to_send) {
                     err = reserve_fpi_frame(cnx, state);
                 }
             }

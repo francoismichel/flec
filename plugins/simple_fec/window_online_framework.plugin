@@ -1,3 +1,8 @@
+
+
+OBSOLETE
+
+
 create_fec_framework replace window_framework/protoops/window_create_framework.o
 
 write_frame param 0x29 replace window_framework/protoops/window_write_src_fpi_frame.o

@@ -93,6 +93,7 @@ void picoquic_cubic_init(picoquic_cnx_t* cnx, picoquic_path_t* path_x)
         cubic_state->beta = 7.0 / 8.0;
         cubic_state->start_of_epoch = 0;
         cubic_state->cnx = cnx;
+        cubic_state->last_sequence_blocked = 0;
 
         path_x->cwin = PICOQUIC_CWIN_INITIAL;
     }

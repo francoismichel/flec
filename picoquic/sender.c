@@ -691,7 +691,7 @@ int picoquic_is_sending_authorized_by_pacing(picoquic_path_t * path_x, uint64_t 
  */
 void picoquic_update_pacing_rate(picoquic_path_t* path_x, double pacing_rate, uint64_t quantum)
 {
-    double packet_time = (double)path_x->send_mtu / pacing_rate;
+    double packet_time = (double)path_x->send_mtu / (pacing_rate*1.3);
     double quantum_time = (double)quantum / pacing_rate;
 
     path_x->pacing_packet_time_nanosec = (uint64_t)(packet_time * 1000000000.0);
@@ -754,14 +754,16 @@ void picoquic_update_pacing_data(picoquic_path_t * path_x)
 /*
  * Update the pacing data after sending a packet
  */
-void picoquic_update_pacing_after_send(picoquic_path_t * path_x, uint64_t current_time)
+void picoquic_update_pacing_after_send(picoquic_path_t * path_x, uint64_t current_time, size_t sent_packet_size)
 {
     picoquic_update_pacing_bucket(path_x, current_time);
 
-    if (path_x->pacing_bucket_nanosec < path_x->pacing_packet_time_nanosec) {
+    uint64_t sent_packet_pacing_time = path_x->pacing_packet_time_nanosec*sent_packet_size/path_x->send_mtu;
+
+    if (path_x->pacing_bucket_nanosec < sent_packet_pacing_time) {
         path_x->pacing_bucket_nanosec = 0;
     } else {
-        path_x->pacing_bucket_nanosec -= path_x->pacing_packet_time_nanosec;
+        path_x->pacing_bucket_nanosec -= sent_packet_pacing_time;
     }
 }
 
@@ -793,7 +795,7 @@ void picoquic_queue_for_retransmit(picoquic_cnx_t* cnx, picoquic_path_t * path_x
     path_x->pkt_ctx[pc].retransmit_newest = packet;
 
     /* Update the pacing data */
-    picoquic_update_pacing_after_send(path_x, current_time);
+    picoquic_update_pacing_after_send(path_x, current_time, packet->send_length);
 }
 
 void remove_registered_plugin_frames(picoquic_cnx_t *cnx, int received, picoquic_packet_t *p) {
@@ -1138,6 +1140,7 @@ protoop_arg_t retransmit_needed_by_packet(picoquic_cnx_t *cnx)
             reason = PROTOOPID_NOPARAM_RETRANSMISSION_TIMEOUT;
 
         } else {
+//            retransmit_time = p->send_time + send_path->smoothed_rtt + (send_path->smoothed_rtt >> 3)
             timer_based = 0;
             reason = PROTOOPID_NOPARAM_FAST_RETRANSMIT;
         }
@@ -1994,8 +1997,7 @@ protoop_arg_t set_next_wake_time(picoquic_cnx_t *cnx)
             }
         }
     }
-
-    for (int i = 0; blocked != 0 && pacing == 0 && i < cnx->nb_paths; i++) {
+    for (int i = 0; /* last_pkt_length > 0 && */ blocked != 0 && pacing == 0 && i < cnx->nb_paths; i++) {
         picoquic_path_t *path_x = cnx->path[i];
         if (picoquic_is_mtu_probe_needed(cnx, path_x)) {
             blocked = 0;
@@ -3634,6 +3636,10 @@ int picoquic_prepare_packet(picoquic_cnx_t* cnx,
                     if (packet->length == 0) {
                         picoquic_destroy_packet(packet);
                         packet = NULL;
+                    } else {
+                        if (DEBUG_EVENT) {
+                            printf("EVENT::{\"time\": %ld, \"type\": \"packet_sent\", \"length\": %lu}\n", picoquic_current_time(), packet->length);
+                        }
                     }
                     picoquic_segment_aborted(cnx);
                     break;

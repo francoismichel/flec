@@ -82,9 +82,16 @@ static const char* default_server_key_file = "..\\certs\\key.pem";
 #include <sys/select.h>
 #include <fcntl.h>
 
-#define NS3
+//#define NS3
 
-#ifndef NS3
+//#define DISABLE_FFMPEG (defined NS3 || defined ANDROID)
+#ifndef DISABLE_FFMPEG
+#if (defined NS3 || defined ANDROID || defined __ANDROID__)
+#define DISABLE_FFMPEG
+#endif
+#endif
+
+#ifndef DISABLE_FFMPEG
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #endif
@@ -113,8 +120,11 @@ static char* ticket_store_filename = "demo_ticket_store.bin";
 
 static const char* bad_request_message = "<html><head><title>Bad Request</title></head><body>Bad request. Why don't you try \"GET /doc-456789.html\"?</body></html>";
 
+static size_t max_stream_receive_window_size = SIZE_MAX;
+static ssize_t initial_receive_window_size = 0;
+static ssize_t repair_receive_window_size = -1L;
+
 #include "../picoquic/picoquic.h"
-#include "../picoquic/picoquic_internal.h"
 #include "../picoquic/picosocks.h"
 #include "../picoquic/util.h"
 #include "../picoquic/plugin.h"
@@ -122,9 +132,14 @@ static const char* bad_request_message = "<html><head><title>Bad Request</title>
 #include "streamers_buffer.h"
 #include "video_streamer.h"
 
+#define MIN(a, b) (((a) <= (b)) ? (a) : (b))
 
 static const char* response_buffer = NULL;
 static size_t response_length = 0;
+static size_t handshake_response_length = 2;
+bool post_request = false;
+
+picoquic_congestion_algorithm_t* cc_algorithm = NULL;
 
 streamers_buffer_t streamers_buffer;
 // the four values below can be overriden by the script arguments
@@ -132,28 +147,71 @@ size_t mean_message_size = 20000;
 size_t message_size_std_dev = 10000;
 uint64_t message_interval_microsec = 300000;
 uint64_t streamer_seed_base = 12345;
+uint64_t server_keepalive_interval_microsec = 2000000;
+uint64_t server_last_interaction_microsec = 0;
+uint64_t first_fully_received_frame_timestamp = 0;
 
+bool video_streamer_initialized = false;
+
+uint64_t server_video_control_stream_id = 1;
+uint64_t server_video_stats_feedback_stream_id = 5;
+uint64_t handshake_stream_id = 0;
+
+char *video_stats_filename = NULL;
 
 uint8_t data_buffer[VIDEO_BUFFER_MAX_SIZE];
 
 
 static protoop_id_t send_fec_protected_message = { .id = "fec_window_send_protected_message" };
 static protoop_id_t send_fec_protected_unreliable_message = { .id = "fec_window_send_protected_unreliable_message" };
+static protoop_id_t cancel_expired_fec_protected_unreliable_message = { .id = "fec_window_cancel_expired_protected_unreliable_messages" };
 static protoop_id_t fec_next_message_microsec = { .id = "fec_window_next_message_microsec" };
+
+static protoop_id_t congestion_set_fixed_cwin = { .id = "congestion_set_fixed_cwin" };
+
+static protoop_id_t window_fec_framework_set_rwin_size = { .id = "window_fec_framework_set_rwin_size" };
+
+/**
+ * sets the  fixed cwin assuming the diable_congestion_control plugin is plugged
+ */
+int set_fixed_cwin(picoquic_cnx_t *cnx, uint64_t cwin) {
+    int ret = protoop_prepare_and_run_extern_noparam(cnx, &congestion_set_fixed_cwin, NULL, cwin);
+    if (ret != 0) {
+        fprintf(stdout, "could not send the protected message\n");
+    }
+    return ret;
+}
+/**
+ * sets the rwin size
+ * MUST BE CALLED BEFORE DATA ARE ACTUALLY EXCHANGED WITH THE PEER
+ */
+int fec_set_rwin_size(picoquic_cnx_t *cnx, ssize_t source_rwin_size, ssize_t repair_rwin_size) {
+    printf("set rwin size %ld and %ld\n", source_rwin_size, repair_rwin_size);
+    int ret = protoop_prepare_and_run_extern_noparam(cnx, &window_fec_framework_set_rwin_size, NULL, source_rwin_size, repair_rwin_size);
+    if (ret != 0) {
+        fprintf(stdout, "could not send the protected message\n");
+    }
+    return ret;
+}
 
 bool use_pquic_fec_messages_api = false;
 uint64_t default_frame_interval_microsec = 33333;
 uint64_t messages_deadline_microsec = 250000;
 
-const int64_t first_video_frame_stream_id = 3;
+const int64_t server_initiated_first_video_frame_stream_id = 3;
+const int64_t client_initiated_first_video_frame_stream_id = 6;
 
-int64_t current_frame_stream_id = first_video_frame_stream_id;
+int64_t server_current_frame_stream_id = server_initiated_first_video_frame_stream_id;
+int64_t client_current_frame_stream_id = client_initiated_first_video_frame_stream_id;
 
-int64_t stream_id_to_send_end_of_connection = -1;
+int64_t control_stream_id = -1;
 
+FILE *dev_null = NULL;
 
 bool playback = false;
 char *video_filename = NULL;
+
+uint64_t fixed_cwin = 0;
 
 void print_address(struct sockaddr* address, char* label, picoquic_connection_id_t cnx_id)
 {
@@ -190,7 +248,7 @@ static char* strip_endofline(char* buf, size_t bufmax, char const* line)
     return buf;
 }
 
-#define PICOQUIC_FIRST_COMMAND_MAX 128
+#define PICOQUIC_FIRST_COMMAND_MAX (1000000)
 #define PICOQUIC_FIRST_RESPONSE_MAX (1 << 29)
 #define PICOQUIC_DEMO_MAX_PLUGIN_FILES 64
 
@@ -207,6 +265,11 @@ typedef struct st_picoquic_first_server_stream_ctx_t {
     picoquic_first_server_stream_status_t status;
     uint64_t stream_id;
     abstract_video_streamer_t *streamer;
+    stream_receiver_t *stream_receiver;
+    receiver_summary_t receiver_summary;
+#ifndef DISABLE_FFMPEG
+    AVCodecContext *pCodecContext;
+#endif
     size_t command_length;
     size_t response_length;
     uint8_t command[PICOQUIC_FIRST_COMMAND_MAX];
@@ -217,6 +280,51 @@ typedef struct st_picoquic_first_server_callback_ctx_t {
     size_t buffer_max;
     uint8_t* buffer;
 } picoquic_first_server_callback_ctx_t;
+
+
+typedef struct st_picoquic_first_client_stream_ctx_t {
+    struct st_picoquic_first_client_stream_ctx_t* next_stream;
+    uint32_t stream_id;
+    uint8_t command[PICOQUIC_FIRST_COMMAND_MAX + 1]; /* starts with "GET " */
+    size_t received_length;
+    FILE* F; /* NULL if stream is closed. */
+    stream_receiver_t *stream_receiver;
+    receiver_summary_t receiver_summary;
+#ifndef DISABLE_FFMPEG
+    AVCodecContext *pCodecContext;
+#endif
+} picoquic_first_client_stream_ctx_t;
+
+typedef struct st_demo_stream_desc_t {
+    uint32_t stream_id;
+    uint32_t previous_stream_id;
+    char const* doc_name;
+    char const* f_name;
+    int is_binary;
+    size_t post_length;
+    size_t padding_length;
+    uint8_t* post_data; /* NULL if is_post is false. */
+    bool is_post;
+} demo_stream_desc_t;
+
+typedef struct st_picoquic_first_client_callback_ctx_t {
+    demo_stream_desc_t const* demo_stream;
+    size_t nb_demo_streams;
+
+    struct st_picoquic_first_client_stream_ctx_t* first_stream;
+    int nb_open_streams;
+    uint32_t nb_client_streams;
+    uint64_t last_interaction_time;
+    int progress_observed;
+    struct timeval tv_start;
+    struct timeval tv_end;
+    abstract_video_streamer_t *streamer;
+    size_t response_length;
+    FILE *video_stats_file;
+    bool stream_ok;
+    bool only_get;
+} picoquic_first_client_callback_ctx_t;
+
 
 static picoquic_first_server_callback_ctx_t* first_server_callback_create_context()
 {
@@ -256,7 +364,9 @@ static void write_stats(picoquic_cnx_t *cnx, char *filename) {
     if (!filename) return;
     FILE *out = stdout;
     bool file = false;
-    if (strcmp(filename, "-")) {
+    if (!filename) {
+        out = NULL;
+    } else if (strcmp(filename, "-")) {
         out = fopen(filename, "w");
         if (!out) {
             fprintf(stderr, "impossible to write stats on file %s\n", filename);
@@ -296,7 +406,9 @@ static void write_stats(picoquic_cnx_t *cnx, char *filename) {
             double average_execution_time = stats[i].count ? (((double) stats[i].total_execution_time)/((double) stats[i].count)) : 0;
             snprintf(buf, size-1, "%s, (avg=%fms, tot=%fms)", str, average_execution_time/1000, ((double) stats[i].total_execution_time)/1000);
             strncpy(str, buf, size-1);
-            fprintf(out, "%s\n", str);
+            if (out) {
+                fprintf(out, "%s\n", str);
+            }
         }
     }
     free(stats);
@@ -304,7 +416,7 @@ static void write_stats(picoquic_cnx_t *cnx, char *filename) {
 }
 
 
-#ifndef NS3
+#ifndef DISABLE_FFMPEG
 int open_video_file(char *filename, AVFormatContext *pFormatContext, AVCodecContext **ppCodecContext, uint64_t *frame_interval_ns, int *video_stream_index) {
 // AVFormatContext holds the header information from the format (Container)
     // Allocating memory for this component
@@ -350,7 +462,6 @@ int open_video_file(char *filename, AVFormatContext *pFormatContext, AVCodecCont
         return -1;
     }
 
-    printf("NB STREAMD = %u\n", pFormatContext->nb_streams);
 
     // the component that knows how to enCOde and DECode the stream
     // it's the codec (audio or video)
@@ -437,14 +548,14 @@ int open_video_file(char *filename, AVFormatContext *pFormatContext, AVCodecCont
 // we know the type only for the playback streamer
 size_t get_video_streamer_bytes(bool pb, void *streamer, uint8_t **buffer, uint64_t time, char *type) {
     *type = '?';
-#ifndef NS3
+#ifndef DISABLE_FFMPEG
     if (pb) {
 #endif
         return timed_playback_video_streamer_get_stream_bytes((timed_playback_video_streamer_t *) streamer, buffer, time, type);
-#ifndef NS3
+#ifndef DISABLE_FFMPEG
     }
     AVPacket *packet = av_packet_alloc();
-    size_t retval = timed_real_video_streamer_get_stream_bytes((timed_real_video_streamer_t *) streamer, buffer, time);
+    size_t retval = timed_real_video_streamer_get_stream_bytes((timed_real_video_streamer_t *) streamer, buffer, time, packet);
     av_packet_unref(packet);
     return retval;
 #endif
@@ -456,6 +567,18 @@ size_t get_video_streamer_bytes(bool pb, void *streamer, uint8_t **buffer, uint6
  */
 int next_message_microsec(picoquic_cnx_t *cnx, int64_t next_message_microsec) {
     int ret = protoop_prepare_and_run_extern_noparam(cnx, &fec_next_message_microsec, NULL, next_message_microsec);
+    if (ret != 0) {
+        fprintf(stdout, "could not send the protected message\n");
+    }
+    return ret;
+}
+
+/**
+ * int64_t next_message_microsec: the number of microsec before the next message sent by the application
+ *                            -1 if you don't know
+ */
+int cancel_expired_messages(picoquic_cnx_t *cnx) {
+    int ret = protoop_prepare_and_run_extern_noparam(cnx, &cancel_expired_fec_protected_unreliable_message, NULL, NULL);
     if (ret != 0) {
         fprintf(stdout, "could not send the protected message\n");
     }
@@ -499,7 +622,140 @@ int send_protected_message(picoquic_cnx_t *cnx, uint64_t stream_id, const uint8_
     return ret;
 }
 
-static void first_server_callback(picoquic_cnx_t* cnx,
+static void write_video_stats_client(picoquic_cnx_t *cnx, char *filename, int64_t stream_id, picoquic_first_client_stream_ctx_t *stream_ctx) {
+    char buf[200];
+    FILE *video_stats_file = stdout;
+    if (video_stats_filename) {
+        video_stats_file = fopen(video_stats_filename, "w");
+        if (!video_stats_file) {
+            fprintf(stderr, "could not open video stats file: %s\n", strerror(errno));
+            video_stats_file = stdout;
+        }
+    }
+    fprintf(video_stats_file, "stream_id,size,frame_timestamp_ms,reception_timestamp_ms\n");
+    while (stream_ctx) {
+        if (stream_ctx->receiver_summary.contains_full_message) {
+            snprintf(buf, 199, "%u,%ld,%ld,%ld\n", stream_ctx->stream_id,
+                     stream_ctx->receiver_summary.message_size,
+                     stream_ctx->receiver_summary.current_message_synchro_timestamp_ms,
+                     stream_ctx->receiver_summary.current_message_reception_timestamp_us/1000);
+            if (stream_id != -1L) {
+                picoquic_add_to_stream(cnx, stream_id, (uint8_t *) buf, strlen(buf), 0);
+            }
+        }
+        stream_ctx = stream_ctx->next_stream;
+    }
+    picoquic_add_to_stream(cnx, stream_id, (uint8_t *) buf, 0, 1);
+}
+
+static void write_video_stats_server(picoquic_cnx_t *cnx, char *filename, int64_t stream_id, picoquic_first_server_stream_ctx_t *stream_ctx) {
+    char buf[200];
+    FILE *video_stats_file = stdout;
+    if (video_stats_filename) {
+        video_stats_file = fopen(video_stats_filename, "w");
+        if (!video_stats_file) {
+            fprintf(stderr, "could not open video stats file: %s\n", strerror(errno));
+            video_stats_file = stdout;
+        }
+    }
+    char *header = "stream_id,size,frame_timestamp_ms,reception_timestamp_ms\n";
+    fprintf(video_stats_file, header);
+    if (stream_id != -1L) {
+        picoquic_add_to_stream(cnx, stream_id, (uint8_t *) header, strlen(header), stream_ctx->next_stream == NULL);
+    }
+    while (stream_ctx) {
+        if (stream_ctx->receiver_summary.contains_full_message) {
+            snprintf(buf, 199, "%lu,%ld,%ld,%ld\n", stream_ctx->stream_id,
+                     stream_ctx->receiver_summary.message_size,
+                     stream_ctx->receiver_summary.current_message_synchro_timestamp_ms,
+                     stream_ctx->receiver_summary.current_message_reception_timestamp_us/1000);
+            if (stream_id != -1L) {
+                picoquic_add_to_stream(cnx, stream_id, (uint8_t *) buf, strlen(buf), 0);
+            }
+        }
+        stream_ctx = stream_ctx->next_stream;
+    }
+    picoquic_add_to_stream(cnx, stream_id, (uint8_t *) buf, 0, 1);
+}
+
+abstract_video_streamer_t *init_video_streamer(picoquic_cnx_t *cnx, int64_t stream_id, uint64_t time, uint64_t response_length, int server) {
+
+
+    uint64_t frame_interval_microsec = 0;
+    abstract_video_streamer_t *streamer = malloc(sizeof(abstract_video_streamer_t));
+    if (!streamer) {
+        printf("out of memory !\n");
+        exit(-1);
+    }
+    memset(streamer, 0, sizeof(abstract_video_streamer_t));
+#ifndef DISABLE_FFMPEG
+    if (!playback) {
+                        AVFormatContext *pFormatContext = avformat_alloc_context();
+                        if (!pFormatContext) {
+                            printf("ERROR could not allocate memory for Format Context");
+                            exit(-1);
+                        }
+                        int video_stream_idx;
+                        AVCodecContext *pCodecContext = NULL;   // unused
+                        open_video_file(video_filename, pFormatContext, &pCodecContext, &frame_interval_microsec, &video_stream_idx);
+
+                        int err = timed_real_video_streamer_init(streamer, stream_id, pFormatContext, video_stream_idx, frame_interval_microsec, response_length);
+
+                        if (err) {
+                            printf("could not init the video streamer\n");
+                            exit(-1);
+                        }
+                    } else {
+#endif
+    int err = timed_playback_video_streamer_init(streamer, stream_id, video_filename, response_length);
+    if (err) {
+        printf("could not init the video streamer\n");
+        exit(-1);
+    }
+    default_frame_interval_microsec = ((timed_playback_video_streamer_t *) streamer)->streamer.interval_microsec;
+    printf("frames interval = %lu microsec\n", default_frame_interval_microsec);
+#ifndef  DISABLE_FFMPEG
+    }
+#endif
+
+    streamers_buffer_add_streamer(&streamers_buffer, streamer, cnx);
+    printf("%" PRIx64 ": ", picoquic_val64_connection_id(picoquic_get_logging_cnxid(cnx)));
+    uint8_t *message_buffer = NULL;
+    char frame_type = '?';
+    size_t nbytes = get_video_streamer_bytes(playback, streamer, &message_buffer, time, &frame_type);
+    printf("init, nbytes = %lu\n", nbytes);
+    control_stream_id = stream_id;
+    if (nbytes != 0) {
+        int64_t id = 0;
+        int64_t *current_frame_id = server ? (&server_current_frame_stream_id) : (&client_current_frame_stream_id);
+        if (true || use_pquic_fec_messages_api) {
+            id = *current_frame_id;
+            if (use_pquic_fec_messages_api) {
+
+                send_protected_message(cnx, *current_frame_id, message_buffer,
+                                       nbytes, messages_deadline_microsec);
+                next_message_microsec(cnx, default_frame_interval_microsec);
+            } else {
+                picoquic_add_to_stream(cnx, *current_frame_id, message_buffer,
+                                       nbytes, 1);
+            }
+            *current_frame_id += 4;
+            if (timed_video_streamer_is_finished(streamer)) {
+                printf("send END OF VIDEO at the beginning !\n");
+                picoquic_add_to_stream(cnx, control_stream_id, "end of video", strlen("end of video"), true);
+            }
+            if (use_pquic_fec_messages_api) {
+                cancel_expired_messages(cnx);
+            }
+        } else {
+            id = stream_id;
+        }
+        printf("EVENT::{\"time\": %ld, \"type\": \"message_enqueue\", \"length\": %lu, \"stream_id\": %ld}\n", picoquic_current_time(), nbytes, id);
+    }
+    return streamer;
+}
+
+static int first_server_callback(picoquic_cnx_t* cnx,
     uint64_t stream_id, uint8_t* bytes, size_t length,
     picoquic_call_back_event_t fin_or_event, void* callback_ctx)
 {
@@ -512,6 +768,19 @@ static void first_server_callback(picoquic_cnx_t* cnx,
     printf("Server CB, Stream: %" PRIu64 ", %" PRIst " bytes, fin=%d (%s)\n",
         stream_id, length, fin_or_event, picoquic_log_fin_or_event_name(fin_or_event));
 
+
+    if (fin_or_event == picoquic_callback_prepare_to_send) {
+        /* Unexpected call. */
+        return -1;
+    }
+
+    if (fin_or_event == picoquic_callback_almost_ready ||
+        fin_or_event == picoquic_callback_ready ||
+        fin_or_event == picoquic_callback_challenge_response) {
+        /* Nothing to do */
+        return 0;
+    }
+
     if (fin_or_event == picoquic_callback_close || 
         fin_or_event == picoquic_callback_application_close ||
         fin_or_event == picoquic_callback_stateless_reset) {
@@ -520,12 +789,12 @@ static void first_server_callback(picoquic_cnx_t* cnx,
             picoquic_set_callback(cnx, first_server_callback, NULL);
         }
         fflush(stdout);
-        return;
+        return 0;
     }
 
     if (fin_or_event == picoquic_callback_challenge_response) {
         fflush(stdout);
-        return;
+        return 0;
     }
 
     if (ctx == NULL) {
@@ -536,7 +805,7 @@ static void first_server_callback(picoquic_cnx_t* cnx,
             printf("Memory error, cannot allocate application context\n");
 
             picoquic_close(cnx, PICOQUIC_ERROR_MEMORY);
-            return;
+            return 0;
         } else {
             picoquic_set_callback(cnx, first_server_callback, new_ctx);
             ctx = new_ctx;
@@ -556,7 +825,7 @@ static void first_server_callback(picoquic_cnx_t* cnx,
         if (stream_ctx == NULL) {
             /* Could not handle this stream */
             picoquic_reset_stream(cnx, stream_id, 500);
-            return;
+            return 0;
         } else {
             memset(stream_ctx, 0, sizeof(picoquic_first_server_stream_ctx_t));
             stream_ctx->next_stream = ctx->first_stream;
@@ -565,6 +834,8 @@ static void first_server_callback(picoquic_cnx_t* cnx,
         }
     }
 
+
+    uint64_t current_time = picoquic_current_time();
     /* verify state and copy data to the stream buffer */
     if (fin_or_event == picoquic_callback_stop_sending) {
         stream_ctx->status = picoquic_first_server_stream_status_finished;
@@ -572,14 +843,14 @@ static void first_server_callback(picoquic_cnx_t* cnx,
         printf("%" PRIx64 ": ", picoquic_val64_connection_id(picoquic_get_logging_cnxid(cnx)));
         printf("Server CB, Stop Sending Stream: %" PRIu64 ", resetting the local stream.\n",
             stream_id);
-        return;
+        return 0;
     } else if (fin_or_event == picoquic_callback_stream_reset) {
         stream_ctx->status = picoquic_first_server_stream_status_finished;
         picoquic_reset_stream(cnx, stream_id, 0);
         printf("%" PRIx64 ": ", picoquic_val64_connection_id(picoquic_get_logging_cnxid(cnx)));
         printf("Server CB, Reset Stream: %" PRIu64 ", resetting the local stream.\n",
             stream_id);
-        return;
+        return 0;
     } else if (stream_ctx->status == picoquic_first_server_stream_status_finished || stream_ctx->command_length + length > (PICOQUIC_FIRST_COMMAND_MAX - 1)) {
         if (fin_or_event == picoquic_callback_stream_fin && length == 0) {
             /* no problem, this is fine. */
@@ -587,17 +858,17 @@ static void first_server_callback(picoquic_cnx_t* cnx,
             /* send after fin, or too many bytes => reset! */
             picoquic_reset_stream(cnx, stream_id, PICOQUIC_TRANSPORT_STREAM_STATE_ERROR);
             printf("%" PRIx64 ": ", picoquic_val64_connection_id(picoquic_get_logging_cnxid(cnx)));
-            printf("Server CB, Stream: %" PRIu64 ", RESET, too long or after FIN\n",
-                stream_id);
+            printf("Server CB, Stream: %" PRIu64 ", RESET, too long or after FIN, command length = %ld, status = %d\n",
+                stream_id, stream_ctx->command_length, stream_ctx->status);
         }
-        return;
+        return 0;
     } else if (fin_or_event == picoquic_callback_stream_gap) {
         /* We do not support this, yet */
         stream_ctx->status = picoquic_first_server_stream_status_finished;
         picoquic_reset_stream(cnx, stream_id, PICOQUIC_TRANSPORT_PROTOCOL_VIOLATION);
         printf("%" PRIx64 ": ", picoquic_val64_connection_id(picoquic_get_logging_cnxid(cnx)));
         printf("Server CB, Stream: %" PRIu64 ", RESET, stream gaps not supported\n", stream_id);
-        return;
+        return 0;
     } else if (fin_or_event == picoquic_callback_no_event || fin_or_event == picoquic_callback_stream_fin) {
         int crlf_present = 0;
 
@@ -611,10 +882,63 @@ static void first_server_callback(picoquic_cnx_t* cnx,
                     break;
                 }
             }
+
+            if (current_time > server_last_interaction_microsec + server_keepalive_interval_microsec) {
+                if (stream_id > server_video_control_stream_id) {  // small hack to avoid sending data on stream 4 too early (before it was open)
+                    picoquic_add_to_stream(cnx, server_video_control_stream_id, (uint8_t *) "keep-alive",
+                                           strlen("keep-alive"), 0);
+                    server_last_interaction_microsec = current_time;
+                }
+            }
+
+            if (post_request) {
+                if (!stream_ctx->stream_receiver) {
+                    stream_ctx->stream_receiver = malloc(sizeof(stream_receiver_t));
+                    if (!stream_ctx->stream_receiver) {
+                        fprintf(stdout, "cannot allocate stream receiver\n");
+                        return -1;
+                    }
+                    stream_receiver_init(stream_ctx->stream_receiver);
+                }
+                stream_receiver_receive_data(stream_ctx->stream_receiver, bytes, length, current_time);
+                if (stream_ctx->stream_receiver->summary.contains_full_message) {
+                    if (first_fully_received_frame_timestamp == 0) {
+                        first_fully_received_frame_timestamp = current_time;
+                    }
+                    ssize_t size = stream_receiver_get_message_payload(stream_ctx->stream_receiver,
+                                                                       data_buffer);
+                    printf("get full message of size %ld, sync = %lu, now = %lu, now relative in ms = %lu\n", size,
+                           stream_ctx->stream_receiver->summary.current_message_synchro_timestamp_ms,
+                           stream_ctx->stream_receiver->summary.current_message_reception_timestamp_us, (current_time - first_fully_received_frame_timestamp) / 1000);
+                    stream_ctx->receiver_summary = stream_ctx->stream_receiver->summary;
+
+#ifndef DISABLE_FFMPEG
+                    if (!playback) {
+                        AVPacket *packet = av_packet_alloc();
+                        av_packet_from_data(packet, data_buffer, size);
+
+                        AVFrame *pFrame = av_frame_alloc();
+                        if (!pFrame) {
+                            printf("failed to allocated memory for AVFrame\n");
+                            exit(-1);
+                        }
+                        char type = 0;
+                        int err = decode_packet(packet, stream_ctx->pCodecContext, pFrame, &type);
+                        if (err) {
+                            printf("error while decoding\n");
+                            exit(-1);
+                        }
+                    }
+#endif
+
+                }
+            } else {
+                // video download
+            }
         }
 
         /* if FIN present, process request through http 0.9 */
-        if ((fin_or_event == picoquic_callback_stream_fin || crlf_present != 0) && stream_ctx->response_length == 0) {
+        if ((fin_or_event == picoquic_callback_stream_fin || (crlf_present != 0 && !post_request)) && stream_ctx->response_length == 0) {
             stream_ctx->command[stream_ctx->command_length] = 0;
             /* if data generated, just send it. Otherwise, just FIN the stream. */
             stream_ctx->status = picoquic_first_server_stream_status_finished;
@@ -627,9 +951,16 @@ static void first_server_callback(picoquic_cnx_t* cnx,
                 picoquic_add_to_stream(cnx, stream_ctx->stream_id, (const uint8_t*) response_buffer, response_length, timed_video_streamer_is_finished(stream_ctx->streamer));
             } else {
                 char buf[256];
-                if (http0dot9_get(stream_ctx->command, stream_ctx->command_length,
-                                  ctx->buffer, ctx->buffer_max, &stream_ctx->response_length)
-                    != 0) {
+                if (strncmp((char *) stream_ctx->command, "GET /video-upload", MIN(strlen("video-upload"), stream_ctx->command_length)) == 0) {
+                    // video upload from the client
+                    post_request = true;
+                } else if (strncmp((char *) stream_ctx->command, "end of video", MIN(strlen("end of video"), stream_ctx->command_length)) == 0) {
+                    fprintf(stdout, "send end to the client\n");
+                    picoquic_add_to_stream(cnx, stream_id, (const uint8_t*) "end", strlen("end"), 1);
+                    picoquic_add_to_stream(cnx, server_video_control_stream_id, (const uint8_t*) "end", strlen("end"), 1);
+                    write_video_stats_server(cnx, NULL, (int64_t) server_video_stats_feedback_stream_id, ctx->first_stream);
+                } else if (!post_request && http0dot9_get(stream_ctx->command, stream_ctx->command_length,
+                                  ctx->buffer, ctx->buffer_max, &stream_ctx->response_length) != 0) {
                     printf("%" PRIx64 ": ", picoquic_val64_connection_id(picoquic_get_logging_cnxid(cnx)));
                     printf("Server CB, Stream: %" PRIu64 ", Reply with bad request message after command: %s\n",
                            stream_id, strip_endofline(buf, sizeof(buf), (char *) &stream_ctx->command));
@@ -639,77 +970,110 @@ static void first_server_callback(picoquic_cnx_t* cnx,
                     (void) picoquic_add_to_stream(cnx, stream_ctx->stream_id, (const uint8_t *) bad_request_message,
                                                   strlen(bad_request_message), 1);
                 } else {
-
-
-                    uint64_t frame_interval_microsec = 0;
-                    stream_ctx->streamer = malloc(sizeof(abstract_video_streamer_t));
-                    if (!stream_ctx->streamer) {
-                        printf("out of memory !\n");
-                        exit(-1);
+                    if (stream_id == 4) {
+                        stream_ctx->streamer = init_video_streamer(cnx, stream_id, time, stream_ctx->response_length,
+                                                                   1);
+                        video_streamer_initialized = true;
+                    } else if (stream_id == handshake_stream_id) {
+                        picoquic_add_to_stream(cnx, handshake_stream_id, (uint8_t *)data_buffer, handshake_response_length, true);
                     }
-                    memset(stream_ctx->streamer, 0, sizeof(abstract_video_streamer_t));
-#ifndef NS3
-                    if (!playback) {
-                        AVFormatContext *pFormatContext = avformat_alloc_context();
-                        if (!pFormatContext) {
-                            printf("ERROR could not allocate memory for Format Context");
-                            exit(-1);
-                        }
-                        int video_stream_idx;
-                        AVCodecContext *pCodecContext = NULL;   // unused
-                        open_video_file(video_filename, pFormatContext, &pCodecContext, &frame_interval_microsec, &video_stream_idx);
 
-                        int err = timed_real_video_streamer_init(stream_ctx->streamer, stream_id, pFormatContext, video_stream_idx, frame_interval_microsec, stream_ctx->response_length);
-
-                        if (err) {
-                            printf("could not init the video streamer\n");
-                            exit(-1);
-                        }
-                    } else {
-#endif
-                        printf("init playback\n");
-                        int err = timed_playback_video_streamer_init(stream_ctx->streamer, stream_id, video_filename, stream_ctx->response_length);
-                        if (err) {
-                            printf("could not init the video streamer\n");
-                            exit(-1);
-                        }
-                        default_frame_interval_microsec = ((timed_playback_video_streamer_t *) stream_ctx->streamer)->streamer.interval_microsec;
-                        printf("frames interval = %lu microsec\n", default_frame_interval_microsec);
-#ifndef  NS3
-                    }
-#endif
-
-                    streamers_buffer_add_streamer(&streamers_buffer, stream_ctx->streamer, cnx);
-                    printf("%" PRIx64 ": ", picoquic_val64_connection_id(picoquic_get_logging_cnxid(cnx)));
-                    printf("Server CB, Stream: %" PRIu64 ", Processing command: %s\n",
-                           stream_id, strip_endofline(buf, sizeof(buf), (char *) &stream_ctx->command));
-                    uint8_t *message_buffer = NULL;
-                    char frame_type = '?';
-                    size_t nbytes = get_video_streamer_bytes(playback, stream_ctx->streamer, &message_buffer, time, &frame_type);
-                    printf("init, nbytes = %lu\n", nbytes);
-                    if (nbytes != 0) {
-                        int64_t id = 0;
-
-                        if (use_pquic_fec_messages_api) {
-//                            send_protected_message(cnx, stream_id, message_buffer,
-//                                                   nbytes, timed_video_streamer_is_finished(stream_ctx->streamer), messages_deadline_microsec);
-                            id = current_frame_stream_id;
-                            send_protected_message(cnx, current_frame_stream_id, message_buffer,
-                                                   nbytes, messages_deadline_microsec);
-                            current_frame_stream_id += 4;
-                            stream_id_to_send_end_of_connection = stream_id;
-                            next_message_microsec(cnx, default_frame_interval_microsec);
-                            if (timed_video_streamer_is_finished(stream_ctx->streamer)) {
-                                printf("send END OF VIDEO at the bedinning !\n");
-                                picoquic_add_to_stream(cnx, stream_id_to_send_end_of_connection, "end of video", strlen("end of video"), true);
-                            }
-                        } else {
-                            id = stream_id;
-                            picoquic_add_to_stream(cnx, stream_id, message_buffer,
-                                                   nbytes, timed_video_streamer_is_finished(stream_ctx->streamer));
-                        }
-                        printf("EVENT::{\"time\": %ld, \"type\": \"message_enqueue\", \"length\": %lu, \"stream_id\": %ld}\n", picoquic_current_time(), nbytes, id);
-                    }
+                    // below is the same content as init_video_streamer()
+//                    uint64_t frame_interval_microsec = 0;
+//                    stream_ctx->streamer = malloc(sizeof(abstract_video_streamer_t));
+//                    if (!stream_ctx->streamer) {
+//                        printf("out of memory !\n");
+//                        exit(-1);
+//                    }
+//                    memset(stream_ctx->streamer, 0, sizeof(abstract_video_streamer_t));
+//#ifndef DISABLE_FFMPEG
+//                    if (!playback) {
+//                        AVFormatContext *pFormatContext = avformat_alloc_context();
+//                        if (!pFormatContext) {
+//                            printf("ERROR could not allocate memory for Format Context");
+//                            exit(-1);
+//                        }
+//                        int video_stream_idx;
+//                        AVCodecContext *pCodecContext = NULL;   // unused
+//                        open_video_file(video_filename, pFormatContext, &pCodecContext, &frame_interval_microsec, &video_stream_idx);
+//
+//                        int err = timed_real_video_streamer_init(stream_ctx->streamer, stream_id, pFormatContext, video_stream_idx, frame_interval_microsec, stream_ctx->response_length);
+//
+//                        if (err) {
+//                            printf("could not init the video streamer\n");
+//                            exit(-1);
+//                        }
+//                    } else {
+//#endif
+//                        printf("init playback\n");
+//                        int err = timed_playback_video_streamer_init(stream_ctx->streamer, stream_id, video_filename, stream_ctx->response_length);
+//                        if (err) {
+//                            printf("could not init the video streamer\n");
+//                            exit(-1);
+//                        }
+//                        default_frame_interval_microsec = ((timed_playback_video_streamer_t *) stream_ctx->streamer)->streamer.interval_microsec;
+//                        printf("frames interval = %lu microsec\n", default_frame_interval_microsec);
+//#ifndef  DISABLE_FFMPEG
+//                    }
+//#endif
+//
+//                    streamers_buffer_add_streamer(&streamers_buffer, stream_ctx->streamer, cnx);
+//                    printf("%" PRIx64 ": ", picoquic_val64_connection_id(picoquic_get_logging_cnxid(cnx)));
+//                    printf("Server CB, Stream: %" PRIu64 ", Processing command: %s\n",
+//                           stream_id, strip_endofline(buf, sizeof(buf), (char *) &stream_ctx->command));
+//                    uint8_t *message_buffer = NULL;
+//                    char frame_type = '?';
+//                    size_t nbytes = get_video_streamer_bytes(playback, stream_ctx->streamer, &message_buffer, time, &frame_type);
+//                    printf("init, nbytes = %lu\n", nbytes);
+//                    if (nbytes != 0) {
+//                        int64_t id = 0;
+//
+////                        if (use_pquic_fec_messages_api) {
+//////                            send_protected_message(cnx, stream_id, message_buffer,
+//////                                                   nbytes, timed_video_streamer_is_finished(stream_ctx->streamer), messages_deadline_microsec);
+////                            id = server_current_frame_stream_id;
+////                            send_protected_message(cnx, server_current_frame_stream_id, message_buffer,
+////                                                   nbytes, messages_deadline_microsec);
+////                            server_current_frame_stream_id += 4;
+////                            control_stream_id = stream_id;
+////                            next_message_microsec(cnx, default_frame_interval_microsec);
+////                            if (timed_video_streamer_is_finished(stream_ctx->streamer)) {
+////                                printf("send END OF VIDEO at the beginning !\n");
+////                                picoquic_add_to_stream(cnx, control_stream_id, "end of video", strlen("end of video"), true);
+////                            }
+////                            cancel_expired_messages(cnx);
+////                        } else {
+////                            id = stream_id;
+////                            picoquic_add_to_stream(cnx, stream_id, message_buffer,
+////                                                   nbytes, timed_video_streamer_is_finished(stream_ctx->streamer));
+////                        }
+//
+//                        if (true || use_pquic_fec_messages_api) {
+////                            send_protected_message(cnx, stream_id, message_buffer,
+////                                                   nbytes, timed_video_streamer_is_finished(stream_ctx->streamer), messages_deadline_microsec);
+//                            id = server_current_frame_stream_id;
+//                            if (use_pquic_fec_messages_api) {
+//                                send_protected_message(cnx, server_current_frame_stream_id, message_buffer,
+//                                                       nbytes, messages_deadline_microsec);
+//                                next_message_microsec(cnx, default_frame_interval_microsec);
+//                            } else {
+//                                picoquic_add_to_stream(cnx, server_current_frame_stream_id, message_buffer,
+//                                                       nbytes, 1);
+//                            }
+//                            server_current_frame_stream_id += 4;
+//                            control_stream_id = stream_id;
+//                            if (timed_video_streamer_is_finished(stream_ctx->streamer)) {
+//                                printf("send END OF VIDEO at the beginning !\n");
+//                                picoquic_add_to_stream(cnx, control_stream_id, "end of video", strlen("end of video"), true);
+//                            }
+//                            if (use_pquic_fec_messages_api) {
+//                                cancel_expired_messages(cnx);
+//                            }
+//                        } else {
+//                            id = stream_id;
+//                        }
+//                        printf("EVENT::{\"time\": %ld, \"type\": \"message_enqueue\", \"length\": %lu, \"stream_id\": %ld}\n", picoquic_current_time(), nbytes, id);
+//                    }
                 }
             }
         } else if (stream_ctx->response_length == 0) {
@@ -726,14 +1090,15 @@ static void first_server_callback(picoquic_cnx_t* cnx,
         stream_ctx->status = picoquic_first_server_stream_status_finished;
         picoquic_reset_stream(cnx, stream_id, PICOQUIC_TRANSPORT_INTERNAL_ERROR);
         printf("%" PRIx64 ": ", picoquic_val64_connection_id(picoquic_get_logging_cnxid(cnx)));
-        printf("Server CB, Stream: %" PRIu64 ", unexpected event\n", stream_id);
-        return;
+        printf("Server CB, Stream: %" PRIu64 ", unexpected event %d\n", stream_id, fin_or_event);
+        return 0;
     }
 
+    return 0;
     /* that's it */
 }
 
-#ifndef NS3
+#ifndef DISABLE_FFMPEG
 int release_video_resources(AVFormatContext *pFormatContext, AVCodecContext *pCodecContext) {
     avformat_close_input(&pFormatContext);
     avformat_free_context(pFormatContext);
@@ -742,6 +1107,60 @@ int release_video_resources(AVFormatContext *pFormatContext, AVCodecContext *pCo
 }
 #endif
 
+int enqueue_streamers_messages(int n_streamers, streamers_buffer_slot_t *streamers, uint64_t current_time, int server) {
+
+    // check if there are messages to enqueue in the streams
+    // TODO: it could be done more efficiently by just looking at the smallest_timestamp information
+    for (int i = 0 ; i < n_streamers ; i++) {
+        timed_video_streamer_t *streamer = (timed_video_streamer_t *) streamers[i].streamer;
+        if (timed_video_streamer_should_send_now(playback, streamer, current_time)) {
+            uint8_t *message = NULL;
+            char frame_type = '?';
+            size_t msg_size = get_video_streamer_bytes(playback, streamer, &message, current_time, &frame_type);
+            if (msg_size != 0) {
+
+                int64_t *current_frame_stream_id = server ? (&server_current_frame_stream_id) : (&client_current_frame_stream_id);
+
+                int64_t stream_id = 0;
+                if (true || use_pquic_fec_messages_api) {
+                    stream_id = *current_frame_stream_id;
+                    *current_frame_stream_id += 4;
+                    if (use_pquic_fec_messages_api) {
+                        send_protected_message((picoquic_cnx_t *) streamers[i].streamer_ctx, stream_id, message,
+                                               msg_size, messages_deadline_microsec);
+
+                        uint64_t next_ts = timed_video_streamer_next_timestamp(playback, streamer);
+                        printf("SEND DEADLINE %lu, NEXT MESSAGE MICROSEC %lu\n", messages_deadline_microsec, next_ts > current_time ? (next_ts - current_time) : 0);
+                        next_message_microsec((picoquic_cnx_t *) streamers[i].streamer_ctx, next_ts > current_time ? (next_ts - current_time) : 0);
+//                        next_message_microsec((picoquic_cnx_t *) streamers[i].streamer_ctx, default_frame_interval_microsec);
+                    } else {
+                        picoquic_add_to_stream((picoquic_cnx_t *) streamers[i].streamer_ctx, stream_id,
+                                               message, msg_size, true);
+                    }
+                    if (timed_video_streamer_is_finished(streamer)) {
+                        uint64_t stream_id_to_send_end_of_connection = server ? control_stream_id : (control_stream_id + 4);
+                        printf("SEND END OF VIDEO to stream %ld\n", stream_id_to_send_end_of_connection);
+                        picoquic_add_to_stream((picoquic_cnx_t *) streamers[i].streamer_ctx, stream_id_to_send_end_of_connection, (uint8_t *) "end of video", strlen("end of video"), true);
+                    }
+                    if (use_pquic_fec_messages_api) {
+
+                        cancel_expired_messages((picoquic_cnx_t *) streamers[i].streamer_ctx);
+                    }
+                } else {
+                    stream_id = streamer->simple_streamer.stream_id;
+                    picoquic_add_to_stream((picoquic_cnx_t *) streamers[i].streamer_ctx, streamer->simple_streamer.stream_id,
+                                           message, msg_size, timed_video_streamer_is_finished(streamer));
+                }
+                printf("queue %lu bytes for stream %lu\n", msg_size, stream_id);
+                printf("EVENT::{\"time\": %ld, \"type\": \"message_enqueue\", \"length\": %lu, \"stream_id\": %lu}\n", picoquic_current_time(), msg_size, stream_id);
+            }
+        }
+    }
+    return 0;
+
+}
+
+#define PICOQUIC_DEMO_SERVER_MAX_SEND_BATCH 5
 int quic_server(const char* server_name, int server_port,
     const char* pem_cert, const char* pem_key,
     int just_once, int do_hrr, cnx_id_cb_fn cnx_id_callback,
@@ -827,6 +1246,23 @@ int quic_server(const char* server_name, int server_port,
         picoquic_delete_cnx(tmp_cnx);
     }
 
+    picoquic_tp_t tp;
+    memset(&tp, 0, sizeof(picoquic_tp_t));
+    if (ret == 0) {
+
+        picoquic_init_transport_parameters(&tp, 0);
+        // ensure that the receive window is respected at the beginning of the transfer
+        tp.initial_max_stream_data_bidi_local = MIN(
+                MAX(initial_receive_window_size, tp.initial_max_stream_data_bidi_local),
+                max_stream_receive_window_size);
+        tp.initial_max_stream_data_bidi_remote = MIN(
+                MAX(initial_receive_window_size, tp.initial_max_stream_data_bidi_remote),
+                max_stream_receive_window_size);
+        tp.initial_max_stream_data_uni = MIN(MAX(initial_receive_window_size, tp.initial_max_stream_data_uni),
+                                             max_stream_receive_window_size);
+        tp.initial_max_data = MAX(initial_receive_window_size, tp.initial_max_data);
+        qserver->default_tp = &tp;
+    }
 
     /* Wait for packets */
     while (ret == 0 && (just_once == 0 || cnx_server == NULL || picoquic_get_cnx_state(cnx_server) != picoquic_state_disconnected)) {
@@ -856,7 +1292,6 @@ int quic_server(const char* server_name, int server_port,
         if (smallest_timestamp > current_time) {
             delta_t = (delta_t < (smallest_timestamp - current_time)) ? delta_t : (smallest_timestamp - current_time);
         } else if (has_active_streamer) {
-            printf("smallest_timestamp = %lu, current_time = %lu\n", smallest_timestamp, current_time);
             delta_t = 0;
         }
 
@@ -890,37 +1325,47 @@ int quic_server(const char* server_name, int server_port,
         }
 
         // check if there are messages to enqueue in the streams
+        enqueue_streamers_messages(n_streamers, current_streamers, current_time, 1);
         // TODO: it could be done more efficiently by just looking at the smallest_timestamp information
-        for (int i = 0 ; i < n_streamers ; i++) {
-            timed_video_streamer_t *streamer = (timed_video_streamer_t *) current_streamers[i].streamer;
-            if (timed_video_streamer_should_send_now(playback, streamer, current_time)) {
-                uint8_t *message = NULL;
-                char frame_type = '?';
-                size_t msg_size = get_video_streamer_bytes(playback, streamer, &message, current_time, &frame_type);
-                printf("frame type = %c\n", frame_type);
-                if (msg_size != 0) {
-
-                    int64_t stream_id = 0;
-                    if (use_pquic_fec_messages_api) {
-                        stream_id = current_frame_stream_id;
-                        current_frame_stream_id += 4;
-                        send_protected_message((picoquic_cnx_t *) current_streamers[i].streamer_ctx, stream_id, message,
-                                               msg_size, messages_deadline_microsec);
-                        next_message_microsec((picoquic_cnx_t *) current_streamers[i].streamer_ctx, default_frame_interval_microsec);
-                        if (timed_video_streamer_is_finished(streamer)) {
-                            printf("SEND END OF VIDEO\n");
-                            picoquic_add_to_stream((picoquic_cnx_t *) current_streamers[i].streamer_ctx, stream_id_to_send_end_of_connection, (uint8_t *) "end of video", strlen("end of video"), true);
-                        }
-                    } else {
-                        stream_id = streamer->simple_streamer.stream_id;
-                        picoquic_add_to_stream((picoquic_cnx_t *) current_streamers[i].streamer_ctx, streamer->simple_streamer.stream_id,
-                                               message, msg_size, timed_video_streamer_is_finished(streamer));
-                    }
-                    printf("queue %lu bytes for stream %lu\n", msg_size, stream_id);
-                    printf("EVENT::{\"time\": %ld, \"type\": \"message_enqueue\", \"length\": %lu, \"stream_id\": %lu}\n", picoquic_current_time(), msg_size, stream_id);
-                }
-            }
-        }
+//        for (int i = 0 ; i < n_streamers ; i++) {
+//            timed_video_streamer_t *streamer = (timed_video_streamer_t *) current_streamers[i].streamer;
+//            if (timed_video_streamer_should_send_now(playback, streamer, current_time)) {
+//                uint8_t *message = NULL;
+//                char frame_type = '?';
+//                size_t msg_size = get_video_streamer_bytes(playback, streamer, &message, current_time, &frame_type);
+//                printf("frame type = %c\n", frame_type);
+//                if (msg_size != 0) {
+//
+//                    int64_t stream_id = 0;
+//                    if (true || use_pquic_fec_messages_api) {
+//                        stream_id = server_current_frame_stream_id;
+//                        server_current_frame_stream_id += 4;
+//                        if (use_pquic_fec_messages_api) {
+//                            send_protected_message((picoquic_cnx_t *) current_streamers[i].streamer_ctx, stream_id, message,
+//                                                   msg_size, messages_deadline_microsec);
+//                            next_message_microsec((picoquic_cnx_t *) current_streamers[i].streamer_ctx, default_frame_interval_microsec);
+//                        } else {
+//                            picoquic_add_to_stream((picoquic_cnx_t *) current_streamers[i].streamer_ctx, stream_id,
+//                                                   message, msg_size, true);
+//                        }
+//                        if (timed_video_streamer_is_finished(streamer)) {
+//                            printf("SEND END OF VIDEO\n");
+//                            picoquic_add_to_stream((picoquic_cnx_t *) current_streamers[i].streamer_ctx, control_stream_id, (uint8_t *) "end of video", strlen("end of video"), true);
+//                        }
+//                        if (use_pquic_fec_messages_api) {
+//
+//                            cancel_expired_messages((picoquic_cnx_t *) current_streamers[i].streamer_ctx);
+//                        }
+//                    } else {
+//                        stream_id = streamer->simple_streamer.stream_id;
+//                        picoquic_add_to_stream((picoquic_cnx_t *) current_streamers[i].streamer_ctx, streamer->simple_streamer.stream_id,
+//                                               message, msg_size, timed_video_streamer_is_finished(streamer));
+//                    }
+//                    printf("queue %lu bytes for stream %lu\n", msg_size, stream_id);
+//                    printf("EVENT::{\"time\": %ld, \"type\": \"message_enqueue\", \"length\": %lu, \"stream_id\": %lu}\n", picoquic_current_time(), msg_size, stream_id);
+//                }
+//            }
+//        }
 
         if (bytes_recv < 0) {
             ret = -1;
@@ -957,6 +1402,17 @@ int quic_server(const char* server_name, int server_port,
                         }
                     }
 
+                    if (cc_algorithm) {
+                        picoquic_set_congestion_algorithm(cnx_server, cc_algorithm);
+                    }
+
+                    if (repair_receive_window_size != -1L) {
+                        if (max_stream_receive_window_size == -1L) {
+                            max_stream_receive_window_size = 2000000;
+                        }
+                        ret = fec_set_rwin_size(cnx_server, max_stream_receive_window_size, repair_receive_window_size);
+                    }
+
                     printf("%" PRIx64 ": ", picoquic_val64_connection_id(picoquic_get_logging_cnxid(cnx_server)));
                     picoquic_log_time(stdout, cnx_server, picoquic_current_time(), "", " : ");
                     printf("Connection established, state = %d, from length: %u\n",
@@ -970,6 +1426,12 @@ int quic_server(const char* server_name, int server_port,
                 }
             }
             if (ret == 0) {
+
+                if (cnx_server && fixed_cwin != 0) {
+                    printf("SET FIXED CWIN TO %lu (cnx = %p)\n", fixed_cwin, cnx_server);
+                    set_fixed_cwin(cnx_server, fixed_cwin);
+                }
+
                 uint64_t loop_time = picoquic_current_time();
 
                 while ((sp = picoquic_dequeue_stateless_packet(qserver)) != NULL) {
@@ -988,7 +1450,8 @@ int quic_server(const char* server_name, int server_port,
                     picoquic_delete_stateless_packet(sp);
                 }
 
-                while (ret == 0 && (cnx_next = picoquic_get_earliest_cnx_to_wake(qserver, loop_time)) != NULL) {
+                int n_loop_turns = 0;
+                while (ret == 0 && bytes_recv == 0 && n_loop_turns++ < PICOQUIC_DEMO_SERVER_MAX_SEND_BATCH && (cnx_next = picoquic_get_earliest_cnx_to_wake(qserver, loop_time)) != NULL) {
                     ret = picoquic_prepare_packet(cnx_next, picoquic_current_time(),
                         send_buffer, sizeof(send_buffer), &send_length, &path);
 
@@ -1004,7 +1467,6 @@ int quic_server(const char* server_name, int server_port,
                         if (cnx_next == cnx_server) {
                             cnx_server = NULL;
                         }
-                        write_stats(cnx_next, stats_filename);
                         picoquic_delete_cnx(cnx_next);
 
                         fflush(stdout);
@@ -1018,9 +1480,9 @@ int quic_server(const char* server_name, int server_port,
                         if (send_length > 0) {
                             if (just_once != 0 ||
                                 cnx_next->cnx_state < picoquic_state_client_ready ||
-                                cnx_next->cnx_state >= picoquic_state_disconnecting) {
-                                printf("%" PRIx64 ": ", picoquic_val64_connection_id(picoquic_get_logging_cnxid(cnx_next)));
-                                printf("Connection state = %d\n",
+                                cnx_next->cnx_state >= picoquic_state_disconnecting ) {
+                                fprintf(stdout,"%" PRIx64 ": ", picoquic_val64_connection_id(picoquic_get_logging_cnxid(cnx_next)));
+                                fprintf(stdout,"Connection state = %d\n",
                                     picoquic_get_cnx_state(cnx_next));
                             }
 
@@ -1029,7 +1491,7 @@ int quic_server(const char* server_name, int server_port,
 
                             /* QDC: I hate having those lines here... But it is the only place to hook before sending... */
                             /* Both Linux and Windows use separate sockets for V4 and V6 */
-#ifndef NS3
+#ifndef DISABLE_FFMPEG
                             int socket_index = (peer_addr->sa_family == AF_INET) ? 1 : 0;
 #else
                             int socket_index = 0;
@@ -1065,14 +1527,6 @@ int quic_server(const char* server_name, int server_port,
     return ret;
 }
 
-typedef struct st_demo_stream_desc_t {
-    uint32_t stream_id;
-    uint32_t previous_stream_id;
-    char const* doc_name;
-    char const* f_name;
-    int is_binary;
-} demo_stream_desc_t;
-
 static const demo_stream_desc_t test_scenario[] = {
 #ifdef PICOQUIC_TEST_AGAINST_ATS
     { 0, 0xFFFFFFFF, "", "slash.html", 0 },
@@ -1094,32 +1548,6 @@ static const demo_stream_desc_t test_scenario[] = {
 
 static const size_t test_scenario_nb = sizeof(test_scenario) / sizeof(demo_stream_desc_t);
 
-typedef struct st_picoquic_first_client_stream_ctx_t {
-    struct st_picoquic_first_client_stream_ctx_t* next_stream;
-    uint32_t stream_id;
-    uint8_t command[PICOQUIC_FIRST_COMMAND_MAX + 1]; /* starts with "GET " */
-    size_t received_length;
-    FILE* F; /* NULL if stream is closed. */
-    stream_receiver_t *stream_receiver;
-#ifndef NS3
-    AVCodecContext *pCodecContext;
-#endif
-} picoquic_first_client_stream_ctx_t;
-
-typedef struct st_picoquic_first_client_callback_ctx_t {
-    demo_stream_desc_t const* demo_stream;
-    size_t nb_demo_streams;
-
-    struct st_picoquic_first_client_stream_ctx_t* first_stream;
-    int nb_open_streams;
-    uint32_t nb_client_streams;
-    uint64_t last_interaction_time;
-    int progress_observed;
-    struct timeval tv_start;
-    struct timeval tv_end;
-    bool stream_ok;
-    bool only_get;
-} picoquic_first_client_callback_ctx_t;
 
 static void demo_client_open_stream(picoquic_cnx_t* cnx,
     picoquic_first_client_callback_ctx_t* ctx,
@@ -1162,15 +1590,17 @@ static void demo_client_open_stream(picoquic_cnx_t* cnx,
         stream_receiver_init(stream_ctx->stream_receiver);
 
         uint64_t frame_interval_microsec = 0;
-#ifndef NS3
-        AVFormatContext *pFormatContext = avformat_alloc_context();
-        if (!pFormatContext) {
-            printf("could not allocate AVFormatContext\n");
-            exit(-1);
+#ifndef DISABLE_FFMPEG
+        if (!playback) {
+            AVFormatContext *pFormatContext = avformat_alloc_context();
+            if (!pFormatContext) {
+                printf("could not allocate AVFormatContext\n");
+                exit(-1);
+            }
+            int video_stream_idx = 0;
+            // this is only used for getting the right coded parameters
+            open_video_file(video_filename, pFormatContext, &stream_ctx->pCodecContext, &frame_interval_microsec, &video_stream_idx);
         }
-        int video_stream_idx = 0;
-        // this is only used for getting the right coded parameters
-        open_video_file(video_filename, pFormatContext, &stream_ctx->pCodecContext, &frame_interval_microsec, &video_stream_idx);
 #endif
 #ifdef _WINDOWS
         if (fopen_s(&stream_ctx->F, fname, (is_binary == 0) ? "w" : "wb") != 0) {
@@ -1218,7 +1648,7 @@ static picoquic_first_client_stream_ctx_t *demo_client_open_receive_stream(picoq
         fprintf(stdout, "Memory error!\n");
     } else {
         int ret = 0;
-        fprintf(stdout, "Opening receive-stream %u\n", stream_id);
+        printf("Opening receive-stream %u\n", stream_id);
 
         memset(stream_ctx, 0, sizeof(picoquic_first_client_stream_ctx_t));
         stream_ctx->stream_id = stream_id;
@@ -1232,30 +1662,32 @@ static picoquic_first_client_stream_ctx_t *demo_client_open_receive_stream(picoq
             return NULL;
         }
         stream_receiver_init(stream_ctx->stream_receiver);
-        printf("init stream receiver, size = %ld, ctx size = %ld\n", sizeof(stream_ctx->stream_receiver), sizeof(*stream_ctx));
-
-#ifndef NS3
-        AVFormatContext *pFormatContext = avformat_alloc_context();
-        if (!pFormatContext) {
-            printf("could not allocate AVFormatContext\n");
-            exit(-1);
+        uint64_t frame_interval_microsec = 0;
+#ifndef DISABLE_FFMPEG
+        if (!playback) {
+            AVFormatContext *pFormatContext = avformat_alloc_context();
+            if (!pFormatContext) {
+                printf("could not allocate AVFormatContext\n");
+                exit(-1);
+            }
+            int video_stream_idx = 0;
+            // this is only used for getting the right coded parameters
+            open_video_file(video_filename, pFormatContext, &stream_ctx->pCodecContext, &frame_interval_microsec, &video_stream_idx);
         }
-        int video_stream_idx = 0;
-        // this is only used for getting the right coded parameters
-        open_video_file(video_filename, pFormatContext, &stream_ctx->pCodecContext, &frame_interval_microsec, &video_stream_idx);
 #endif
 #ifdef _WINDOWS
         if (fopen_s(&stream_ctx->F, fname, (is_binary == 0) ? "w" : "wb") != 0) {
             ret = -1;
         }
 #else
-        stream_ctx->F = fopen("/dev/null", "wb");
+
+        stream_ctx->F = dev_null;
         if (stream_ctx->F == NULL) {
             ret = -1;
         }
 #endif
         if (ret != 0) {
-            fprintf(stdout, "Cannot open file: /dev/null\n");
+            fprintf(stdout, "Cannot use /dev/null for video frames !\n");
         } else {
             ctx->nb_open_streams++;
             ctx->nb_client_streams++;
@@ -1279,7 +1711,7 @@ static void demo_client_start_streams(picoquic_cnx_t* cnx,
 
 // h264 Codec ID = 27
 
-static void first_client_callback(picoquic_cnx_t* cnx,
+static int first_client_callback(picoquic_cnx_t* cnx,
     uint64_t stream_id, uint8_t* bytes, size_t length,
     picoquic_call_back_event_t fin_or_event, void* callback_ctx)
 {
@@ -1288,7 +1720,9 @@ static void first_client_callback(picoquic_cnx_t* cnx,
     picoquic_first_client_callback_ctx_t* ctx = (picoquic_first_client_callback_ctx_t*)callback_ctx;
     picoquic_first_client_stream_ctx_t* stream_ctx = ctx->first_stream;
 
-    ctx->last_interaction_time = picoquic_current_time();
+    uint64_t current_time = picoquic_current_time();
+
+    ctx->last_interaction_time = current_time;
     ctx->progress_observed = 1;
 
     if (fin_or_event == picoquic_callback_close ||
@@ -1304,17 +1738,19 @@ static void first_client_callback(picoquic_cnx_t* cnx,
 
         while (stream_ctx != NULL) {
             if (stream_ctx->F != NULL) {
-                fclose(stream_ctx->F);
+                if (stream_ctx->F != dev_null) {
+                    fclose(stream_ctx->F);
+                }
                 stream_ctx->F = NULL;
                 ctx->nb_open_streams--;
 
-                fprintf(stdout, "On stream %u, command: %s stopped after %d bytes\n",
+                printf("On stream %u, command: %s stopped after %d bytes\n",
                     stream_ctx->stream_id, stream_ctx->command, (int)stream_ctx->received_length);
             }
             stream_ctx = stream_ctx->next_stream;
         }
 
-        return;
+        return 0;
     }
 
     /* if stream is already present, check its state. New bytes? */
@@ -1326,7 +1762,6 @@ static void first_client_callback(picoquic_cnx_t* cnx,
         /* Unexpected stream. */
 //        printf("unexpected stream !\n");
 //        picoquic_reset_stream(cnx, stream_id, 0);
-        printf("received data to new stream %ld\n", stream_id);
         stream_ctx = demo_client_open_receive_stream(cnx, ctx, stream_id);
     } else if (fin_or_event == picoquic_callback_stream_reset) {
         picoquic_reset_stream(cnx, stream_id, 0);
@@ -1334,7 +1769,9 @@ static void first_client_callback(picoquic_cnx_t* cnx,
         if (stream_ctx->F != NULL) {
             char buf[256];
 
-            fclose(stream_ctx->F);
+            if (stream_ctx->F != dev_null) {
+                fclose(stream_ctx->F);
+            }
             stream_ctx->F = NULL;
             ctx->nb_open_streams--;
 
@@ -1343,7 +1780,7 @@ static void first_client_callback(picoquic_cnx_t* cnx,
                 strip_endofline(buf, sizeof(buf), (char*)&stream_ctx->command),
                 (int)stream_ctx->received_length);
         }
-        return;
+        return 0;
     } else if (fin_or_event == picoquic_callback_stop_sending) {
         char buf[256];
         picoquic_reset_stream(cnx, stream_id, 0);
@@ -1351,20 +1788,25 @@ static void first_client_callback(picoquic_cnx_t* cnx,
         fprintf(stdout, "Stop sending received on stream %u, command: %s\n",
             stream_ctx->stream_id,
             strip_endofline(buf, sizeof(buf), (char*)&stream_ctx->command));
-        return;
+        return 0;
     } else if (fin_or_event == picoquic_callback_stream_gap) {
         /* We do not support this, yet */
         picoquic_reset_stream(cnx, stream_id, PICOQUIC_TRANSPORT_PROTOCOL_VIOLATION);
-        return;
+        return 0;
     }
     printf("EVENT::{\"time\": %ld, \"type\": \"stream_deliver\", \"stream_id\": %ld, \"range\": [%lu, %lu]}\n", picoquic_current_time(), stream_id, stream_ctx->received_length, length);
     if (fin_or_event == picoquic_callback_no_event || fin_or_event == picoquic_callback_stream_fin) {
-        if (length > 0) {
-            stream_receiver_receive_data(stream_ctx->stream_receiver, bytes, length);
-            if (stream_ctx->stream_receiver->contains_full_message) {
+        if (length > 0 && stream_id != handshake_stream_id && ( (stream_id != control_stream_id && stream_id != control_stream_id + 4 && stream_id != server_video_stats_feedback_stream_id && stream_id != server_video_control_stream_id))) {
+            stream_receiver_receive_data(stream_ctx->stream_receiver, bytes, length, current_time);
+            if (stream_ctx->stream_receiver->summary.contains_full_message) {
+                if (first_fully_received_frame_timestamp == 0) {
+                    first_fully_received_frame_timestamp = current_time;
+                }
                 ssize_t size = stream_receiver_get_message_payload(stream_ctx->stream_receiver, data_buffer);
-                printf("get full message of size %ld\n", size);
-#ifndef NS3
+                printf("get full message of size %ld, sync = %lu, now = %lu, now relative in ms = %lu\n", size,
+                       stream_ctx->stream_receiver->summary.current_message_synchro_timestamp_ms,
+                       stream_ctx->stream_receiver->summary.current_message_reception_timestamp_us, (current_time - first_fully_received_frame_timestamp) / 1000);
+#ifndef DISABLE_FFMPEG
                 if (!playback) {
                     AVPacket *packet = av_packet_alloc();
                     av_packet_from_data(packet, data_buffer, size);
@@ -1375,7 +1817,6 @@ static void first_client_callback(picoquic_cnx_t* cnx,
                         exit(-1);
                     }
                     char type = 0;
-                    printf("TRY TO DECODE\n");
                     int err = decode_packet(packet, stream_ctx->pCodecContext, pFrame, &type);
                     if (err) {
                         printf("error while decoding\n");
@@ -1383,30 +1824,46 @@ static void first_client_callback(picoquic_cnx_t* cnx,
                     }
                 }
 #endif
-
             }
             (void)fwrite(bytes, 1, length, stream_ctx->F);
             stream_ctx->received_length += length;
 
+        } else if (stream_id == server_video_stats_feedback_stream_id) {
+            if (!ctx->video_stats_file) {
+                ctx->video_stats_file = fopen(video_stats_filename, "w");
+            }
+            if (!ctx->video_stats_file) {
+                printf("error while opening video stats filename\n");
+                exit(-1);
+            }
+            fwrite(bytes, length, 1, ctx->video_stats_file);
+            if (fin_or_event == picoquic_callback_stream_fin) {
+                fclose(ctx->video_stats_file);
+                picoquic_close(cnx, 0);
+                ctx->stream_ok = true;  // to finish correctly the download
+            }
         }
 
         /* if FIN present, process request through http 0.9 */
         if (fin_or_event == picoquic_callback_stream_fin) {
             char buf[256];
-            if (stream_id == 4) {
+            if (stream_id == 4 || (post_request && stream_id == server_video_stats_feedback_stream_id)) {
                 gettimeofday(&ctx->tv_end, NULL);
                 ctx->stream_ok = true;
             }
             /* if data generated, just send it. Otherwise, just FIN the stream. */
-            fclose(stream_ctx->F);
+            if (stream_ctx->F != dev_null) {
+                fclose(stream_ctx->F);
+            }
             stream_ctx->F = NULL;
             ctx->nb_open_streams--;
             fin_stream_id = stream_id;
 
-            fprintf(stdout, "Received file %s, after %d bytes, closing stream %u\n",
+            printf("Received file %s, after %d bytes, closing stream %u\n",
                 strip_endofline(buf, sizeof(buf), (char*)&stream_ctx->command[4]),
                 (int)stream_ctx->received_length, stream_ctx->stream_id);
             printf("clean stream receiver\n");
+            stream_ctx->receiver_summary = stream_ctx->stream_receiver->summary;
             free(stream_ctx->stream_receiver);
             stream_ctx->stream_receiver = NULL;
         }
@@ -1415,17 +1872,21 @@ static void first_client_callback(picoquic_cnx_t* cnx,
     if (fin_stream_id != 0xFFFFFFFF) {
         demo_client_start_streams(cnx, ctx, fin_stream_id);
     }
+    if (fin_stream_id == 0) {
+        init_video_streamer(cnx, 4, current_time, ctx->response_length, 0);
+    }
 
     /* that's it */
+    return 0;
 }
 
 #define PICOQUIC_DEMO_CLIENT_MAX_RECEIVE_BATCH 4
 
-int quic_client(const char* ip_address_text, int server_port, const char * sni, 
-    const char * root_crt,
-    uint32_t proposed_version, int force_zero_share, int mtu_max, FILE* F_log, FILE* F_tls_secrets,
-    const char** local_plugin_fnames, int local_plugins,
-    int get_size, int only_stream_4, char *qlog_filename, char *plugin_store_path, char *stats_filename)
+int quic_client(const char* ip_address_text, int server_port, const char * sni,
+                const char * root_crt,
+                uint32_t proposed_version, int force_zero_share, int mtu_max, FILE* F_log, FILE* F_tls_secrets,
+                const char** local_plugin_fnames, int local_plugins,
+                int request_size, int only_stream_4, char *qlog_filename, char *plugin_store_path, char *stats_filename)
 {
     /* Start: start the QUIC process with cert and key files */
     int ret = 0;
@@ -1458,6 +1919,8 @@ int quic_client(const char* ip_address_text, int server_port, const char * sni,
     int new_context_created = 0;
     char buf[25];
     int waiting_transport_parameters = 1;
+
+    streamers_buffer_slot_t current_streamers[MAX_STREAMERS_BUFFER_SIZE];
 
     memset(&callback_ctx, 0, sizeof(picoquic_first_client_callback_ctx_t));
 
@@ -1542,13 +2005,25 @@ int quic_client(const char* ip_address_text, int server_port, const char * sni,
         }
     }
 
+    picoquic_tp_t tp;
+    memset(&tp, 0, sizeof(picoquic_tp_t));
     /* Create the client connection */
     if (ret == 0) {
+        picoquic_init_transport_parameters(&tp, 1);
+        // ensure that the receive window is respected at the beginning of the transfer
+        tp.initial_max_stream_data_bidi_local = MIN(MAX(initial_receive_window_size, tp.initial_max_stream_data_bidi_local), max_stream_receive_window_size);
+        tp.initial_max_stream_data_bidi_remote = MIN(MAX(initial_receive_window_size, tp.initial_max_stream_data_bidi_remote), max_stream_receive_window_size);
+        tp.initial_max_stream_data_uni = MIN(MAX(initial_receive_window_size, tp.initial_max_stream_data_uni), max_stream_receive_window_size);
+        tp.initial_max_data = MAX(initial_receive_window_size, tp.initial_max_data);
+        qclient->default_tp = &tp;
         /* Create a client connection */
-        cnx_client = picoquic_create_cnx(qclient, picoquic_null_connection_id, picoquic_null_connection_id,
-            (struct sockaddr*)&server_address, current_time,
-            proposed_version, sni, alpn, 1);
+        cnx_client = picoquic_create_cnx_with_transport_parameters(qclient, picoquic_null_connection_id, picoquic_null_connection_id,
+                                                                   (struct sockaddr*)&server_address, current_time,
+                                                                   proposed_version, sni, alpn, 1, tp);
 
+        if (cc_algorithm) {
+            picoquic_set_congestion_algorithm(cnx_client, cc_algorithm);
+        }
         if (cnx_client == NULL) {
             ret = -1;
         }
@@ -1568,9 +2043,24 @@ int quic_client(const char* ip_address_text, int server_port, const char * sni,
                 }
             }
 
-            picoquic_set_callback(cnx_client, first_client_callback, &callback_ctx);
+            printf("before set rwin\n");
 
-            ret = picoquic_start_client_cnx(cnx_client);
+            if (repair_receive_window_size != -1L) {
+                if (max_stream_receive_window_size == -1L) {
+                    printf("you must set the stream receive window size if you set the repair receive window size\n");
+                    ret = -1;
+                } else {
+                    printf("setting rwin\n");
+                    ret = fec_set_rwin_size(cnx_client, max_stream_receive_window_size, repair_receive_window_size);
+                    printf("done, ret = %d\n", ret);
+                }
+            }
+
+            if (ret == 0) {
+                picoquic_set_callback(cnx_client, first_client_callback, &callback_ctx);
+
+                ret = picoquic_start_client_cnx(cnx_client);
+            }
 
             if (ret == 0) {
                 if (picoquic_is_0rtt_available(cnx_client) && (proposed_version & 0x0a0a0a0a) != 0x0a0a0a0a) {
@@ -1578,12 +2068,12 @@ int quic_client(const char* ip_address_text, int server_port, const char * sni,
 
                     /* Queue a simple frame to perform 0-RTT test */
                     /* Start the download scenario */
-                    /* If get_size is greater than 0, select it */
-                    if (get_size <= 0) {
+                    /* If request_size is greater than 0, select it */
+                    if (request_size <= 0) {
                         callback_ctx.demo_stream = test_scenario;
                         callback_ctx.nb_demo_streams = test_scenario_nb;
                     } else {
-                        sprintf(buf, "doc-%d.html", get_size);
+                        sprintf(buf, "doc-%d.html", request_size);
                         if (only_stream_4) {
                             callback_ctx.demo_stream =  (demo_stream_desc_t []) {{ 4, 0xFFFFFFFF, buf, "/dev/null", 0 }};
                             callback_ctx.nb_demo_streams = 1;
@@ -1637,6 +2127,32 @@ int quic_client(const char* ip_address_text, int server_port, const char * sni,
             delay_max = 10000000;
         }
 
+        current_time = picoquic_current_time();
+        int has_active_streamer = 0;
+
+        int n_streamers = get_all_streamers(&streamers_buffer, current_streamers);
+
+        uint64_t smallest_timestamp = ~((uint64_t) 0);
+
+        for (int i = 0 ; i < n_streamers ; i++) {
+            timed_video_streamer_t *streamer = (timed_video_streamer_t *) current_streamers[i].streamer;
+            if (!timed_video_streamer_is_finished(streamer)) {
+                has_active_streamer = 1;
+                uint64_t next_sending_timestamp = timed_video_get_next_sending_timestamp(playback, streamer);
+                if (smallest_timestamp > next_sending_timestamp) {
+                    smallest_timestamp = next_sending_timestamp;
+                }
+            }
+        }
+
+        if (smallest_timestamp > current_time) {
+            delta_t = (delta_t < (smallest_timestamp - current_time)) ? delta_t : (smallest_timestamp - current_time);
+        } else if (has_active_streamer) {
+            delta_t = 0;
+        }
+
+        printf("delta_t = %ld\n", delta_t);
+
         from_length = to_length = sizeof(struct sockaddr_storage);
 
         bytes_recv = picoquic_select(&fd, 1, &packet_from, &from_length,
@@ -1645,6 +2161,8 @@ int quic_client(const char* ip_address_text, int server_port, const char * sni,
             delta_t,
             &current_time,
             qclient);
+
+        enqueue_streamers_messages(n_streamers, current_streamers, current_time, 0);
 
         if (bytes_recv != 0) {
             if (F_log != NULL) {
@@ -1713,14 +2231,23 @@ int quic_client(const char* ip_address_text, int server_port, const char * sni,
                             (unsigned long long)picoquic_val64_connection_id(picoquic_get_logging_cnxid(cnx_client)));
                         established = 1;
 
+                        if (fixed_cwin != 0) {
+                            set_fixed_cwin(cnx_client, fixed_cwin);
+                        }
+
                         if (zero_rtt_available == 0) {
                             /* Start the download scenario */
-                            /* If get_size is greater than 0, select it */
-                            if (get_size <= 0) {
+                            /* If request_size is greater than 0, select it */
+                            if (request_size <= 0) {
                                 callback_ctx.demo_stream = test_scenario;
                                 callback_ctx.nb_demo_streams = test_scenario_nb;
                             } else {
-                                sprintf(buf, "doc-%d.html", get_size);
+                                if (post_request) {
+                                    // post video
+                                    sprintf(buf, "video-upload");
+                                } else {
+                                    sprintf(buf, "doc-%d.html", request_size);
+                                }
                                 demo_stream_desc_t *tab = calloc(sizeof(demo_stream_desc_t), (only_stream_4 ? 1 : 2));
                                 if (only_stream_4) {
                                     if (!tab) {
@@ -1746,6 +2273,9 @@ int quic_client(const char* ip_address_text, int server_port, const char * sni,
                                 callback_ctx.only_get = true;
                             }
 
+                            if (post_request) {
+                                callback_ctx.response_length = request_size;
+                            }
                             demo_client_start_streams(cnx_client, &callback_ctx, 0xFFFFFFFF);
                         }
                     }
@@ -1753,7 +2283,7 @@ int quic_client(const char* ip_address_text, int server_port, const char * sni,
                     client_ready_loop++;
 
                     if ((bytes_recv == 0 || client_ready_loop > 4) && picoquic_is_cnx_backlog_empty(cnx_client)) {
-                        if (callback_ctx.nb_open_streams == 0) {
+                        if (callback_ctx.nb_open_streams == 0 || callback_ctx.stream_ok) {
                             if (cnx_client->nb_zero_rtt_sent != 0) {
                                 fprintf(stdout, "Out of %u zero RTT packets, %u were acked by the server.\n",
                                     cnx_client->nb_zero_rtt_sent, cnx_client->nb_zero_rtt_acked);
@@ -1768,7 +2298,30 @@ int quic_client(const char* ip_address_text, int server_port, const char * sni,
                             {
                                 fprintf(F_log, "All done, Closing the connection.\n");
                             }
-                            if (get_size > 0) {
+
+                            if (!post_request) {
+                                picoquic_first_client_stream_ctx_t *stream_ctx = callback_ctx.first_stream;
+                                FILE *video_stats_file = stdout;
+                                if (video_stats_filename) {
+                                    video_stats_file = fopen(video_stats_filename, "w");
+                                    if (!video_stats_file) {
+                                        fprintf(stderr, "could not open video stats file: %s\n", strerror(errno));
+                                        video_stats_file = stdout;
+                                    }
+                                }
+                                fprintf(video_stats_file, "stream_id,size,frame_timestamp_ms,reception_timestamp_ms\n");
+                                while (stream_ctx) {
+                                    if (stream_ctx->receiver_summary.contains_full_message) {
+                                        fprintf(video_stats_file, "%u,%ld,%ld,%ld\n", stream_ctx->stream_id,
+                                                stream_ctx->receiver_summary.message_size,
+                                                stream_ctx->receiver_summary.current_message_synchro_timestamp_ms,
+                                                stream_ctx->receiver_summary.current_message_reception_timestamp_us/1000);
+                                    }
+                                    stream_ctx = stream_ctx->next_stream;
+                                }
+                            }
+
+                            if (request_size > 0) {
                                 free((void *)callback_ctx.demo_stream);
                             }
                             ret = picoquic_close(cnx_client, 0);
@@ -1839,13 +2392,14 @@ int quic_client(const char* ip_address_text, int server_port, const char * sni,
     }
 
     /* At the end, if we performed a single get, print the time */
-    if (get_size > 0) {
+    if (request_size > 0) {
         if (callback_ctx.stream_ok) {
             int time_us = (callback_ctx.tv_end.tv_sec - callback_ctx.tv_start.tv_sec) * 1000000 + callback_ctx.tv_end.tv_usec - callback_ctx.tv_start.tv_usec;
-            printf("%d.%03d ms\n", time_us / 1000, time_us % 1000);
+            fprintf(stdout,"%d.%03d ms\n", time_us / 1000, time_us % 1000);
         } else {
-            printf("-1.0\n");
+            fprintf(stdout,"-1.0\n");
         }
+        fprintf(stdout, "done\n");
     }
     return ret;
 }
@@ -1882,13 +2436,14 @@ uint32_t parse_target_version(char const* v_arg)
 void usage()
 {
     fprintf(stderr, "PicoQUIC demo client and server\n");
-    fprintf(stderr, "Usage: picoquicburst_messages [server_name [port]] <options>\n");
+    fprintf(stderr, "Usage: picoquicvideo [server_name [port]] <options>\n");
     fprintf(stderr, "  For the client mode, specify sever_name and port.\n");
     fprintf(stderr, "  For the server mode, use -p to specify the port.\n");
     fprintf(stderr, "Options:\n");
     fprintf(stderr, "  -c file               cert file (default: %s)\n", default_server_cert_file);
     fprintf(stderr, "  -k file               key file (default: %s)\n", default_server_key_file);
     fprintf(stderr, "  -G size               GET size (default: -1)\n");
+    fprintf(stderr, "  -U size               upload instead of download video\n");
     fprintf(stderr, "  -4                    if -G is set, only use a request through the stream 4 instead of 0 then 4\n");
     fprintf(stderr, "  -P file               locally injected plugin file (default: NULL). Do not require peer support. Can be used several times to load several plugins.\n");
     fprintf(stderr, "  -C directory          directory containing the cached plugins requiring support from both peers (default: NULL). Only for client.\n");
@@ -1911,9 +2466,17 @@ void usage()
     fprintf(stderr, "  -l file               Log file\n");
     fprintf(stderr, "  -m mtu_max            Largest mtu value that can be tried for discovery\n");
     fprintf(stderr, "  -q output.qlog        qlog output file\n");
+    fprintf(stderr, "  -w stream_rwin_max    sets the maximum value in bytes for the size of the streams receive window\n");
+    fprintf(stderr, "  -E stream_rwin_max    sets the initial value in bytes for the size of the streams receive window\n");
     fprintf(stderr, "  -S filename           if set, write plugin statistics in the specified file (- for stdout)\n");
+    fprintf(stderr, "  -w stream_rwin_max    sets the maximum value in bytes for the size of the streams receive window\n");
+    fprintf(stderr, "  -E stream_rwin_max    sets the initial value in bytes for the size of the streams receive window\n");
     fprintf(stderr, "  -V filename           filename of the video to transmit)\n");
-    fprintf(stderr, "  -A                    if set, use the API provided by the FEC window framework\n");
+    fprintf(stderr, "  -O filename           filename of the video video frames reception summary\n");
+    fprintf(stderr, "  -a                    if set, use the API provided by the FEC window framework\n");
+    fprintf(stderr, "  -F repair_receive_window_size               sets the size of the buffer allocated to store repair symbols when using FEC\n");
+    fprintf(stderr, "  -A bbr|cubic|newreno               sets the used congestion control algorithm\n");
+    fprintf(stderr, "  -D deadline_ms               sets delivery deadline for each sent video frame in milliseconds\n");
     fprintf(stderr, "  -h                    This help message\n");
     exit(1);
 }
@@ -1982,7 +2545,7 @@ int main(int argc, char** argv)
     int ret = 0;
 
     /* HTTP09 test */
-    int get_size = -1;
+    int request_size = -1;
     int only_stream_4 = 0;
 
     char *qlog_filename = NULL;
@@ -1990,7 +2553,8 @@ int main(int argc, char** argv)
 
     /* Get the parameters */
     int opt;
-    while ((opt = getopt(argc, argv, "c:k:P:C:Q:G:p:v:L14rhzRAV:X:S:i:d:u:s:l:m:n:t:q:")) != -1) {
+//    while ((opt = getopt(argc, argv, "c:k:P:C:Q:G:U:p:v:L14rhzRJX:S:i:s:l:m:n:t:q:w:E:N:I:W:F:A:")) != -1) //{
+    while ((opt = getopt(argc, argv, "c:k:P:C:Q:G:U:p:v:L14rhzRaV:X:S:i:d:u:s:l:m:n:t:q:w:E:W:O:A:D:H:")) != -1) {
         switch (opt) {
         case 'c':
             server_cert_file = optarg;
@@ -2009,8 +2573,15 @@ int main(int argc, char** argv)
             both_plugin_fnames[both_plugins] = optarg;
             both_plugins++;
             break;
+        case 'U':
+            post_request = true;
+            if ((request_size = atoi(optarg)) <= 0) {
+                fprintf(stderr, "Invalid POST size: %s\n", optarg);
+                usage();
+            }
+            break;
         case 'G':
-            if ((get_size = atoi(optarg)) <= 0) {
+            if ((request_size = atoi(optarg)) <= 0) {
                 fprintf(stderr, "Invalid GET size: %s\n", optarg);
                 usage();
             }
@@ -2112,8 +2683,63 @@ int main(int argc, char** argv)
         case 'R':
             ticket_store_filename = NULL;
             break;
-        case 'A':
+        case 'w':
+            max_stream_receive_window_size = atol(optarg);
+            if (max_stream_receive_window_size <= 0) {
+                fprintf(stderr, "Invalid max stream receive window size: %s\n", optarg);
+                usage();
+            }
+            printf("SET RWIN TO %lu BYTES\n", max_stream_receive_window_size);
+            break;
+        case 'E':
+            initial_receive_window_size = atol(optarg);
+            if (initial_receive_window_size <= 0) {
+                fprintf(stderr, "Invalid max stream receive window size: %s\n", optarg);
+                usage();
+            }
+            printf("SET RWIN TO %lu BYTES\n", max_stream_receive_window_size);
+            break;
+        case 'a':
             use_pquic_fec_messages_api = true;
+            break;
+        case 'W':
+            fixed_cwin = atol(optarg);
+            break;
+        case 'O':
+            video_stats_filename = optarg;
+            break;
+        case 'F':
+            repair_receive_window_size = atol(optarg);
+            printf("SET REPAIR RWIN %lu\n", repair_receive_window_size);
+            break;
+        case 'A':
+            // cc algorithm
+            if (strcasecmp(optarg, "bbr") == 0) {
+                cc_algorithm = picoquic_bbr_algorithm;
+            } else if (strcasecmp(optarg, "cubic") == 0) {
+                cc_algorithm = picoquic_cubic_algorithm;
+            } else if (strcasecmp(optarg, "newreno") == 0) {
+                cc_algorithm = picoquic_newreno_algorithm;
+            } else {
+                fprintf(stderr, "Invalid cc algorithm: %s\n", optarg);
+                usage();
+            }
+            break;
+        case 'D':
+            // deadline for messages
+            messages_deadline_microsec = atol(optarg) * 1000;
+            if (messages_deadline_microsec < 0) {
+                fprintf(stderr, "Invalid messages deadline: %s\n", optarg);
+                usage();
+            }
+            break;
+        case 'H':
+            // handshake_response_size
+            handshake_response_length = atol(optarg);
+            if (handshake_response_length < 0 || handshake_response_length > 1000000) {
+                fprintf(stderr, "handshake response length: %s (should be > 0 and <= 1000000\n", optarg);
+                usage();
+            }
             break;
         case 'h':
             usage();
@@ -2184,6 +2810,12 @@ int main(int argc, char** argv)
         F_log = stdout;
     }
 
+    dev_null = fopen("/dev/null", "wb");
+    if (!dev_null) {
+        fprintf(stdout, "Cannot open file: /dev/null: %s\n", strerror(errno));
+        exit(-1);
+    }
+
     streamers_buffer_init(&streamers_buffer);
 
     if (is_client == 0) {
@@ -2204,7 +2836,7 @@ int main(int argc, char** argv)
             /* TODO: find an alternative to using 64 bit mask. */
             NULL, NULL, (uint8_t*)reset_seed, mtu_max, local_plugin_fnames, local_plugins,
             both_plugin_fnames, both_plugins, F_log, F_tls_secrets, qlog_filename, stats_filename, preload_plugins);
-        printf("Server exit with code = %d\n", ret);
+        fprintf(stdout,"Server exit with code = %d\n", ret);
         if (F_tls_secrets != NULL && F_tls_secrets != stdout) {
             fclose(F_tls_secrets);
         }
@@ -2221,9 +2853,9 @@ int main(int argc, char** argv)
         if (local_plugins > 0) {
             fprintf(stderr, "WARNING: direct plugin insertion at client might interfere with remote plugin injection...\n");
         }
-        ret = quic_client(server_name, server_port, sni, root_trust_file, proposed_version, force_zero_share, mtu_max, F_log, F_tls_secrets, local_plugin_fnames, local_plugins, get_size, only_stream_4, qlog_filename, plugin_store_path, stats_filename);
+        ret = quic_client(server_name, server_port, sni, root_trust_file, proposed_version, force_zero_share, mtu_max, F_log, F_tls_secrets, local_plugin_fnames, local_plugins, request_size, only_stream_4, qlog_filename, plugin_store_path, stats_filename);
 
-        printf("Client exit with code = %d\n", ret);
+        fprintf(stdout,"Client exit with code = %d\n", ret);
 
         if (F_log != NULL && F_log != stdout) {
             fclose(F_log);
@@ -2231,5 +2863,9 @@ int main(int argc, char** argv)
         if (F_tls_secrets != NULL && F_tls_secrets != stdout) {
             fclose(F_tls_secrets);
         }
+        if (dev_null) {
+            fclose(dev_null);
+        }
     }
 }
+

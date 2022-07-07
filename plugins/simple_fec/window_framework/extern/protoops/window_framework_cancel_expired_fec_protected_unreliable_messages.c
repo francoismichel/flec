@@ -4,7 +4,6 @@
 #include "../../../fec.h"
 #include "../../framework_sender.h"
 
-
 // ugly copy from picoquic.h ...
 typedef enum picoquic_stream_flags {
     picoquic_stream_flag_fin_received = 1,
@@ -41,7 +40,7 @@ protoop_arg_t cancel_expired_unreliable_messages(picoquic_cnx_t *cnx)
         return 0;
 
     uint64_t current_time = picoquic_current_time();
-    while(rbt_min(cnx, framework->unreliable_messages_from_deadlines, &min_key, &min_val) && min_key < current_time) {   // while the tree is not empty and there are expired messages
+    while(rbt_min(cnx, framework->unreliable_messages_from_deadlines, &min_key, &min_val) && (min_key < current_time)) {   // while the tree is not empty and there are expired messages
         unreliable_message_metadata_t *md = (unreliable_message_metadata_t *) min_val;
         // TODO: remove the repetitive call to find_stream, it is awful in terms of performance
         picoquic_stream_head *stream_head = picoquic_find_stream(cnx, md->stream_id, false);
@@ -50,6 +49,12 @@ protoop_arg_t cancel_expired_unreliable_messages(picoquic_cnx_t *cnx)
             picoquic_reset_stream(cnx, md->stream_id, 0);
         }
 
+        rbt_delete_min(cnx, framework->unreliable_messages_from_deadlines);
+    }
+    // now remove streams where FIN has been sent
+    while(rbt_min(cnx, framework->unreliable_messages_from_deadlines, &min_key, &min_val)
+            && PSTREAM_FIN_SENT(picoquic_find_stream(cnx, ((unreliable_message_metadata_t *) min_val)->stream_id, false))) {   // while the tree is not empty and there are FIN streams
+        PROTOOP_PRINTF(cnx, "REMOVE FIN'D STREAM %lu\n", ((unreliable_message_metadata_t *) min_val)->stream_id);
         rbt_delete_min(cnx, framework->unreliable_messages_from_deadlines);
     }
     return 0;

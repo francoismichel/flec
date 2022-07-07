@@ -14,7 +14,7 @@
  *
  *
  */
-protoop_arg_t deadline_scheduler(picoquic_cnx_t *cnx) {
+protoop_arg_t scheduler(picoquic_cnx_t *cnx) {
     plugin_state_t *state = get_plugin_state(cnx);
     if (!state) {
         return (protoop_arg_t) NULL;

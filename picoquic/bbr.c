@@ -284,7 +284,7 @@ static void picoquic_bbr_init(picoquic_cnx_t *cnx, picoquic_path_t* path_x)
         uint64_t current_time = picoquic_current_time();
         bbr_state->rt_prop_stamp = current_time;
         bbr_state->cycle_stamp = current_time;
-
+        bbr_state->last_sequence_blocked = 0;
         BBREnterStartup(bbr_state);
         BBRSetSendQuantum(bbr_state, path_x);
         BBRUpdateTargetCwnd(bbr_state);
@@ -563,7 +563,6 @@ void BBRUpdateModelAndState(picoquic_bbr_state_t* bbr_state, picoquic_path_t* pa
 void BBRSetPacingRateWithGain(picoquic_bbr_state_t* bbr_state, double pacing_gain)
 {
     double rate = pacing_gain * (double)bbr_state->btl_bw;
-    printf("BBR update pacing rate, gain = %f, btl bw = %lu\n", pacing_gain, bbr_state->btl_bw);
     if (bbr_state->filled_pipe || rate > bbr_state->pacing_rate){
         bbr_state->pacing_rate = rate;
     }

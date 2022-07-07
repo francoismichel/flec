@@ -59,7 +59,6 @@ static __attribute__((always_inline)) bool stream_can_be_scheduled(picoquic_stre
 
 
 
-
 /**
  * See PROTOOP_NOPARAM_FIND_READY_STREAM
  *
@@ -77,10 +76,10 @@ protoop_arg_t deadline_scheduler(picoquic_cnx_t *cnx) {
     }
     window_fec_framework_t *wff = (window_fec_framework_t *) state->framework_sender;
     if (!can_send_new_source_symbol(cnx, wff)) {
-        PROTOOP_PRINTF(cnx, "FEC FLOW-CONTROL BLOCKED\n");
         return (protoop_arg_t) NULL;
     }
     picoquic_stream_head *best_stream = NULL;
+
 
     if (get_cnx(cnx, AK_CNX_MAXDATA_REMOTE, 0) > get_cnx(cnx, AK_CNX_DATA_SENT, 0)) {
         window_fec_framework_t *framework = (window_fec_framework_t *) state->framework_sender;
@@ -88,15 +87,14 @@ protoop_arg_t deadline_scheduler(picoquic_cnx_t *cnx) {
             symbol_deadline_t current_deadline = UNDEFINED_SYMBOL_DEADLINE;
             picoquic_path_t *lowest_rtt_path = get_lowest_rtt_available_non_cwin_limited(cnx);
 
-            // I'm *so* tired of this clunky logic...
-
             // search the stream with the soonest deadline that has the characteristics needed to be scheduled
+            uint64_t current_time = picoquic_current_time();
             while(!best_stream) {
                 rbt_key soonest_deadline;
                 rbt_val soonest_deadline_stream_metadata;
                 // we estimate the owd by RTT/2 and cross our fingers
                 uint64_t one_way_delay = get_path(lowest_rtt_path, AK_PATH_SMOOTHED_RTT, 0)/2;
-                symbol_deadline_t deadline_to_ceil = current_deadline == UNDEFINED_SYMBOL_DEADLINE ? (picoquic_current_time() + one_way_delay) : current_deadline;
+                symbol_deadline_t deadline_to_ceil = current_deadline == UNDEFINED_SYMBOL_DEADLINE ? (current_time + one_way_delay) : current_deadline;
                 bool found_ceiling = rbt_ceiling(cnx, framework->unreliable_messages_from_deadlines, deadline_to_ceil,
                                                  &soonest_deadline, &soonest_deadline_stream_metadata);
                 if (!found_ceiling) {

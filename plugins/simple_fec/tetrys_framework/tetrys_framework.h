@@ -58,6 +58,7 @@ typedef struct {
     tetrys_source_symbol_t **recovered_source_symbols;
     tetrys_symbol_buffer_t buffered_repair_symbols;
     min_max_pq_t recovered_packets;
+    uint8_t packet_sized_buffer[PICOQUIC_MAX_PACKET_SIZE];
 } tetrys_fec_framework_t;
 
 typedef struct {
@@ -66,6 +67,7 @@ typedef struct {
     source_symbol_id_t last_landed_id;
     bool source_symbol_added_since_flush;
     uint8_t *address_of_written_fpi_frame_payload;
+    uint8_t packet_sized_buffer[PICOQUIC_MAX_PACKET_SIZE];
 } tetrys_fec_framework_sender_t;
 
 

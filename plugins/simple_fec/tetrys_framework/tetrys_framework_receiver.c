@@ -30,7 +30,7 @@ static __attribute__((always_inline)) bool tetrys_receive_source_symbol(picoquic
 static __attribute__((always_inline)) int tetrys_receive_packet_payload(picoquic_cnx_t *cnx, tetrys_fec_framework_t *wff,
                                                                         uint8_t *payload, size_t payload_length, uint64_t packet_number, tetrys_source_symbol_id_t first_symbol_id, size_t symbol_size) {
     uint16_t n_chunks = 0;
-    source_symbol_t **sss = packet_payload_to_source_symbols(cnx, payload, payload_length, symbol_size, packet_number, &n_chunks, sizeof(tetrys_source_symbol_t));
+    source_symbol_t **sss = packet_payload_to_source_symbols(cnx, payload, payload_length, symbol_size, packet_number, &n_chunks, sizeof(tetrys_source_symbol_t), wff->packet_sized_buffer);
     if (!sss)
         return PICOQUIC_ERROR_MEMORY;
 

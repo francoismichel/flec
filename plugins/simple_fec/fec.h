@@ -56,6 +56,8 @@ typedef struct {
 
     protoop_id_t pid_received_packet;
 
+    bool has_fec_protected_data_to_send;
+
     uint64_t temp_buffer[20];   // to store temp variables that cannot be stored on the stack due to the ridiculous stack size
 } plugin_state_t;
 

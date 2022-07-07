@@ -43,7 +43,7 @@ const char *pluglet_type_name(pluglet_type_enum te) {
 int plugin_plug_elf_param_struct(protocol_operation_param_struct_t *popst, protoop_plugin_t *p, pluglet_type_enum pte, char *elf_fname) {
     /* Fast track: if we want to insert a replace plugin while there is already one, it will never work! */
     if ((pte == pluglet_replace || pte == pluglet_extern) && popst->replace) {
-        printf("Replace pluglet already inserted!\n");
+        printf("Replace pluglet already inserted!: %s\n", elf_fname);
         return 1;
     }
 
@@ -1304,7 +1304,7 @@ protoop_arg_t plugin_run_protoop_internal(picoquic_cnx_t *cnx, const protoop_par
     memcpy(cnx->protoop_inputv, pp->inputv, sizeof(uint64_t) * pp->inputc);
     cnx->protoop_inputc = pp->inputc;
 
-#ifdef DBG_PLUGIN_PRINTF
+#ifdef DEBUG_PLUGIN_PRINTF
     for (int i = 0; i < pp->inputc; i++) {
         DBG_PLUGIN_PRINTF("Arg %d: 0x%" PRIx64, i, pp->inputv[i]);
     }
@@ -1350,7 +1350,7 @@ protoop_arg_t plugin_run_protoop_internal(picoquic_cnx_t *cnx, const protoop_par
         if (pp->caller_is_intern) {
             printf("FATAL ERROR: Intern caller cannot call extern protocol operation with id %s and param %u\n", pp->pid->id, pp->param);
         } else {
-            printf("FATAL ERROR: Extern caller cannot call intern protocol operation with id %s and param %u\n", pp->pid->id, pp->param);
+            printf("FATAL ERROR: Extern caller cannot call intern protocol operation with id %s and param %u (caller intern = %d, intern = %d)\n", pp->pid->id, pp->param, pp->caller_is_intern, popst->intern);
         }
         exit(-1);
     }
@@ -1416,7 +1416,7 @@ protoop_arg_t plugin_run_protoop_internal(picoquic_cnx_t *cnx, const protoop_par
     /* Copy the output of the caller to the provided output pointer (if any)... */
     if (pp->outputv) {
         memcpy(pp->outputv, cnx->protoop_outputv, sizeof(uint64_t) * outputc);
-#ifdef DBG_PLUGIN_PRINTF
+#ifdef DEBUG_PLUGIN_PRINTF
         for (int i = 0; i < outputc; i++) {
             DBG_PLUGIN_PRINTF("Out %d: 0x%" PRIx64, i, pp->outputv[i]);
         }

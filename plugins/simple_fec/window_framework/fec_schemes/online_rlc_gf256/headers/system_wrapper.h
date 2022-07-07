@@ -141,8 +141,9 @@ static __attribute__((always_inline)) int wrapper_receive_repair_symbol(picoquic
     *used_in_system = 0;
 
     window_source_symbol_id_t last_id_to_check = repair_symbol_last_id(&rs->constant_term);
+    window_source_symbol_id_t idx = 0;
     for (source_symbol_id_t i = rs->constant_term.metadata.first_id ; i <= last_id_to_check ; i++) {
-        window_source_symbol_id_t idx = i - rs->constant_term.metadata.first_id;
+        idx = i - rs->constant_term.metadata.first_id;
         if (ring_based_source_symbols_buffer_contains(cnx, source_symbols, i)) {
             symbol_add_scaled(rs->constant_term.repair_symbol.repair_payload, rs->coefs[idx], ring_based_source_symbols_buffer_get(cnx, source_symbols, i)->source_symbol._whole_data, align(rs->constant_term.repair_symbol.payload_length), wrapper->mul_table);
             rs->coefs[idx] = 0;

@@ -19,5 +19,9 @@ protoop_arg_t write_frame(picoquic_cnx_t *cnx) {
     size_t consumed = 0;
     int err = serialize_tetrys_recovered_frame(cnx, bytes, bytes_max - bytes, rf, &consumed);
     set_cnx(cnx, AK_CNX_OUTPUT, 0, (protoop_arg_t) 1 + consumed);
-    set_cnx(cnx, AK_CNX_OUTPUT, 1, (protoop_arg_t) 1);
+    set_cnx(cnx, AK_CNX_OUTPUT, 1, (protoop_arg_t) 0);
+    if (err != 0) {
+        state->n_recovered_frames_in_flight++;
+        state->n_reserved_recovered_frames--;
+    }
     return err;}

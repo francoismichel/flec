@@ -3,7 +3,13 @@
 #define PICOQUIC_VIDEO_STREAMER_H
 #include "streamer.h"
 
-#ifndef NS3
+#ifndef DISABLE_FFMPEG
+#if (defined NS3 || defined ANDROID || defined __ANDROID__)
+#define DISABLE_FFMPEG
+#endif
+#endif
+
+#ifndef DISABLE_FFMPEG
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #endif
@@ -24,10 +30,12 @@ typedef struct {
     int64_t _last_sent_time_microsec; // last timestamp at which a message has been sent
     int video_stream_idx;
     bool finished;
+    bool has_sent_first_frame;
+    uint64_t first_sent_timestamp;
 
 } timed_video_streamer_t;
 
-#ifndef NS3
+#ifndef DISABLE_FFMPEG
 typedef struct {
     timed_video_streamer_t streamer;
 
@@ -46,8 +54,6 @@ typedef struct {
 typedef struct {
     timed_video_streamer_t streamer;
 
-    uint64_t first_sending_timestamp;
-    bool has_sent_first_frame;
     int current_frame;
 
     int n_frames;
@@ -56,7 +62,7 @@ typedef struct {
     uint8_t buffer[VIDEO_BUFFER_MAX_SIZE];
 } timed_playback_video_streamer_t;
 
-#ifndef NS3
+#ifndef DISABLE_FFMPEG
 int timed_real_video_streamer_init(timed_real_video_streamer_t *streamer, uint64_t stream_id, AVFormatContext *pFormatContext, int video_stream_idx, uint64_t frames_interval_microsec, size_t max_size) {
     memset(streamer, 0, sizeof(timed_real_video_streamer_t));
     streamer->streamer.simple_streamer.current_index = 0;
@@ -76,9 +82,10 @@ int timed_playback_video_streamer_init(timed_playback_video_streamer_t *streamer
     streamer->streamer.simple_streamer.stream_id = stream_id;
     FILE *video = fopen(video_representation_filename, "r");
     if (!video) {
-        fprintf(stderr, "cannot open video: %s", strerror(errno));
+        fprintf(stdout, "cannot open video: %s", strerror(errno));
         return -1;
     }
+    fprintf(stdout, "parsing playback repr\n");
     int current_max = 1000;
     streamer->n_frames = 0;
     streamer->video_frames = malloc(current_max*sizeof(timed_playback_video_streamer_t));
@@ -100,13 +107,14 @@ int timed_playback_video_streamer_init(timed_playback_video_streamer_t *streamer
                 return -1;
             }
         }
-        if (streamer->n_frames == 2) {
-            streamer->streamer.interval_microsec = current_relative_timestamp - streamer->video_frames[0].timestamp_since_origin;
-        }
+//        if (streamer->n_frames == 2) {
+//            streamer->streamer.interval_microsec = current_relative_timestamp - streamer->video_frames[0].timestamp_since_origin;
+//        }
     }
     if (ret != EOF) {
-        fprintf(stderr, "could not read file: %s\n", strerror(ferror(video)));
+        fprintf(stdout, "could not read file: %s\n", strerror(ferror(video)));
     }
+    fprintf(stdout, "n_frames = %d\n", streamer->n_frames);
     return 0;
 }
 
@@ -114,20 +122,28 @@ int timed_video_streamer_is_finished(timed_video_streamer_t *streamer) {
     return streamer->finished || (streamer->simple_streamer.current_index >= streamer->simple_streamer.total_response_size);
 }
 
-#ifndef NS3
+#ifndef DISABLE_FFMPEG
 
 size_t timed_real_video_streamer_should_send_now(timed_real_video_streamer_t *streamer, int64_t current_time) {
     return current_time - streamer->streamer._last_sent_time_microsec >= streamer->streamer.interval_microsec;
 }
 
+size_t timed_real_video_streamer_next_timestamp(timed_real_video_streamer_t *streamer) {
+    return streamer->streamer._last_sent_time_microsec + streamer->streamer.interval_microsec;
+}
+
 #endif
 
 size_t timed_playback_video_streamer_should_send_now(timed_playback_video_streamer_t *streamer, int64_t current_time) {
-    return !streamer->has_sent_first_frame || current_time >= streamer->first_sending_timestamp + streamer->video_frames[streamer->current_frame].timestamp_since_origin;
+    return !streamer->streamer.has_sent_first_frame || current_time >= streamer->streamer.first_sent_timestamp + streamer->video_frames[streamer->current_frame].timestamp_since_origin;
+}
+
+size_t timed_playback_video_streamer_next_timestamp(timed_playback_video_streamer_t *streamer) {
+    return streamer->streamer.first_sent_timestamp + streamer->video_frames[streamer->current_frame].timestamp_since_origin;
 }
 
 size_t timed_video_streamer_should_send_now(bool playback, abstract_video_streamer_t *streamer, int64_t current_time) {
-#ifndef NS3
+#ifndef DISABLE_FFMPEG
     if (!playback) {
         return timed_real_video_streamer_should_send_now((timed_real_video_streamer_t *) streamer, current_time);
     }
@@ -135,7 +151,17 @@ size_t timed_video_streamer_should_send_now(bool playback, abstract_video_stream
     return timed_playback_video_streamer_should_send_now((timed_playback_video_streamer_t *) streamer, current_time);
 }
 
-#ifndef NS3
+size_t timed_video_streamer_next_timestamp(bool playback, abstract_video_streamer_t *streamer) {
+
+#ifndef DISABLE_FFMPEG
+    if (!playback) {
+        return timed_real_video_streamer_should_send_now((timed_real_video_streamer_t *) streamer, current_time);
+    }
+#endif
+    return timed_playback_video_streamer_next_timestamp((timed_playback_video_streamer_t *) streamer);
+}
+
+#ifndef DISABLE_FFMPEG
 int get_next_video_packet(AVFormatContext *pFormatContext, AVPacket *pPacket, int video_stream_index) {
     int response = 0;
     while ((response = av_read_frame(pFormatContext, pPacket)) >= 0)
@@ -158,11 +184,17 @@ size_t timed_real_video_streamer_get_stream_bytes(timed_real_video_streamer_t *s
         streamer->streamer._last_sent_time_microsec = current_time;
         int response = get_next_video_packet(streamer->pFormatContext, packet, streamer->streamer.video_stream_idx);
         if (response >= 0) {
+            if (!streamer->streamer.has_sent_first_frame) {
+                streamer->streamer.has_sent_first_frame = true;
+                streamer->streamer.first_sent_timestamp = current_time;
+            }
             size_t size = packet->size + sizeof(uint32_t);
             printf("get %d stream video bytes\n", packet->size);
             uint32_t size_n = htonl(packet->size);
             memcpy(streamer->buffer, &size_n, sizeof(size_n));
-            memcpy(streamer->buffer + sizeof(size_n), packet->data, packet->size);
+            uint32_t timestamp = htonl((uint32_t) ((current_time - streamer->streamer.first_sent_timestamp)/1000));
+            memcpy(&streamer->buffer[sizeof(size_n)], &timestamp, sizeof(timestamp));
+            memcpy(&streamer->buffer[sizeof(size_n) + sizeof(timestamp)], packet->data, packet->size);
             streamer->streamer.simple_streamer.current_index += size;
             *buffer = streamer->buffer;
             return size;
@@ -180,18 +212,20 @@ size_t timed_playback_video_streamer_get_stream_bytes(timed_playback_video_strea
     if (timed_playback_video_streamer_should_send_now(streamer, current_time) && !timed_video_streamer_is_finished(&streamer->streamer)) {
         streamer->streamer._last_sent_time_microsec = current_time;
         if (streamer->current_frame < streamer->n_frames) {
+            if (!streamer->streamer.has_sent_first_frame) {
+                streamer->streamer.has_sent_first_frame = true;
+                streamer->streamer.first_sent_timestamp = current_time;
+            }
             frame_repr_t current_frame = streamer->video_frames[streamer->current_frame++];
             *type = current_frame.video_frame_type;
-            size_t size = current_frame.video_frame_size + sizeof(uint32_t);
+            size_t size = current_frame.video_frame_size + sizeof(uint32_t) + sizeof(uint32_t);
             printf("get %ld stream video bytes\n", current_frame.video_frame_size);
             uint32_t size_n = htonl(current_frame.video_frame_size);
+            uint32_t timestamp = htonl((uint32_t) ((current_time - streamer->streamer.first_sent_timestamp)/1000));
             memcpy(streamer->buffer, &size_n, sizeof(size_n));
             streamer->streamer.simple_streamer.current_index += size;
+            memcpy(&streamer->buffer[sizeof(size_n)], &timestamp, sizeof(timestamp));
             *buffer = streamer->buffer;
-            if (!streamer->has_sent_first_frame) {
-                streamer->has_sent_first_frame = true;
-                streamer->first_sending_timestamp = current_time;
-            }
             return size;
         } else if (streamer->current_frame == streamer->n_frames) {
             streamer->streamer.finished = true;
@@ -201,7 +235,7 @@ size_t timed_playback_video_streamer_get_stream_bytes(timed_playback_video_strea
     }
     return 0;
 }
-#ifndef NS3
+#ifndef DISABLE_FFMPEG
 uint64_t timed_real_video_get_next_sending_timestamp(timed_real_video_streamer_t *streamer) {
     printf("INTERVAL MICROSEC = %ld\n", streamer->streamer.interval_microsec);
     return streamer->streamer._last_sent_time_microsec + streamer->streamer.interval_microsec;
@@ -209,11 +243,11 @@ uint64_t timed_real_video_get_next_sending_timestamp(timed_real_video_streamer_t
 #endif
 
 uint64_t timed_playback_video_get_next_sending_timestamp(timed_playback_video_streamer_t *streamer) {
-    return streamer->first_sending_timestamp + streamer->video_frames[streamer->current_frame].timestamp_since_origin;
+    return streamer->streamer.first_sent_timestamp + streamer->video_frames[streamer->current_frame].timestamp_since_origin;
 }
 
 uint64_t timed_video_get_next_sending_timestamp(bool playback, abstract_video_streamer_t *streamer) {
-#ifndef NS3
+#ifndef DISABLE_FFMPEG
     if (!playback) {
         return timed_real_video_get_next_sending_timestamp((timed_real_video_streamer_t *) streamer);
     }
@@ -221,13 +255,18 @@ uint64_t timed_video_get_next_sending_timestamp(bool playback, abstract_video_st
     return timed_playback_video_get_next_sending_timestamp((timed_playback_video_streamer_t *) streamer);
 }
 
-
+typedef struct {
+    uint64_t current_message_synchro_timestamp_ms;
+    uint64_t current_message_reception_timestamp_us;
+    size_t message_size;
+    bool contains_full_message;
+} receiver_summary_t;
 
 // the stream_receiver assumes that at the beginning of every message, there is its length network-encoded on 4 bytes
 typedef struct {
     int64_t current_message_size;
     int64_t current_message_offset;
-    bool contains_full_message;
+    receiver_summary_t summary;
     uint8_t buffer[VIDEO_BUFFER_MAX_SIZE];
 
 } stream_receiver_t;
@@ -236,32 +275,40 @@ int stream_receiver_init(stream_receiver_t *receiver) {
     memset(receiver, 0, sizeof(stream_receiver_t));
 }
 
-int stream_receiver_receive_data(stream_receiver_t *receiver, uint8_t *data, size_t size) {
-    if (size + receiver->current_message_offset > VIDEO_BUFFER_MAX_SIZE || receiver->contains_full_message)
+int stream_receiver_receive_data(stream_receiver_t *receiver, uint8_t *data, size_t size, uint64_t current_time) {
+    if (size + receiver->current_message_offset > VIDEO_BUFFER_MAX_SIZE || receiver->summary.contains_full_message)
         return -1;
 
     if (receiver->current_message_offset == 0) {
         receiver->current_message_size = ntohl(*((uint32_t *) data));
-        printf("RECEIVE START OF MESSAGE OFO SIZE %ld\n", receiver->current_message_size);
+        printf("RECEIVE START OF MESSAGE OF SIZE %ld\n", receiver->current_message_size);
+        data += sizeof(uint32_t);
+        size -= sizeof(uint32_t);
+        receiver->summary.current_message_synchro_timestamp_ms = ntohl(*((uint32_t *) data));
         data += sizeof(uint32_t);
         size -= sizeof(uint32_t);
     }
     memcpy(&receiver->buffer[receiver->current_message_offset], data, size);
     receiver->current_message_offset += size;
-    receiver->contains_full_message = receiver->current_message_offset == receiver->current_message_size;
+
+    bool contains_full_message = receiver->summary.contains_full_message;
+
+    receiver->summary.contains_full_message = receiver->current_message_offset == receiver->current_message_size;
+    receiver->summary.message_size = receiver->current_message_size;
+
+    if (!contains_full_message && receiver->summary.contains_full_message) {
+        receiver->summary.current_message_reception_timestamp_us = current_time;
+    }
 }
 
 // pre: space available in datA_buffer >= VIDEO_BUFFER_MAX_SIZE
 ssize_t stream_receiver_get_message_payload(stream_receiver_t *receiver, uint8_t *data_buffer) {
-    if (!receiver->contains_full_message)
+    if (!receiver->summary.contains_full_message)
         return -1;
     memcpy(data_buffer, receiver->buffer, receiver->current_message_offset);
     ssize_t size = receiver->current_message_offset;
 
-    printf("receive %ld -bytes message\n", size);
-    receiver->contains_full_message = false;
-    receiver->current_message_offset = 0;
-    receiver->current_message_size = 0;
+    printf("receive %ld bytes message\n", size);
     return size;
 }
 
@@ -280,7 +327,7 @@ static void save_gray_frame(unsigned char *buf, int wrap, int xsize, int ysize, 
         fwrite(buf + i * wrap, 1, xsize, f);
     fclose(f);
 }
-#ifndef NS3
+#ifndef DISABLE_FFMPEG
 int n_frames_to_save = 0;
 static int decode_packet(AVPacket *pPacket, AVCodecContext *pCodecContext, AVFrame *pFrame, char *type)
 {

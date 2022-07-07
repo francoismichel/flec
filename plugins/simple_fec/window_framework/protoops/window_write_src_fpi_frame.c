@@ -18,11 +18,11 @@ protoop_arg_t write_frame(picoquic_cnx_t *cnx) {
     protoop_arg_t slot_available = get_path(path, AK_PATH_CWIN, 0) > get_path(path, AK_PATH_BYTES_IN_TRANSIT, 0);
     window_fec_framework_t *wff = (window_fec_framework_t *) state->framework_sender;
     if (state->has_written_fb_fec_repair_frame || state->has_written_repair_frame || state->has_written_fpi_frame || wff->window_length >= MAX_SENDING_WINDOW_SIZE) {
-        PROTOOP_PRINTF(cnx, "RETRY FPI: HAS WRITTEN FB FEC = %d, HAS WRITTEN REPAIR = %d!!\n", state->has_written_fb_fec_repair_frame, state->has_written_repair_frame);
+        PROTOOP_PRINTF(cnx, "RETRY FPI: HAS WRITTEN FB FEC = %d, HAS WRITTEN REPAIR = %d, WINDOW LENGTH = %d!!\n", state->has_written_fb_fec_repair_frame, state->has_written_repair_frame, wff->window_length);
         set_cnx(cnx, AK_CNX_OUTPUT, 0, (protoop_arg_t) 0);
         set_cnx(cnx, AK_CNX_OUTPUT, 1, (protoop_arg_t) 0);
         return PICOQUIC_MISCCODE_RETRY_NXT_PKT;
-    } else if (!slot_available || !run_noparam(cnx, FEC_PROTOOP_HAS_PROTECTED_DATA_TO_SEND, 0, NULL, NULL)) {
+    } else if (!slot_available || !state->has_fec_protected_data_to_send) {
         set_cnx(cnx, AK_CNX_OUTPUT, 0, (protoop_arg_t) 0);
         set_cnx(cnx, AK_CNX_OUTPUT, 1, (protoop_arg_t) 0);
         PROTOOP_PRINTF(cnx, "CANCEL THE SRC FPI\n");

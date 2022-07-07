@@ -46,6 +46,8 @@
 extern "C" {
 #endif
 
+#define DEBUG_EVENT 0
+
 #define PICOQUIC_ERROR_CLASS 0x400
 #define PICOQUIC_ERROR_DUPLICATE (PICOQUIC_ERROR_CLASS + 1)
 #define PICOQUIC_ERROR_FNV1A_CHECK (PICOQUIC_ERROR_CLASS + 2)
@@ -107,7 +109,7 @@ extern "C" {
 #define PICOQUIC_TLS_FATAL_ALERT_GENERATED (0x202)
 #define PICOQUIC_TLS_FATAL_ALERT_RECEIVED (0x203)
 
-#define PICOQUIC_MAX_PACKET_SIZE 1536
+#define PICOQUIC_MAX_PACKET_SIZE 1350
 #define PICOQUIC_RESET_SECRET_SIZE 16
 #define PICOQUIC_RESET_PACKET_MIN_SIZE (1 + 20 + 16)
 
@@ -848,7 +850,7 @@ extern picoquic_congestion_algorithm_t* picoquic_newreno_algorithm;
 extern picoquic_congestion_algorithm_t* picoquic_cubic_algorithm;
 extern picoquic_congestion_algorithm_t* picoquic_bbr_algorithm;
 
-#define PICOQUIC_DEFAULT_CONGESTION_ALGORITHM picoquic_cubic_algorithm;
+#define PICOQUIC_DEFAULT_CONGESTION_ALGORITHM picoquic_bbr_algorithm;
 
 void picoquic_set_default_congestion_algorithm(picoquic_quic_t* quic, picoquic_congestion_algorithm_t const* algo);
 
@@ -881,6 +883,9 @@ reserve_frame_slot_t* cancel_head_reservation(picoquic_cnx_t* cnx, uint8_t *nb_f
 /* For building a basic HTTP 0.9 test server */
 int http0dot9_get(uint8_t* command, size_t command_length,
     uint8_t* response, size_t response_max, size_t* response_length);
+
+/* POST-like request */
+int pseudo_http_post(const uint8_t* command, size_t command_length);
 
 /* Enables keep alive for a connection.
  * If `interval` is `0`, it is set to `max_idle_timeout / 2`.

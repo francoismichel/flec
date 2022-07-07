@@ -15,18 +15,18 @@ extern "C" {
 #include <stdint.h>
 #include <stddef.h>
 
-#define SYMBOL_FAST_MODE true
-#define SYMBOL_USE_ALT_LIBRARY true
+#define SYMBOL_FAST_MODE false
+#define SYMBOL_USE_NATIVE_LIBRARY true
 
-#if SYMBOL_USE_ALT_LIBRARY == true
+#if SYMBOL_USE_NATIVE_LIBRARY == true
 #include <gf256/gf256.h>
+extern struct moepgf gflib;
 #else
 #include <gf256/gf256.h>
 //static __attribute__((always_inline)) uint8_t gf256_mul(uint8_t a, uint8_t b, uint8_t **mul)
 //{ return mul[a][b]; }
 #endif
 
-extern struct moepgf gflib;
 
 void init_lib();
 
@@ -59,7 +59,7 @@ static __attribute__((always_inline)) void symbol_add_scaled
         (void *symbol1, uint8_t coef, void *symbol2, uint32_t symbol_size, uint8_t **mul)
 {
 
-    if (SYMBOL_USE_ALT_LIBRARY) {
+    if (SYMBOL_USE_NATIVE_LIBRARY) {
         picoquic_gf256_symbol_add_scaled(symbol1, coef, symbol2, symbol_size, mul);
     } else {
         uint8_t *data1 = (uint8_t *) symbol1;
@@ -98,7 +98,7 @@ static __attribute__((always_inline)) void symbol_add_fast_safe(void *symbol1, v
 static __attribute__((always_inline)) void symbol_add
         (void *symbol1, void *symbol2, uint32_t symbol_size) {
 
-    if (SYMBOL_USE_ALT_LIBRARY) {
+    if (SYMBOL_USE_NATIVE_LIBRARY) {
 //        gflib.maddrc(symbol1, symbol2, 1, symbol_size);
         picoquic_gf256_symbol_add(symbol1, symbol2, symbol_size);
 
@@ -136,7 +136,7 @@ static __attribute__((always_inline)) void _symbol_mul
 //            symbol64[i] =
 //        }
 //    }
-    if (SYMBOL_USE_ALT_LIBRARY) {
+    if (SYMBOL_USE_NATIVE_LIBRARY) {
 //        gflib.mulrc(symbol1, coef, symbol_size);
         picoquic_gf256_symbol_mul(symbol1, coef, symbol_size, mul);
 //        galois_w08_region_multiply((char *) symbol2, coef, symbol_size, symbol1, 1);
@@ -162,7 +162,7 @@ static __attribute__((always_inline)) void _symbol_mul_alt
 static __attribute__((always_inline)) void symbol_mul
         (uint8_t *symbol1, uint8_t coef, uint32_t symbol_size, uint8_t **mul)
 {
-    if (SYMBOL_USE_ALT_LIBRARY) {
+    if (SYMBOL_USE_NATIVE_LIBRARY) {
         _symbol_mul_alt(symbol1, coef, symbol_size, mul);
     } else {
         _symbol_mul(symbol1, coef, symbol_size, mul);

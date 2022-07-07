@@ -502,10 +502,7 @@ static __attribute__((always_inline)) bool _remove_source_symbol_from_window(pic
                 return false;
             }
             wff->smallest_in_transit++;
-            idx = wff->smallest_in_transit;
-            if (wff->smallest_in_transit == MAX_SENDING_WINDOW_SIZE) {
-                idx = 0;
-            }
+            idx = wff->smallest_in_transit % MAX_SENDING_WINDOW_SIZE;
         }
 
         if (is_fec_window_empty(wff)) {
@@ -596,7 +593,6 @@ static __attribute__((always_inline)) int sfpid_has_landed(picoquic_cnx_t *cnx, 
             uint32_t idx = id % MAX_SENDING_WINDOW_SIZE;
             wff->fec_window[idx].received = true;
         }
-        PROTOOP_PRINTF(cnx, "REMOVE ID FROM WINDOW TOOK %luµs\n", picoquic_current_time() - now);
         return err;
     }
     return -1;
@@ -756,9 +752,18 @@ static __attribute__((always_inline)) int window_protect_packet_payload(picoquic
         }
         if (i == 0)
             *first_symbol_id = id;
-        if (deadline != UNDEFINED_SYMBOL_DEADLINE && !rbt_contains(cnx, wff->symbols_from_deadlines, deadline)) {
-            rbt_put(cnx, wff->symbols_from_deadlines, deadline, (void *) (uint64_t) id);
-            rbt_put(cnx, wff->deadlines_from_symbols, (uint64_t) id, (void *) deadline);
+        bool already_contains_deadline_for_symbol = rbt_contains(cnx, wff->symbols_from_deadlines, deadline);
+        if (deadline != UNDEFINED_SYMBOL_DEADLINE) {
+            uint64_t id_to_insert = id;
+            if (already_contains_deadline_for_symbol) {
+                // put the largest symbol ID to avoid removing the deadline before all symbols concerning this deadline have been received
+                rbt_get(cnx, wff->symbols_from_deadlines, deadline, (rbt_val *) &id_to_insert);
+                rbt_delete(cnx, wff->symbols_from_deadlines, deadline);
+                rbt_delete(cnx, wff->deadlines_from_symbols, id_to_insert);
+                id_to_insert = MAX(id, id_to_insert);
+            }
+            rbt_put(cnx, wff->symbols_from_deadlines, deadline, (void *) (uint64_t) id_to_insert);
+            rbt_put(cnx, wff->deadlines_from_symbols, (uint64_t) id_to_insert, (void *) deadline);
         }
     }
     my_free(cnx, sss);
