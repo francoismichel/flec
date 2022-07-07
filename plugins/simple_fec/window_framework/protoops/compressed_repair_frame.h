@@ -62,17 +62,21 @@ static __attribute__((always_inline)) int serialize_compress_padding_window_repa
 //        return PICOQUIC_ERROR_FRAME_BUFFER_TOO_SMALL;
     *consumed = 0;
     // encode fec-scheme-specific
+    // 4 bytes
     my_memcpy(out_buffer, repair_frame->fss.val, sizeof(repair_frame->fss.val));
     *consumed += sizeof(repair_frame->fss.val);
     size_t tmp = 0;
     // encode symbol id
+    // 4 bytes
     int err = serialize_window_source_symbol_id(out_buffer + *consumed, buffer_length, repair_frame->first_protected_symbol, &tmp);
     if (err)
         return err;
     *consumed += tmp;
     // encode number of repair symbols (the symbol size is implicitly negociated so we don't need to encode it)
+    // 2 bytes
     encode_un(repair_frame->n_protected_symbols, out_buffer + *consumed, sizeof(repair_frame->n_protected_symbols));
     *consumed += sizeof(repair_frame->n_protected_symbols);
+    // 2 bytes
     encode_un(repair_frame->n_repair_symbols, out_buffer + *consumed, sizeof(repair_frame->n_repair_symbols));
     *consumed += sizeof(repair_frame->n_repair_symbols);
     // encode payload
