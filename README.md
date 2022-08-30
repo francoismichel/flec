@@ -1,6 +1,12 @@
 # FlEC
 
-Currently writing the README, please be patient ! ❤️
+FlEC is a research paper redefining the loss recovery mechanism of the QUIC protocol through the use
+of Forward Erasure Correction. In this article, we propose to adapt the loss recovery mechanism to the 
+use-case using protocol plugins !
+
+The full paper is part of the Transactions on Networking journal and can be found [here](https://ieeexplore.ieee.org/document/9861377) or on [arXiv](https://arxiv.org/abs/2208.07741).
+
+Still writing the README, please be patient ! ❤️
 
 # PQUIC
 
