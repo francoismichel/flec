@@ -6,6 +6,18 @@ use-case using protocol plugins !
 
 The full paper is part of the Transactions on Networking journal and can be found [here](https://ieeexplore.ieee.org/document/9861377) or on [arXiv](https://arxiv.org/abs/2208.07741).
 
+All the code of FlEC is contained in the (not so simple!) `simple_fec` plugin under the `plugin` directory. This plugins also reguires the use of 
+the `loss_monitor` plugin that gather network statistics concerning packet loss.
+
+Three variations of FlEC are used in the article:
+- `fec_bulk.plugin` for bulk downloads
+- `fec_buffer_limited.plugin` for bulk downloads with limited receive windows
+- `fec_real_time_messages.plugin` for the real-time messaging use-case
+
+Note also that `ac_rlnc.plugin` implements the original AC-RLNC article.
+
+
+
 Still writing the README, please be patient ! ❤️
 
 # PQUIC
