@@ -486,18 +486,6 @@ if(NOT DEFINED ONLY_LIB)
             picoquicfirst/video_streamer.h
             picoquicfirst/streamers_buffer.h
                                 picoquicfirst/getopt.c )
-    TARGET_LINK_LIBRARIES(picoquicvideo avcodec avutil avformat picoquic-core
-            ${PTLS_CORE}
-            ${PTLS_OPENSSL}
-            ${PTLS_MINICRYPTO}
-            ${OPENSSL_LIBRARIES}
-            ${UBPF}
-            ${CMAKE_DL_LIBS}
-            ${LibArchive_LIBRARIES}
-            ${MICHELFRALLOC_STATIC_LIBS}
-            ${ZLIB}
-	    ${MOEPGF_STATIC_LIB}
-            )
 
     ADD_EXECUTABLE(picoquicdemobench picoquicfirst/picoquicdemobench.c
             picoquicfirst/getopt.c )
