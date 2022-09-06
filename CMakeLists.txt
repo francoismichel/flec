@@ -83,7 +83,8 @@ SET(PICOQUIC_LIBRARY_FILES
         picoquic/michelfralloc/sbrk.h
         picoquic/michelfralloc/michelfralloc.c
         picoquic/michelfralloc/michelfralloc.h
-    picoquic/cc_common.c picoquic/cc_common.h picoquic/bbr.c)
+    picoquic/cc_common.c picoquic/cc_common.h picoquic/bbr.c
+    picoquic/gf256/gf256.c)
 
 SET(PICOQUIC_TEST_LIBRARY_FILES
     picoquictest/ack_of_ack_test.c
