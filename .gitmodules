@@ -4,3 +4,6 @@
 [submodule "picoquic/michelfralloc"]
 	path = picoquic/michelfralloc
 	url = https://github.com/p-quic/michelfralloc.git
+[submodule "picoquic/gf256/flec-moepgf"]
+	path = picoquic/gf256/flec-moepgf
+	url = https://github.com/francoismichel/flec-moepgf
