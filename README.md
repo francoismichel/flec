@@ -17,7 +17,7 @@ Three variations of FlEC are used in the article:
 Note also that `ac_rlnc.plugin` implements the original AC-RLNC article.
 
 
-
+Currently building docker images for running NS3 + DCE and run the simulations (80%).
 Still writing the README, please be patient ! ❤️
 
 # PQUIC
