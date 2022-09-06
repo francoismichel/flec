@@ -41,7 +41,7 @@ if($ENV{NS3})
     SET(CMAKE_EXE_LINKER_FLAGS  "${CMAKE_EXE_LINKER_FLAGS} -pie -rdynamic")
 endif()
 
-INCLUDE_DIRECTORIES(picoquic picoquictest ../picotls/include
+INCLUDE_DIRECTORIES(picoquic picoquic/gf256/flec-moepgf/include/ picoquictest ../picotls/include
     ${PICOTLS_INCLUDE_DIR})
 
 SET(MOEPGF_STATIC_LIB
