@@ -481,12 +481,6 @@ if(NOT DEFINED ONLY_LIB)
 	    ${MOEPGF_STATIC_LIB}
             )
 
-    ADD_EXECUTABLE(picoquicvideo picoquicfirst/picoquic_video.c
-            picoquicfirst/streamer.h
-            picoquicfirst/video_streamer.h
-            picoquicfirst/streamers_buffer.h
-                                picoquicfirst/getopt.c )
-
     ADD_EXECUTABLE(picoquicdemobench picoquicfirst/picoquicdemobench.c
             picoquicfirst/getopt.c )
     TARGET_LINK_LIBRARIES(picoquicdemobench picoquic-core
