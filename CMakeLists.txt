@@ -44,6 +44,9 @@ endif()
 INCLUDE_DIRECTORIES(picoquic picoquictest ../picotls/include
     ${PICOTLS_INCLUDE_DIR})
 
+SET(MOEPGF_STATIC_LIB
+        ${CMAKE_SOURCE_DIR}/picoquic/gf256/libmoepgf.a)
+
 SET(MICHELFRALLOC_STATIC_LIBS
         ${CMAKE_SOURCE_DIR}/picoquic/michelfralloc/libmichelfralloc.a
         ${CMAKE_SOURCE_DIR}/picoquic/michelfralloc/libptmalloc3.a)
@@ -459,7 +462,8 @@ if(NOT DEFINED ONLY_LIB)
             ${UBPF}
             ${CMAKE_DL_LIBS}
             ${LibArchive_LIBRARIES}
-            ${MICHELFRALLOC_STATIC_LIBS})
+            ${MICHELFRALLOC_STATIC_LIBS}
+	    ${MOEPGF_STATIC_LIB})
 
     ADD_EXECUTABLE(picoquicvpn picoquicfirst/picoquicvpn.c
             picoquicfirst/getopt.c )
@@ -473,6 +477,7 @@ if(NOT DEFINED ONLY_LIB)
             ${LibArchive_LIBRARIES}
             ${MICHELFRALLOC_STATIC_LIBS}
             ${ZLIB}
+	    ${MOEPGF_STATIC_LIB}
             )
 
     ADD_EXECUTABLE(picoquicvideo picoquicfirst/picoquic_video.c
@@ -490,6 +495,7 @@ if(NOT DEFINED ONLY_LIB)
             ${LibArchive_LIBRARIES}
             ${MICHELFRALLOC_STATIC_LIBS}
             ${ZLIB}
+	    ${MOEPGF_STATIC_LIB}
             )
 
     ADD_EXECUTABLE(picoquicdemobench picoquicfirst/picoquicdemobench.c
@@ -504,6 +510,7 @@ if(NOT DEFINED ONLY_LIB)
             ${LibArchive_LIBRARIES}
             ${MICHELFRALLOC_STATIC_LIBS}
             ${ZLIB}
+	    ${MOEPGF_STATIC_LIB}
             )
 
     ADD_EXECUTABLE(picoquic_ct picoquic_t/picoquic_t.c
@@ -520,6 +527,7 @@ if(NOT DEFINED ONLY_LIB)
             ${LibArchive_LIBRARIES}
             ${MICHELFRALLOC_STATIC_LIBS}
             ${ZLIB}
+	    ${MOEPGF_STATIC_LIB}
             )
 
 
@@ -537,7 +545,8 @@ if(NOT DEFINED ONLY_LIB)
             ${UBPF}
             ${CMAKE_DL_LIBS}
             ${LibArchive_LIBRARIES}
-            ${MICHELFRALLOC_STATIC_LIBS})
+            ${MICHELFRALLOC_STATIC_LIBS}
+	    ${MOEPGF_STATIC_LIB})
     INCLUDE_DIRECTORIES(/usr/include/ffmpeg)
 
     ADD_EXECUTABLE(picoquicburst_messages picoquicfirst/picoquic_bursty_messages.c
@@ -554,7 +563,71 @@ if(NOT DEFINED ONLY_LIB)
             ${CMAKE_DL_LIBS}
             ${LibArchive_LIBRARIES}
             ${MICHELFRALLOC_STATIC_LIBS}
+	    ${MOEPGF_STATIC_LIB}
             )
+
+    if($ENV{PQUIC_VIDEO})
+
+
+
+        ADD_EXECUTABLE(picoquicvideo picoquicfirst/picoquic_video.c
+                picoquicfirst/streamer.h
+                picoquicfirst/video_streamer.h
+                picoquicfirst/streamers_buffer.h
+                picoquicfirst/getopt.c )
+
+        if(((NOT DEFINED ENV{NS3}) OR !$ENV{NS3}) AND ((NOT DEFINED ENV{ANDROID}) OR !$ENV{ANDROID}))
+            find_library(AVUTIL_LIBRARY avutil)
+            find_library(AVCODEC_LIBRARY avcodec)
+            find_library(AVFORMAT_LIBRARY avformat)
+
+            SET(TEST_EXES picoquic_ct)
+            ADD_EXECUTABLE(get_video_frames picoquicfirst/get_video_frames.c
+                    picoquicfirst/streamer.h
+                    picoquicfirst/video_streamer.h
+                    picoquicfirst/streamers_buffer.h
+                    picoquicfirst/getopt.c )
+
+            TARGET_LINK_LIBRARIES(get_video_frames avcodec avutil avformat picoquic-core
+                    ${PTLS_CORE}
+                    ${PTLS_OPENSSL}
+                    ${PTLS_MINICRYPTO}
+                    ${OPENSSL_LIBRARIES}
+                    ${ZLIB}
+                    ${UBPF}
+                    ${CMAKE_DL_LIBS}
+                    ${LibArchive_LIBRARIES}
+                    ${MICHELFRALLOC_STATIC_LIBS}
+                    ${MOEPGF_STATIC_LIB})
+            INCLUDE_DIRECTORIES(/usr/include/ffmpeg)
+
+            TARGET_LINK_LIBRARIES(picoquicvideo avcodec avutil avformat picoquic-core
+                    ${PTLS_CORE}
+                    ${PTLS_OPENSSL}
+                    ${PTLS_MINICRYPTO}
+                    ${OPENSSL_LIBRARIES}
+                    ${ZLIB}
+                    ${UBPF}
+                    ${CMAKE_DL_LIBS}
+                    ${LibArchive_LIBRARIES}
+                    ${MICHELFRALLOC_STATIC_LIBS}
+                    ${MOEPGF_STATIC_LIB})
+        else()
+            TARGET_LINK_LIBRARIES(picoquicvideo picoquic-core
+                    ${PTLS_CORE}
+                    ${PTLS_OPENSSL}
+                    ${PTLS_MINICRYPTO}
+                    ${OPENSSL_LIBRARIES}
+                    ${UBPF}
+                    ${CMAKE_DL_LIBS}
+                    ${LibArchive_LIBRARIES}
+                    ${ZLIB}
+                    ${MICHELFRALLOC_STATIC_LIBS}
+                    ${MOEPGF_STATIC_LIB})
+
+        endif()
+    endif()
+
 
     SET(TEST_EXES picoquic_ct)
 endif()
