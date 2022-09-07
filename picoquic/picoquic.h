@@ -46,7 +46,7 @@
 extern "C" {
 #endif
 
-#define DEBUG_EVENT 0
+#define DEBUG_EVENT 1
 
 #define PICOQUIC_ERROR_CLASS 0x400
 #define PICOQUIC_ERROR_DUPLICATE (PICOQUIC_ERROR_CLASS + 1)
