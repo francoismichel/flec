@@ -32,7 +32,7 @@
 #include "picosocks.h"
 #include "uthash.h"
 #include "plugin.h"
-#define printf(fmt, ...)
+//#define printf(fmt, ...)      // uncomment to remove printfs; enhancing performance when needed
 
 #ifdef __APPLE__
 #include <machine/endian.h>
