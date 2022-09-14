@@ -26,7 +26,7 @@ We did our best to provide portable solutions and environment, so the FlEC imple
 
 The NS3-DCE environment is available [here](https://github.com/francoismichel/flec-simulation-experiments).
 
-A huge thanks to [Maxime Piraux](https://scholar.google.be/citations?user=DRHOxqwAAAAJ&hl=fr) who wrote most of the NS3 simulation scripts !
+**A huge thanks to [Maxime Piraux](https://scholar.google.be/citations?user=DRHOxqwAAAAJ&hl=fr) who wrote most of the NS3 simulation scripts !**
 
 ### Reproducing the results
 The only dependency you need to install is git and [Docker](https://www.docker.com/).
