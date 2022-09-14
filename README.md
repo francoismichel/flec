@@ -16,9 +16,36 @@ Three variations of FlEC are used in the article:
 
 Note also that `ac_rlnc.plugin` implements the original AC-RLNC article.
 
+## Running FlEC ni NS3-DCE and reproducing the results
 
-Currently building docker images for running NS3 + DCE and run the simulations (80%).
-Still writing the README, please be patient ! ❤️
+While good results can be obtained in real-world networks such as Starlink when losses occur (c.f. the [FlEC article](https://ieeexplore.ieee.org/document/9861377)), the PQUIC implementation used by FlEC is computationnaly heavy and can deteriorate the 
+data transfers in some cases. We thus provide here a full NS3-DCE working environment to evaluate FlEC and compare it with other solutions, being able to run *real* protocol implementations (not models) inside the NS3 environment.
+Feel free to reuse it and add your own solutions in this environment !
+
+We did our best to provide portable solutions and environment, so the FlEC implementation, the NS3-DCE environment and even the plotting scripts are provided through Docker containers ! We also ported NS3-DCE to a Ubuntu 20.04 docker image and this image can easily be used without FlEC to run your own solutions and projects.
+
+The NS3-DCE environment is available [here](https://github.com/francoismichel/flec-simulation-experiments).
+
+### Reproducing the results
+The only dependency you need to install is git and [Docker](https://www.docker.com/).
+The computations with NS3 are CPU-intensive, the more CPUs you have, the better it is. You will need between 2GB and 3GB of RAM per CPU you use for the experiments.
+
+Here is a script you can run anywhere on Linux to reproduce the results of the FlEC article :
+
+```bash
+#! /usr/bin/env bash
+
+git clone --recurse-submodules https://github.com/francoismichel/flec
+git clone --recurse-submodules https://github.com/francoismichel/flec-simulation-experiments
+
+pushd flec-simulation-experiments && bash reproduce_and_plot_results.sh ../flec && popd
+
+echo Reproduction finished ! The resulting graphs can be found in flec-simulation-experiments/results_plots :
+ls flec-simulation-experiments/results_plots
+
+echo The raw results can be found in flec-simulation-experiments/results
+```
+
 
 # PQUIC
 
